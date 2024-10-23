@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#! /usr/bin/python3
 
 # imports
 import cv2
@@ -433,93 +433,6 @@ class BehaviorLogger:
         self.load_behaviors()
         self.update_behavior_key_editor()
 
-    def new_behavior_key_file_button(self):
-        # Check if the dialog is already open, and return if it is
-        if self.new_behavior_dialog_open:
-            return
-    
-        # Set the flag to indicate that the dialog is open
-        self.new_behavior_dialog_open = True
-    
-        # Save the currently loaded file, if any
-        if self.behavior_key_file_var.get() and self.behavior_key_file_var.get() != 'No file found':
-            if not self.save_behaviors():
-                self.new_behavior_dialog_open = False
-                return  # If saving the current file fails, do not proceed
-    
-        # Create the dialog for entering the new file name
-        dialog = tk.Toplevel(self.root)  # Create a new Toplevel window
-        dialog.title("New Behavior Key File")  # Set the title of the window
-    
-        # Set fixed size (300x150) for the dialog
-        dialog.geometry("300x150")
-
-    
-        # Center the dialog on the screen
-        self.center_window(dialog, width=500, height=200)
-    
-        # Create a label and entry for the file name input
-        label = tk.Label(dialog, text="Enter a name for the new Behavior Key file:")
-        label.pack(pady=10)
-    
-        entry = tk.Entry(dialog, width=30)  # Set a fixed width for the entry
-        entry.pack(padx=20, pady=5)
-        entry.focus_set()  # Set the focus on the Entry widget
-    
-        # Function to close the dialog and handle the entered value
-        def on_ok():
-            new_behavior_key_name = entry.get().strip()
-            if not new_behavior_key_name:
-                messagebox.showwarning("No Name Entered", "You must enter a name for the Behavior Key file.")
-                return
-    
-            if not new_behavior_key_name.endswith('_behaviors.csv'):
-                new_behavior_key_name += '_behaviors.csv'
-    
-            self.behavior_key_file = new_behavior_key_name
-    
-            # Clear the behavior editor fields to make it empty for the new file
-            self.behaviors = [["", "", "point", ""] for _ in range(20)]  # Reset behaviors to empty
-    
-            # Create the new behavior key file with empty fields
-            try:
-                with open(self.behavior_key_file, 'w', newline='') as file:
-                    writer = csv.writer(file)
-                    # Write the empty fields in the new file
-                    for behavior in self.behaviors:
-                        writer.writerow(behavior)
-    
-                # Add the new file to the dropdown list and set it as the selected file
-                behavior_key_path = os.path.abspath(self.behavior_key_file)
-                self.behavior_key_files[self.behavior_key_file] = behavior_key_path
-                self.behavior_key_file_var.set(self.behavior_key_file)
-    
-                # Update the dropdown and refresh the editor with the new (empty) file
-                self.update_behavior_key_ui()
-                self.update_behavior_key_editor()
-    
-            except Exception as e:
-                print(f"File Error: An error occurred while creating the file: {e}")
-                return
-            finally:
-                dialog.destroy()
-                self.new_behavior_dialog_open = False  # Reset the flag when dialog is closed
-        
-        # Create OK button
-        ok_button = tk.Button(dialog, text="OK", command=on_ok)
-        ok_button.pack(pady=5)
-        
-        # Make the dialog modal to prevent interaction with the main window until it's closed
-        dialog.grab_set()
-        dialog.focus_set()  # Ensure the dialog has focus
-    
-        # Ensure the dialog stays in front of the main window
-        dialog.attributes('-topmost', True)
-        dialog.after_idle(dialog.attributes, '-topmost', True)
-    
-        # Add a protocol to reset the flag when the window is closed
-        dialog.protocol("WM_DELETE_WINDOW", lambda: [dialog.destroy(), setattr(self, 'new_behavior_dialog_open', False)])
-
     def new_behavior_key_file(self):
         # Check if the dialog is already open, and return if it is
         if self.new_behavior_dialog_open:
@@ -532,17 +445,14 @@ class BehaviorLogger:
         if self.behavior_key_file_var.get() and self.behavior_key_file_var.get() != 'No file found':
             if not self.save_behaviors():
                 self.new_behavior_dialog_open = False
-                return  # If saving the current file fails, do not proceed
+                return
     
         # Create the dialog for entering the new file name
-        dialog = tk.Toplevel(self.root)  # Create a new Toplevel window
-        dialog.title("New Behavior Key File")  # Set the title of the window
+        dialog = tk.Toplevel(self.root)
+        dialog.title("New Behavior Key File")
     
-        # Set fixed size (300x150) for the dialog
-        dialog.geometry("300x150")
-    
-        # Center the dialog on the screen
-        self.center_window(dialog, width=500, height=200)
+        # Center the dialog on the screen and set dimensions
+        self.center_window(dialog, width=350, height=150)
     
         # Create a label and entry for the file name input
         label = tk.Label(dialog, text="Enter a name for the new Behavior Key file:")
@@ -590,20 +500,11 @@ class BehaviorLogger:
             finally:
                 dialog.destroy()
                 self.new_behavior_dialog_open = False  # Reset the flag when dialog is closed
-    
-        # Function to exit the program
-        def exit_program():
-            dialog.destroy()
-            self.on_closing()
-    
+        
         # Create OK button
         ok_button = tk.Button(dialog, text="OK", command=on_ok)
         ok_button.pack(pady=5)
-    
-        # Create Exit Program button
-        exit_button = tk.Button(dialog, text="Exit Program", command=exit_program)
-        exit_button.pack(pady=5)
-    
+        
         # Make the dialog modal to prevent interaction with the main window until it's closed
         dialog.grab_set()
         dialog.focus_set()  # Ensure the dialog has focus
