@@ -15,9 +15,6 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 
 class BehaviorLogger:
     def __init__(self):
-        # Create a '.resume' directory if it doesn't exist
-        self.resume_dir = 'resume'
-        os.makedirs(self.resume_dir, exist_ok=True)
         # Initialize behavior types
         self.behaviors = []
         self.point_behaviors = {}
@@ -38,7 +35,7 @@ class BehaviorLogger:
         self.current_frame = 0
         self.is_paused = False
         self.frame_skip = 1  # Frame skipping for playback speed
-        self.frame_skip_factors = [1, 2, 5, 10, 20, 30]  # Skips 1 frame (normal), 2 frames, etc.
+        self.frame_skip_factors = [1, 2, 5, 8, 15, 20, 30, 40, 50]
         self.current_speed_index = 0  # Start at normal speed (index 0 in the frame_skip_factors list)
         self.frame_skip = self.frame_skip_factors[self.current_speed_index]  # Initial frame skipping (normal speed)
         # Initialize session-related variables
@@ -57,12 +54,7 @@ class BehaviorLogger:
         self.behaviors = [["", "", "point"] for _ in range(20)]  # Initialize with 20 blank behaviors
         self.point_behaviors = {}
         self.state_behaviors = {}     
-        self.new_behavior_dialog_open = False   
-        # Initialize Display variables
-        monitors = get_monitors()
-        self.primary_monitor = next((m for m in monitors if m.is_primary), monitors[0])
-        self.primary_screen_width = self.primary_monitor.width
-        self.primary_screen_height = self.primary_monitor.height        
+        self.new_behavior_dialog_open = False          
         # Initialize the Tk root window
         self.root = tk.Tk()
         self.root.withdraw()  # Start hidden
@@ -74,12 +66,24 @@ class BehaviorLogger:
         self.bold_font = tkfont.Font(family="Helvetica",  size=9, weight="bold")
         self.fg_color='black'
         self.bg_color='gray75'
+
+        # Create a '.resume' directory if it doesn't exist
+        self.resume_dir = 'resume'
+        os.makedirs(self.resume_dir, exist_ok=True)
+
+        # Initialize Display variables
+        monitors = get_monitors()
+        self.primary_monitor = next((m for m in monitors if m.is_primary), monitors[0])
+        self.primary_screen_width = self.primary_monitor.width
+        self.primary_screen_height = self.primary_monitor.height
+
         # Start the video selection process 
         self.select_video_file()
+
         # Start Tkinter main event loop
         self.root.mainloop()
 
-    def center_window(self, window, width=900, height=850):
+    def center_window(self, window, width=1025, height=725):
         # Ensure Tkinter root is updated before fetching screen size
         self.root.update_idletasks()
 
@@ -344,7 +348,6 @@ class BehaviorLogger:
         cancel_button.grid(row=1, column=4, columnspan=2, pady=10)
 
         # Set window size, center it, and make sure it's on top
-        self.root.geometry('800x1200')  # Set window size to 800x1200
         self.center_window(self.root)  # Center the window on the screen
         self.root.attributes('-topmost', True)  # Ensure the window stays on top
         self.root.deiconify()  # Make the root window visible
@@ -814,45 +817,79 @@ class BehaviorLogger:
             self.state_behaviors = {row[1]: row[0] for row in self.behaviors if row[2] == 'state' and row[1]}
             self.all_behaviors = {row[1]: (row[0], row[2]) for row in self.behaviors if row[1]}
             # Start the frame update within the Tkinter event loop
-            self.run()
+            self.update_frame()
         except Exception as e:
             print(f"Error in run_video_processing: {e}")
             self.on_closing()
-
-    def run(self):
-        self.update_frame()
 
     def update_frame(self):
         try:
             if not self.is_paused:
                 start_time = time.time()
-                # Read and display the next frame
-                ret, frame = self.cap.read()
-                if not ret or frame is None:
-                    # End of video
-                    self.is_paused = True
-                    self.current_frame = self.total_frames
-                    return
-                else:
-                    self.current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
-                    self.display_frame(frame)
-                # Skip the next frame_skip - 1 frames
-                for _ in range(self.frame_skip - 1):
-                    ret, _ = self.cap.read()
-                    if not ret:
+
+                # For playback speeds <= 10x, use regular frame skipping logic
+                if self.frame_skip <= 8:
+                    # Read and display the next frame
+                    ret, frame = self.cap.read()
+                    if not ret or frame is None:
+                        # End of video
                         self.is_paused = True
                         self.current_frame = self.total_frames
-                        break
+                        return
                     else:
                         self.current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
-                # Calculate the time taken to process frames
-                processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
-                # Calculate the delay to maintain original FPS, adjusted for processing time
-                delay = max(1, int(1000 / self.fps - processing_time))
-                self.video_window.after(delay, self.update_frame)
+                        self.display_frame(frame)
+
+                    # Skip the next frame_skip - 1 frames
+                    for _ in range(self.frame_skip - 1):
+                        ret, _ = self.cap.read()
+                        if not ret:
+                            self.is_paused = True
+                            self.current_frame = self.total_frames
+                            break
+                        else:
+                            self.current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
+
+                    # Calculate the time taken to process frames
+                    processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+                    # Calculate the delay to maintain original FPS, adjusted for processing time
+                    delay = max(1, int(1000 / self.fps - processing_time))
+                    self.video_window.after(delay, self.update_frame)
+
+                # For playback speeds > 10x, skip large chunks of frames
+                else:
+                    if self.frame_skip == 15:
+                        seconds_to_skip = 4
+                    elif self.frame_skip == 20:
+                        seconds_to_skip = 6
+                    elif self.frame_skip == 30:
+                        seconds_to_skip = 9
+                    elif self.frame_skip == 40:
+                        seconds_to_skip = 12
+                    elif self.frame_skip == 50:
+                        seconds_to_skip = 15
+
+                    # Use skip_seconds method to skip ahead
+                    self.skip_seconds(seconds_to_skip)
+
+                    # Read and display only one frame after the large skip
+                    ret, frame = self.cap.read()
+                    if not ret or frame is None:
+                        # End of video
+                        self.is_paused = True
+                        self.current_frame = self.total_frames
+                        return
+                    else:
+                        self.current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
+                        self.display_frame(frame)
+
+                    # For high-speed playback, delay the next frame update to simulate skipping
+                    self.video_window.after(100, self.update_frame)
+
             else:
                 # If paused, check again after a short delay
                 self.video_window.after(100, self.update_frame)
+
         except Exception as e:
             print(f"Error in update_frame: {e}")
             self.on_closing()
@@ -903,10 +940,10 @@ class BehaviorLogger:
             self.current_speed_index = max(0, self.current_speed_index - 1)  # Decrease speed, but don't go below index 0
         else:
             self.current_speed_index = min(len(self.frame_skip_factors) - 1, self.current_speed_index + 1)  # Increase speed, but don't exceed the max index
-    
+
         # Set the new frame skipping factor
         self.frame_skip = self.frame_skip_factors[self.current_speed_index]
-    
+
         # Output the current speed for debugging
         print(f"Playback speed: {self.frame_skip}x")
 
