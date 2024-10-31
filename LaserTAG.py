@@ -63,10 +63,7 @@ class BehaviorLogger:
         self.video_window = None  # For displaying video frames
         self.canvas = None       # Canvas for drawing annotations
         self.photo_image = None  # Frame to hold the video and annotations
-        self.bold_font = tkfont.Font(family="Helvetica",  size=9, weight="bold")
-        self.fg_color='black'
-        self.bg_color='gray75'
-
+        self.edit_dialog = None
         # Create a '.resume' directory if it doesn't exist
         self.resume_dir = 'resume'
         os.makedirs(self.resume_dir, exist_ok=True)
@@ -83,21 +80,12 @@ class BehaviorLogger:
         # Start Tkinter main event loop
         self.root.mainloop()
 
-    def center_window(self, window, width=1025, height=725):
-        # Ensure Tkinter root is updated before fetching screen size
+    def center_window(self, window, width, height):
         self.root.update_idletasks()
-
-        # Get screen width and height using Tkinter
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-
-        # Calculate x and y coordinates to center the window
-        x_offset = int((screen_width - width) / 2)
-        y_offset = int((screen_height - height) / 2)
-
-        # Set the window size and position
+        x_offset = int((self.primary_screen_width - width) / 2)
+        y_offset = int((self.primary_screen_height - height) / 2)
         window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-    
+
     def select_video_file(self):
         # Open file dialog to select the video file
         self.video_path = filedialog.askopenfilename(
@@ -148,8 +136,10 @@ class BehaviorLogger:
         if self.ask_resume_window is not None:
             self.ask_resume_window.destroy()
         self.ask_resume_window = tk.Toplevel(self.root)
+        self.ask_resume_window.withdraw()
         self.ask_resume_window.title("Resume")
         self.center_window(self.ask_resume_window, width=400, height=150)
+        self.ask_resume_window.deiconify()
         label = tk.Label(self.ask_resume_window, text=f"A previous session was found for {video_name}.\n\nWhat would you like to do?")
         label.pack(pady=10)
         button_frame = tk.Frame(self.ask_resume_window)
@@ -204,35 +194,34 @@ class BehaviorLogger:
         self.show_behavior_key_editor()
 
     def on_closing(self):
+        # Save session state
         try:
             self.save_session_state()
         except Exception as e:
             print(f"Error saving session state: {e}")
-        try:
-            if hasattr(self, 'cap'):
-                if self.cap.isOpened():
-                    self.cap.release()
-                    print("Video capture released.")
-        except Exception as e:
-            print(f"Error releasing video capture: {e}")
-    
-        try:
-            if self.csv_file and not self.csv_file.closed:
+        
+        # Release video capture if open
+        if hasattr(self, 'cap') and self.cap.isOpened():
+            self.cap.release()
+            print("Video capture released.")
+        
+        # Close CSV file if open
+        if self.csv_file and not self.csv_file.closed:
+            try:
                 self.csv_file.close()
                 print("CSV file closed.")
-        except Exception as e:
-            print(f"Error closing CSV file: {e}")
-    
-        try:
-            if self.video_window:
-                self.video_window.destroy()
-        except Exception as e:
-            print(f"Error destroying video window: {e}")
-    
-        try:
+            except Exception as e:
+                print(f"Error closing CSV file: {e}")
+        
+        # Destroy video window if it exists
+        if self.video_window and self.video_window.winfo_exists():
+            self.video_window.destroy()
+            print("Video window destroyed.")
+        
+        # Destroy root window
+        if self.root and self.root.winfo_exists():
             self.root.destroy()
-        except Exception as e:
-            print(f"Error destroying root window: {e}")
+            print("Root window destroyed.")
 
     def save_session_state(self):
         try:
@@ -248,6 +237,12 @@ class BehaviorLogger:
                 print(f"Session state saved as {self.session_state_file}")
         except Exception as e:
             print(f"Error saving session state {e}")
+
+    def auto_save_session_state(self):
+        self.save_session_state()
+        # Schedule the next auto-save in 10 seconds (10,000 milliseconds)
+        if self.video_window and self.video_window.winfo_exists():
+            self.video_window.after(10000, self.auto_save_session_state)
 
     def show_behavior_key_editor(self):
         # Set the window title to "Behavior Key Editor"
@@ -324,7 +319,7 @@ class BehaviorLogger:
             point_radio.pack(side='left')
             state_radio.pack(side='left')
 
-            # Entry widget for ME Group
+            # Widget for ME Group
             me_group_entry = tk.Entry(self.root, textvariable=me_group_var)
             me_group_entry.grid(row=i + 2, column=3, padx=5, pady=2)
 
@@ -338,21 +333,24 @@ class BehaviorLogger:
         delete_button = tk.Button(self.root, text="Delete", command=self.delete_behavior_key)
         delete_button.grid(row=0, column=6, columnspan=2, pady=10)
 
-        # "Start Video" button with bold text
-        bold_font = tkfont.Font(weight="bold")
-        start_video_button = tk.Button(self.root, text="Start Video", font=bold_font, command=self.start_video)
+        # "Start Video" button
+        start_button_font = tkfont.Font(weight="bold")
+        start_video_button = tk.Button(self.root, text="Start Video", font=start_button_font, command=self.start_video)
         start_video_button.grid(row=1, column=6, columnspan=2, pady=10)
 
         # "Cancel" button
         cancel_button = tk.Button(self.root, text="Cancel", command=self.on_closing)
         cancel_button.grid(row=1, column=4, columnspan=2, pady=10)
 
+        # Message about reserved keys
+        reserved_keys_label = tk.Label(self.root, text="Note: 'w', 'a', 's', 'd' are reserved for video navigation. Do not assign these keys to a behavior.")
+        reserved_keys_label.grid(row=22, column=0, columnspan=4, padx=5, pady=5, sticky='w')
+
         # Set window size, center it, and make sure it's on top
-        self.center_window(self.root)  # Center the window on the screen
-        self.root.attributes('-topmost', True)  # Ensure the window stays on top
-        self.root.deiconify()  # Make the root window visible
+        self.center_window(self.root, width=1025, height=725)
+        self.root.attributes('-topmost', True)
+        self.root.deiconify()
         self.update_behavior_key_editor()
-        # Trigger the behavior key selection programmatically
         if behavior_files:
             self.behavior_key_file_var_changed()
 
@@ -626,34 +624,46 @@ class BehaviorLogger:
             # Save the behaviors before starting the video
             if not self.save_behaviors():
                 return  # If saving fails, exit
-
-        # If no behaviors are defined, prompt the user to add behaviors
-        if all(not name.get().strip() for name in self.name_vars):
+        
+        # Check if no behaviors are defined
+        if all(not name_var.get().strip() for name_var in self.name_vars):
             messagebox.showwarning("No Behaviors Defined", "Please add behaviors before starting the video.")
             return
 
+        # Check for reserved keys ('w', 'a', 's', 'd') in shortcut keys
+        reserved_keys = {'w', 'a', 's', 'd'}
+        assigned_keys = set()
+        for key_var in self.key_vars:
+            key = key_var.get().strip().lower()
+            if key:
+                if key in reserved_keys:
+                    messagebox.showwarning(
+                        "Invalid Shortcut Key",
+                        f"The key '{key}' is reserved for video navigation. Please assign a different key."
+                    )
+                    return  # Prevent starting the video
+                if key in assigned_keys:
+                    messagebox.showwarning(
+                        "Duplicate Shortcut Key",
+                        f"The key '{key}' is assigned to multiple behaviors. Please assign unique keys."
+                    )
+                    return  # Prevent starting the video
+                assigned_keys.add(key)
+        
         # Set the behavior key file path based on the selected file
         selected_file = self.behavior_key_file_var.get()  # Fetch the selected file from the dropdown
         self.behavior_key_file = self.behavior_key_files.get(
             selected_file,
             os.path.abspath(selected_file)
         )
-
-        # Check if there are no behaviors defined in the editor
-        if all(not name.get().strip() for name in self.name_vars):
-            messagebox.showwarning(
-                "No Behaviors Defined",
-                "No behaviors are defined. Please add behaviors before starting the video."
-            )
-            return  # Exit if no behaviors are defined
-
+        
         # Hide root window
         self.root.withdraw()
-
+        
         # Save updated behaviors to the Behavior Key file
         if not self.save_behaviors():
             return  # If saving failed, do not proceed
-
+        
         # Create _Annotations.csv
         self.initialize_annotation_file()
 
@@ -681,118 +691,163 @@ class BehaviorLogger:
         self.current_frame = self.start_frame if hasattr(self, 'start_frame') else 0
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
 
-    
         # Calculate video frame dimensions while maintaining aspect ratio
+        self.annotations_panel_width = 350
+        self.progress_bar_height = 20
         original_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         original_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         aspect_ratio = original_width / original_height if original_height != 0 else 1.0
-    
+
         # Calculate width and height to fit within the available space
-        self.panel_width = 300  # Width of the annotation panel
-        self.bar_height = 20    # Height of the progress bar
-        max_frame_width = self.primary_screen_width - self.panel_width
-        max_frame_height = self.primary_screen_height - self.bar_height
-    
+        max_frame_width = self.primary_screen_width - self.annotations_panel_width
+        max_frame_height = self.primary_screen_height - (self.progress_bar_height * 2)
         if max_frame_width / aspect_ratio <= max_frame_height:
             self.frame_width = max_frame_width
             self.frame_height = int(self.frame_width / aspect_ratio)
         else:
             self.frame_height = max_frame_height
             self.frame_width = int(self.frame_height * aspect_ratio)
-    
         self.is_paused = False
         self.total_time = self.format_time_human_readable(self.total_frames / self.fps)
-    
-        # Update behaviors list with any changes
-        self.load_behaviors()
-    
-        # Create the video display window
+
+        # Start main GUI
         self.create_video_window()
-    
-        # Start video processing
+        self.load_behaviors()
         self.run_video_processing()
+        self.auto_save_session_state()
                         
     def create_video_window(self):
+        self.listbox_font = tkfont.Font(family="Helvetica",  size=11, weight="bold")
+        self.header_font = tkfont.Font(family="Helvetica",  size=12, weight="bold")
         self.video_window = tk.Toplevel(self.root)
         self.video_window.title(f"{self.video_name}")
         self.video_window.protocol("WM_DELETE_WINDOW", self.on_closing)
-    
+
         # Detect operating system and apply the appropriate maximize command
         current_os = platform.system()
-        if current_os == "Windows" or current_os == "Darwin":  # "Darwin" is macOS
+        if current_os == "Windows" or current_os == "Darwin":  # Darwin is macOS
             self.video_window.state('zoomed')
         elif current_os == "Linux":
-            self.video_window.attributes('-zoomed', True)    
-    
+            self.video_window.attributes('-zoomed', True)
+
         # Change the background color of the main frame to dark grey
-        main_frame = tk.Frame(self.video_window, bg=self.bg_color)
+        main_frame = tk.Frame(self.video_window)
         main_frame.pack(fill=tk.BOTH, expand=True)
-    
+
         # Create the video display frame
-        video_frame = tk.Frame(main_frame, bg=self.bg_color)
+        video_frame = tk.Frame(main_frame)
         video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-    
+
         # Increase the width of the annotations frame
-        annotations_frame = tk.Frame(main_frame, width=self.panel_width + 70, bg=self.bg_color)
+        annotations_frame = tk.Frame(main_frame, width=self.annotations_panel_width + 70)
         annotations_frame.pack(side=tk.RIGHT, fill=tk.Y, expand=False)
-    
+        
         # In the video display frame, create the Canvas for the video frame
         self.video_canvas = tk.Canvas(video_frame, width=self.frame_width, height=self.frame_height)
         self.video_canvas.pack()
-    
+
         # Create the progress bar Canvas
-        self.bar_height = 20  # Height of the progress bar itself
-        self.progress_bar_canvas = tk.Canvas(video_frame, width=self.frame_width, height=self.bar_height + 30, bg=self.bg_color)
+        self.progress_bar_canvas = tk.Canvas(video_frame, width=self.frame_width, height=self.progress_bar_height * 2)
         self.progress_bar_canvas.pack()
-    
-        # Create the State Behaviors list box
-        self.state_behaviors_label = tk.Label(annotations_frame, text="State Behaviors", font=('Helvetica', 12, 'bold'), bg=self.bg_color, fg=self.fg_color)
-        self.state_behaviors_label.pack(pady=5)
-        self.state_behaviors_listbox = tk.Listbox(annotations_frame, width=70, font=self.bold_font, bg=self.bg_color, fg=self.fg_color)
-        self.state_behaviors_listbox.pack(fill=tk.BOTH, expand=True)
-    
-        # Create the State Behaviors annotations box
-        self.state_annotations_label = tk.Label(annotations_frame, text="State Annotations", font=('Helvetica', 12, 'bold'), bg=self.bg_color, fg=self.fg_color)
-        self.state_annotations_label.pack(pady=5)
-        self.state_annotations_listbox = tk.Listbox(annotations_frame, width=70, font=self.bold_font, bg=self.bg_color, fg=self.fg_color)
-        self.state_annotations_listbox.pack(fill=tk.BOTH, expand=True)
-    
-        # Create the Point Behaviors list box
-        self.point_behaviors_label = tk.Label(annotations_frame, text="Point Behaviors", font=('Helvetica', 12, 'bold'), bg=self.bg_color, fg=self.fg_color)
-        self.point_behaviors_label.pack(pady=5)
-        self.point_behaviors_listbox = tk.Listbox(annotations_frame, width=70, font=self.bold_font, bg=self.bg_color, fg=self.fg_color)
-        self.point_behaviors_listbox.pack(fill=tk.BOTH, expand=True)
-    
-        # Create the point Behaviors annotations box
-        self.point_annotations_label = tk.Label(annotations_frame, text="Point Annotations", font=('Helvetica', 12, 'bold'), bg=self.bg_color, fg=self.fg_color)
-        self.point_annotations_label.pack(pady=5)
-        self.point_annotations_listbox = tk.Listbox(annotations_frame, width=70, font=self.bold_font, bg=self.bg_color, fg=self.fg_color)
-        self.point_annotations_listbox.pack(fill=tk.BOTH, expand=True)
-    
+
+        # State Behaviors Listbox with Scrollbar
+        self.state_behaviors_label = tk.Label(annotations_frame, text="State Behaviors", font=self.header_font)
+        self.state_behaviors_label.pack(pady=2)
+        state_behaviors_frame = tk.Frame(annotations_frame)
+        state_behaviors_frame.pack(fill=tk.BOTH, expand=True)
+        state_scrollbar = tk.Scrollbar(state_behaviors_frame, orient=tk.VERTICAL)
+        self.state_behaviors_listbox = tk.Listbox(state_behaviors_frame, width=70, font=self.listbox_font, yscrollcommand=state_scrollbar.set, height=4)
+        state_scrollbar.config(command=self.state_behaviors_listbox.yview)
+        self.state_behaviors_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        state_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Point Behaviors Listbox with Scrollbar
+        self.point_behaviors_label = tk.Label(annotations_frame, text="Point Behaviors", font=self.header_font)
+        self.point_behaviors_label.pack(pady=2)
+        point_behaviors_frame = tk.Frame(annotations_frame)
+        point_behaviors_frame.pack(fill=tk.BOTH, expand=True)
+        point_scrollbar = tk.Scrollbar(point_behaviors_frame, orient=tk.VERTICAL)
+        self.point_behaviors_listbox = tk.Listbox(point_behaviors_frame, width=70, font=self.listbox_font, yscrollcommand=point_scrollbar.set, height=4)
+        point_scrollbar.config(command=self.point_behaviors_listbox.yview)
+        self.point_behaviors_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        point_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # State Annotations Label and Sort Button
+        state_annotations_header = tk.Frame(annotations_frame)
+        state_annotations_header.pack(pady=2)
+        self.state_annotations_label = tk.Label(state_annotations_header, text="State Annotations", font=self.header_font)
+        self.state_annotations_label.pack(side=tk.LEFT)
+        state_sort_button = tk.Button(state_annotations_header, text="Sort", command=self.sort_state_annotations, width=3)
+        state_sort_button.pack(side=tk.RIGHT, padx=30)
+
+        # State Annotations Listbox with Scrollbar
+        state_annotations_frame = tk.Frame(annotations_frame)
+        state_annotations_frame.pack(fill=tk.BOTH, expand=True)
+        state_annotation_scrollbar = tk.Scrollbar(state_annotations_frame, orient=tk.VERTICAL)
+        self.state_annotations_listbox = tk.Listbox(state_annotations_frame, width=70, font=self.listbox_font, yscrollcommand=state_annotation_scrollbar.set)
+        state_annotation_scrollbar.config(command=self.state_annotations_listbox.yview)
+        self.state_annotations_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        state_annotation_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Point Annotations Label and Sort Button
+        point_annotations_header = tk.Frame(annotations_frame)
+        point_annotations_header.pack(pady=2)
+        self.point_annotations_label = tk.Label(point_annotations_header, text="Point Annotations", font=self.header_font)
+        self.point_annotations_label.pack(side=tk.LEFT)
+        point_sort_button = tk.Button(point_annotations_header, text="Sort", command=self.sort_point_annotations, width=3)
+        point_sort_button.pack(side=tk.RIGHT, padx=30)
+
+        # Point Annotations Listbox with Scrollbar
+        point_annotations_frame = tk.Frame(annotations_frame)
+        point_annotations_frame.pack(fill=tk.BOTH, expand=True)
+        point_annotation_scrollbar = tk.Scrollbar(point_annotations_frame, orient=tk.VERTICAL)
+        self.point_annotations_listbox = tk.Listbox(point_annotations_frame, width=70, font=self.listbox_font, yscrollcommand=point_annotation_scrollbar.set)
+        point_annotation_scrollbar.config(command=self.point_annotations_listbox.yview)
+        self.point_annotations_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        point_annotation_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Add dummy buttons to the annotations frame
+        buttons_frame = tk.Frame(annotations_frame)
+        buttons_frame.pack(pady=5)
+        
+        visualize_button = tk.Button(
+            buttons_frame,
+            text="Visualize Annotations",
+            command=self.visualize_annotations  # Placeholder button
+        )
+        visualize_button.pack(side=tk.LEFT, padx=0)
+        
+        summary_button = tk.Button(
+            buttons_frame,
+            text="Summary Statistics",
+            command=self.generate_summary_statistics  # Placeholder button
+        )
+        summary_button.pack(side=tk.LEFT, padx=0)
+
         # Bind events to the video_canvas
-        self.video_canvas.bind("<Button-1>", self.on_mouse_click)
         self.video_window.bind("<Key>", self.on_key_press)
         self.progress_bar_canvas.bind("<Button-1>", self.on_progress_bar_click)
-    
-        # Bind double-click events for deleting annotations
-        self.state_annotations_listbox.bind('<Double-1>', self.on_state_annotation_double_click)
-        self.point_annotations_listbox.bind('<Double-1>', self.on_point_annotation_double_click)
-    
+
         # Bind Delete key for state and point annotations
         self.state_annotations_listbox.bind('<Delete>', self.on_delete_key_press)
         self.point_annotations_listbox.bind('<Delete>', self.on_delete_key_press)
-    
-        # Bind arrow keys to navigation functions
-        self.video_window.bind("<Left>", self.on_arrow_key)
-        self.video_window.bind("<Right>", self.on_arrow_key)
-        self.video_window.bind("<Up>", self.on_arrow_key)
-        self.video_window.bind("<Down>", self.on_arrow_key)
 
-        # Bind arrow keys to navigation functions
+        # Create right-click menu
+        self.annotation_menu = tk.Menu(self.root, tearoff=0)
+        self.annotation_menu.add_command(label="Skip to Annotation", command=self.skip_to_annotation)
+        self.annotation_menu.add_command(label="Edit", command=self.show_annotation_menu)
+
+        # Bind right-click to listboxes for annotations
+        self.state_annotations_listbox.bind("<Button-3>", self.show_annotation_menu)
+        self.point_annotations_listbox.bind("<Button-3>", self.show_annotation_menu)
+
+        # Bind wasd and arrow keys to navigation functions
         self.video_window.bind("<a>", self.on_navigation_key)
         self.video_window.bind("<d>", self.on_navigation_key)
         self.video_window.bind("<w>", self.on_navigation_key)
         self.video_window.bind("<s>", self.on_navigation_key)
+        self.video_window.bind("<Left>", self.on_navigation_key)
+        self.video_window.bind("<Right>", self.on_navigation_key)
 
         # Bind spacebar for play/pause
         self.video_window.bind("<space>", lambda event: self.toggle_play_pause())
@@ -804,12 +859,48 @@ class BehaviorLogger:
         self.video_window.bind("<equal>", lambda event: self.change_playback_speed(decrease=False))
         self.video_window.bind("<plus>", lambda event: self.change_playback_speed(decrease=False))
 
-        # Load behavior lists into GUI    
+        # Load behavior lists into GUI
         self.update_behavior_listboxes()
-    
+
         # Initialize annotations display
+        self.update_annotations()                       
+
+    def sort_state_annotations(self):
+        # Sort the state_events list by start_time
+        self.state_events.sort(key=lambda x: x['start_time'] if x['start_time'] is not None else 0)
+        # Update the CSV file
+        self.save_sorted_annotations()
+        # Update the annotations display
         self.update_annotations()
-                       
+
+    def sort_point_annotations(self):
+        # Sort the point_events list by time
+        self.point_events.sort(key=lambda x: self.parse_time(x['time']) if x['time'] is not None else 0)
+        # Update the CSV file
+        self.save_sorted_annotations()
+        # Update the annotations display
+        self.update_annotations()
+
+    def save_sorted_annotations(self):
+        annotations_file = f'{self.video_name}_Annotations.csv'
+        with open(annotations_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['Name', 'Start', 'End', 'Duration', 'H_start', 'H_end'])
+            # Write state annotations
+            for event in self.state_events:
+                start_time = self.format_time_machine_readable(event['start_time'])
+                end_time = self.format_time_machine_readable(event['end_time']) if event['end_time'] is not None else ''
+                duration = self.format_time_machine_readable(event['end_time'] - event['start_time']) if event['end_time'] is not None else ''
+                H_start = self.format_time_human_readable(event['start_time'])
+                H_end = self.format_time_human_readable(event['end_time']) if event['end_time'] is not None else ''
+                writer.writerow([event['Name'], start_time, end_time, duration, H_start, H_end])
+            # Write point annotations
+            for event in self.point_events:
+                time_machine = self.format_time_machine_readable(self.parse_time(event['time']))
+                writer.writerow([event['Name'], time_machine, '', '', event['time'], ''])
+        # Flush and save the CSV file
+        self.csv_file.flush()
+
     def run_video_processing(self):
         try:
             # Load behaviors
@@ -835,7 +926,8 @@ class BehaviorLogger:
                         # End of video
                         self.is_paused = True
                         self.current_frame = self.total_frames
-                        return
+                        # Save session state
+                        self.save_session_state()    
                     else:
                         self.current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
                         self.display_frame(frame)
@@ -846,7 +938,6 @@ class BehaviorLogger:
                         if not ret:
                             self.is_paused = True
                             self.current_frame = self.total_frames
-                            break
                         else:
                             self.current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
 
@@ -878,7 +969,6 @@ class BehaviorLogger:
                         # End of video
                         self.is_paused = True
                         self.current_frame = self.total_frames
-                        return
                     else:
                         self.current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
                         self.display_frame(frame)
@@ -917,17 +1007,39 @@ class BehaviorLogger:
 
     def on_key_press(self, event):
         key = event.char
-
         if key == '\x1b':  # Escape key
             self.on_closing()
         elif key == ' ':  # Spacebar for play/pause
             self.toggle_play_pause()
         elif key == '-':  # Reduce playback speed
             self.change_playback_speed(decrease=True)
-        elif key in ['+', '=']:  # Increase playback speed ('=' is for the '+' key without shift)
+        elif key in ['+', '=']:  # Increase playback speed
             self.change_playback_speed(decrease=False)
+        elif key:
+            self.key_press(key)
+
+    def key_press(self, key_char):
+        frame_timestamp = self.current_frame / self.fps
+        formatted_timestamp = self.format_time_human_readable(frame_timestamp)
+        # Handle point behaviors
+        if key_char in self.point_behaviors:
+            Name = self.point_behaviors[key_char]
+            # Log point event and update point events list
+            self.point_events.append({'Name': Name, 'time': formatted_timestamp, 'y_position': 0})
+            # Write the event to the CSV file
+            self.csv_writer.writerow([Name, self.format_time_machine_readable(frame_timestamp), '', '', formatted_timestamp, ''])
+            self.csv_file.flush()
+            # Update point annotations display
+            self.point_annotations_listbox.insert(tk.END, f"{Name}: {formatted_timestamp}")
+            # Update the annotations and listboxes
+            self.update_annotations()
+        # Handle state behaviors
+        elif key_char in self.state_behaviors:
+            # Instead of handling directly, call handle_state_behavior
+            self.handle_state_behavior(key_char, frame_timestamp, formatted_timestamp)
         else:
-            self.key_press(ord(key))
+            # Print unhandled keys and return
+            print(f"Unhandled key press: {key_char}")
 
     def toggle_play_pause(self):
         # Toggle between play and pause
@@ -940,24 +1052,10 @@ class BehaviorLogger:
             self.current_speed_index = max(0, self.current_speed_index - 1)  # Decrease speed, but don't go below index 0
         else:
             self.current_speed_index = min(len(self.frame_skip_factors) - 1, self.current_speed_index + 1)  # Increase speed, but don't exceed the max index
-
         # Set the new frame skipping factor
         self.frame_skip = self.frame_skip_factors[self.current_speed_index]
-
         # Output the current speed for debugging
         print(f"Playback speed: {self.frame_skip}x")
-
-    def on_arrow_key(self, event):
-        key = event.keysym  # Get the symbolic name of the key (e.g., 'Left', 'Right')
-
-        if key == "Left":
-            self.skip_seconds(-10)  # Left arrow will skip 10 seconds backward
-        elif key == "Right":
-            self.skip_seconds(10)   # Right arrow will skip 10 seconds forward
-        elif key == "Up":
-            self.skip_frames(5)     # Up arrow will skip 5 frames forward
-        elif key == "Down":
-            self.skip_frames(-5)    # Down arrow will skip 5 frames backward
 
     def on_navigation_key(self, event):
         key = event.keysym  # Get the symbolic name of the key
@@ -969,6 +1067,10 @@ class BehaviorLogger:
             self.skip_frames(5)     # Up arrow or 'w' will skip 5 frames forward
         elif key == "s":
             self.skip_frames(-5)    # Down arrow or 's' will skip 5 frames backward
+        elif key == "Left":
+            self.skip_seconds(-10)  # Left arrow will skip 10 seconds backward
+        elif key == "Right":
+            self.skip_seconds(10)   # Right arrow will skip 10 seconds forward
     
     def on_progress_bar_click(self, event):
         x = event.x
@@ -980,42 +1082,8 @@ class BehaviorLogger:
         if ret:
             self.display_frame(frame)
 
-    def key_press(self, key):
-        frame_timestamp = self.current_frame / self.fps
-        formatted_timestamp = self.format_time_human_readable(frame_timestamp)
-    
-        try:
-            key_char = chr(key)
-        except ValueError:
-            key_char = None
-    
-        # Handle point behaviors
-        if key_char in self.point_behaviors:
-            Name = self.point_behaviors[key_char]
-            # Log point event and update point events list
-            self.point_events.append({'Name': Name, 'time': formatted_timestamp, 'y_position': 0})
-    
-            # Write the event to the CSV file
-            self.csv_writer.writerow([Name, self.format_time_machine_readable(frame_timestamp), '', '', formatted_timestamp, ''])
-            self.csv_file.flush()
-    
-            # Update point annotations display
-            self.point_annotations_listbox.insert(tk.END, f"{Name}: {formatted_timestamp}")
-    
-            # Update the annotations and listboxes
-            self.update_annotations()  # This updates both state and point annotations
-    
-        # Handle state behaviors
-        elif key_char in self.state_behaviors:
-            # Instead of handling directly, call handle_state_behavior
-            self.handle_state_behavior(key_char, frame_timestamp, formatted_timestamp)
-    
-        else:
-            # Print unhandled keys and return
-            print(f"Unhandled key press: {key}")
-    
     def deactivate_me_group(self, me_group, frame_timestamp, current_behavior_key):
-        """Deactivate all active state behaviors in the same mutually exclusive group, except the current one."""
+        # Deactivate all active state behaviors in the same mutually exclusive group, except the current one
         to_remove = []
         print(f"Deactivating ME group: {me_group}, except for the current behavior: {current_behavior_key}")
     
@@ -1039,8 +1107,7 @@ class BehaviorLogger:
                 for event in self.state_events:
                     if event['Name'] == Name and event['end_time'] is None:
                         event['end_time'] = frame_timestamp  # Update the end time in state_events list
-                        break
-    
+                        break    
                 to_remove.append(key)
     
         # Remove deactivated behaviors from active state behaviors
@@ -1135,90 +1202,323 @@ class BehaviorLogger:
         # Update the progress bar
         self.update_progress_bar()
 
-    def delete_state_behavior(self, event):
-        # Remove the event from the state_events list
-        self.state_events.remove(event)
-        print(f"Deleted state behavior '{event['Name']}'")
-        # Update the CSV file by removing the state behavior
-        self.update_csv_state_behavior(event)
+    def update_csv_state_behavior(self, updated_event):
+        self.delete_state_annotation(updated_event)  # Remove the old entry
+        self.csv_writer.writerow([
+            updated_event['Name'],
+            self.format_time_machine_readable(updated_event['start_time']),
+            self.format_time_machine_readable(updated_event['end_time']),
+            updated_event.get('Duration', ""),
+            updated_event.get('H_start', ""),
+            updated_event.get('H_end', "")
+        ])
+        self.csv_file.flush()  # Ensure changes are saved
 
-    def update_csv_state_behavior(self, event):
-        # Close the CSV file if it's open
-        if self.csv_file and not self.csv_file.closed:
-            self.csv_file.close()
+    def update_csv_point_behavior(self, updated_event):
+        self.delete_point_annotation(updated_event)  # Remove the old entry
+        self.csv_writer.writerow([
+            updated_event['Name'],
+            updated_event.get('H_start', ""),
+            "", "",  # End and Duration columns not used for point behaviors
+            updated_event.get('H_start', ""),
+            ""
+        ])
+        self.csv_file.flush()
+
+    def update_csv_annotation(self, updated_annotation, is_state_annotation):
         annotations_file = f'{self.video_name}_Annotations.csv'
-        # Remove the corresponding entry from the CSV file and rewrite it
-        try:
-            with open(annotations_file, 'r') as file:
-                lines = file.readlines()
-            with open(annotations_file, 'w', newline='') as file:
-                for line in lines:
-                    if not (event['Name'] in line and self.format_time_machine_readable(event['start_time']) in line):
-                        file.write(line)
-            # Reopen the CSV file and reinitialize the writer
-            self.csv_file = open(annotations_file, 'a', newline='')
-            self.csv_writer = csv.writer(self.csv_file)
-        except Exception as e:
-            print(f"An error occurred while updating the CSV: {e}")
+        with open(annotations_file, 'r') as file:
+            lines = file.readlines()
+
+        with open(annotations_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(lines[0].strip().split(','))  # Write header
+            for line in lines[1:]:
+                row = line.strip().split(',')
+                if row[0] == updated_annotation['Name'] and row[4] == updated_annotation.get('original_H_start', ''):
+                    if is_state_annotation:
+                        # Write updated state annotation
+                        writer.writerow([
+                            updated_annotation['Name'],
+                            updated_annotation['Start'],
+                            updated_annotation.get('End', ''),
+                            updated_annotation.get('Duration', ''),
+                            updated_annotation['H_start'],
+                            updated_annotation.get('H_end', ''),
+                            updated_annotation.get('Manual Edit', '')
+                        ])
+                    else:
+                        # Write updated point annotation
+                        writer.writerow([
+                            updated_annotation['Name'],
+                            updated_annotation['Start'],
+                            '',  # End time is empty for point annotations
+                            '',  # Duration is empty for point annotations
+                            updated_annotation['H_start'],
+                            '',  # H_end is empty for point annotations
+                            updated_annotation.get('Manual Edit', '')
+                        ])
+                else:
+                    writer.writerow(row)  # Write unchanged rows
 
     def update_progress_bar(self):
         self.progress_bar_canvas.delete("all")
         progress = int((self.current_frame / self.total_frames) * self.frame_width)
-        self.progress_bar_canvas.create_rectangle(0, 0, progress, self.bar_height, fill="darkblue")
+        self.progress_bar_canvas.create_rectangle(0, 0, progress, self.progress_bar_height, fill="darkblue")
         current_time = self.format_time_human_readable(self.current_frame / self.fps)
         total_time = self.format_time_human_readable(self.total_frames / self.fps)
         playback_speed = f"{self.frame_skip}x"
         
-        # Move the text below the progress bar
-        y_position_text = self.bar_height + 15  # Adjust the vertical position for the text to be below the progress bar
-        self.progress_bar_canvas.create_text(5, y_position_text, anchor=tk.W, text=f"{current_time} ({playback_speed})", fill="black", font=self.bold_font)
-        self.progress_bar_canvas.create_text(self.frame_width - 5, y_position_text, anchor=tk.E, text=total_time, fill="black", font=self.bold_font)
+        y_position_text = self.progress_bar_height + 15  # put the time text below the progress bar
+        self.progress_bar_canvas.create_text(5, y_position_text, anchor=tk.W, text=f"{current_time} ({playback_speed})", fill="black", font=self.listbox_font)
+        self.progress_bar_canvas.create_text(self.frame_width - 5, y_position_text, anchor=tk.E, text=total_time, fill="black", font=self.listbox_font)
 
     def update_annotations(self):
         # Clear the state annotations listbox
         self.state_annotations_listbox.delete(0, tk.END)
-        self.displayed_state_events = self.state_events[-12:]  # Display the last 12 events
-    
-        # Update the state annotations
-        for event in self.displayed_state_events:
+        # Display all state events
+        for event in self.state_events:
             start_time = self.format_time_human_readable(event['start_time'])
-    
-            # If the behavior is still active (no end time), show an open-ended annotation
             if event['end_time'] is None:
                 self.state_annotations_listbox.insert(tk.END, f"{event['Name']}: {start_time} - ")
             else:
                 end_time = self.format_time_human_readable(event['end_time'])
                 self.state_annotations_listbox.insert(tk.END, f"{event['Name']}: {start_time} - {end_time}")
-    
-        # Update point annotations
-        self.point_annotations_listbox.delete(0, tk.END)  # Clear old point annotations
-        self.displayed_point_events = self.point_events[-12:]  # Display the last 12 point events
-    
-        for event in self.displayed_point_events:
+        # Automatically scroll to the bottom
+        self.state_annotations_listbox.yview(tk.END)
+
+        # Clear and update point annotations
+        self.point_annotations_listbox.delete(0, tk.END)
+        for event in self.point_events:
             time_ = event['time']
             self.point_annotations_listbox.insert(tk.END, f"{event['Name']}: {time_}")
-    
-    def on_mouse_click(self, event):
-        x, y = event.x, event.y
-        self.handle_mouse_click(x, y)
+        # Save session state
+        self.save_session_state()
+        # Automatically scroll to the bottom of the list box
+        self.point_annotations_listbox.yview(tk.END)
 
-    def on_state_annotation_double_click(self, event):
-        selection = self.state_annotations_listbox.curselection()
-        if selection:
-            index = selection[0]
-            # Use the actual displayed events instead of full state_events
-            event_dict = self.displayed_state_events[index]
-            self.delete_state_behavior(event_dict)
-            self.update_annotations()
+    def show_annotation_menu(self, event):
+        # Determine the type of annotation selected (State or Point)
+        self.selected_listbox = event.widget
+        self.selected_index = self.selected_listbox.nearest(event.y)  # Get the clicked item index
+        # Determine which edit and delete functions to use based on the selected listbox
+        if self.selected_listbox == self.state_annotations_listbox:
+            edit_command = self.edit_state_annotation
+            delete_command = self.delete_state_annotation  # Use existing method
+        elif self.selected_listbox == self.point_annotations_listbox:
+            edit_command = self.edit_point_annotation
+            delete_command = self.delete_point_annotation  # Use existing method
+        else:
+            return
+        # Update the annotation menu to use the correct commands
+        self.annotation_menu = tk.Menu(self.root, tearoff=0)
+        self.annotation_menu.add_command(label="Edit", command=edit_command)
+        self.annotation_menu.add_command(label="Skip to Annotation", command=self.skip_to_annotation)
+        self.annotation_menu.add_command(label="Delete", command=delete_command)
+        # Show menu at the cursor location
+        self.annotation_menu.tk_popup(event.x_root, event.y_root)
 
-    def on_point_annotation_double_click(self, event):
-        selection = self.point_annotations_listbox.curselection()
-        if selection:
-            index = selection[0]
-            # Use the actual displayed events instead of full point_events
-            event_dict = self.displayed_point_events[index]
-            self.delete_annotation(event_dict)
-            self.update_annotations()
+    def edit_state_annotation(self):
+        if self.selected_index is None:
+            return
+
+        # Get the currently selected annotation
+        selected_annotation = self.state_events[self.selected_index]
+
+        # Load the annotation data first
+        latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_start', 'H_end') 
+
+        # Skip to annotation to edit, and pause video
+        self.skip_to_annotation()
+
+        # If an edit dialog is already open, destroy it
+        if self.edit_dialog is not None:
+            self.edit_dialog.destroy()
+            self.edit_dialog = None
+
+        # Create the edit dialog
+        self.edit_dialog = tk.Toplevel(self.root)
+        self.edit_dialog.protocol("WM_DELETE_WINDOW", self.on_edit_dialog_close)
+        self.edit_dialog.withdraw()
+        self.edit_dialog.title("Edit State Annotation")
+        self.center_window(self.edit_dialog, width=300, height=300)
+        self.edit_dialog.deiconify()
+
+        # Show current annotation in non-editable fields
+        tk.Label(self.edit_dialog, text="Current Annotation").grid(row=0, column=0, columnspan=2, pady=5)
+        tk.Label(self.edit_dialog, text="Name:").grid(row=1, column=0)
+        tk.Label(self.edit_dialog, text=latest_annotation['Name']).grid(row=1, column=1)
+        tk.Label(self.edit_dialog, text="Start:").grid(row=2, column=0)
+        tk.Label(self.edit_dialog, text=latest_annotation['H_start']).grid(row=2, column=1)
+        tk.Label(self.edit_dialog, text="End:").grid(row=3, column=0)
+        tk.Label(self.edit_dialog, text=latest_annotation['H_end']).grid(row=3, column=1)
+
+        # Editable new annotation fields
+        tk.Label(self.edit_dialog, text="New Annotation").grid(row=4, column=0, columnspan=2, pady=5)
+        new_entries = {}
+        new_fields = ['Name', 'H_start', 'H_end']
+        for i, field in enumerate(new_fields, start=5):
+            tk.Label(self.edit_dialog, text=f"{field}:").grid(row=i, column=0)
+            entry = tk.Entry(self.edit_dialog)
+            entry.insert(0, latest_annotation.get(field, ""))  # Use latest_annotation here
+            entry.grid(row=i, column=1)  # Add grid() call to display the entry box
+            new_entries[field] = entry
+
+        # Save button
+        save_button = tk.Button(
+            self.edit_dialog, text="Save",
+            command=lambda: self.save_state_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_start'])
+        )
+        save_button.grid(row=i + 1, column=0, columnspan=2, pady=10)
+
+    def on_edit_dialog_close(self):
+        if self.edit_dialog is not None:
+            self.edit_dialog.destroy()
+            self.edit_dialog = None
+            # Save session state
+            self.save_session_state()
+
+    def edit_point_annotation(self):
+        if self.selected_index is None:
+            return
+
+        # Retrieve the selected point annotation
+        selected_annotation = self.point_events[self.selected_index]
+        
+        # Load the latest annotation data from the CSV
+        latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_start')
+
+        # Skip to annotation to edit, and pause video
+        self.skip_to_annotation()
+
+        # If an edit dialog is already open, destroy it
+        if self.edit_dialog is not None:
+            self.edit_dialog.destroy()
+            self.edit_dialog = None
+
+        # Create the edit dialog
+        self.edit_dialog = tk.Toplevel(self.root)
+        self.edit_dialog.protocol("WM_DELETE_WINDOW", self.on_edit_dialog_close)
+        self.edit_dialog.withdraw()
+        self.edit_dialog.title("Edit Point Annotation")
+        self.center_window(self.edit_dialog, width=300, height=300)
+        self.edit_dialog.deiconify()
+
+        # Display current annotation in non-editable fields
+        tk.Label(self.edit_dialog, text="Current Annotation").grid(row=0, column=0, columnspan=2, pady=5)
+        tk.Label(self.edit_dialog, text="Name:").grid(row=1, column=0)
+        tk.Label(self.edit_dialog, text=latest_annotation['Name']).grid(row=1, column=1)
+        tk.Label(self.edit_dialog, text="Start:").grid(row=2, column=0)
+        tk.Label(self.edit_dialog, text=latest_annotation['H_start']).grid(row=2, column=1)
+
+        # Editable new annotation fields
+        tk.Label(self.edit_dialog, text="New Annotation").grid(row=4, column=0, columnspan=2, pady=5)
+        new_entries = {}
+        new_fields = ['Name', 'H_start']
+        for i, field in enumerate(new_fields, start=5):
+            tk.Label(self.edit_dialog, text=f"{field}:").grid(row=i, column=0)
+            entry = tk.Entry(self.edit_dialog)
+            entry.insert(0, latest_annotation.get(field, ""))  # Load the latest annotation data
+            entry.grid(row=i, column=1)
+            new_entries[field] = entry
+
+        # Save button
+        save_button = tk.Button(
+            self.edit_dialog, text="Save",
+            command=lambda: self.save_point_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_start'])
+        )
+        save_button.grid(row=i + 1, column=0, columnspan=2, pady=10)
+
+    def load_annotation_data(self, annotation, *fields):
+        annotations_file = f'{self.video_name}_Annotations.csv'
+        latest_annotation = {field: "" for field in fields}
+        with open(annotations_file, 'r') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                # For state, compare 'Name' and 'H_start' after converting to human-readable format
+                if (
+                    row['Name'] == annotation['Name'] and
+                    row['H_start'] == self.format_time_human_readable(annotation.get('start_time', 0))
+                ):
+                    latest_annotation.update({field: row.get(field, "") for field in fields})
+                    break
+                # For point, check 'H_start' only
+                elif 'H_start' in row and row['H_start'] == annotation.get('time'):
+                    latest_annotation.update({field: row.get(field, "") for field in fields})
+                    break
+        return latest_annotation
+
+    def skip_to_annotation(self):
+        if self.selected_index is None:
+            return
+        # Determine whether it is a state or point annotation
+        annotation = self.state_events[self.selected_index] if self.selected_listbox == self.state_annotations_listbox else self.point_events[self.selected_index]
+        start_time = annotation.get('start_time') if 'start_time' in annotation else self.parse_time(annotation.get('time'))
+
+        if start_time is not None:
+            # Calculate the frame to skip to
+            target_frame = int(start_time * self.fps)
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+            self.current_frame = target_frame
+
+            # Read and display the frame at the new position
+            ret, frame = self.cap.read()
+            if ret:
+                self.display_frame(frame)
+            # Pause the video to stay on the frame
+            self.is_paused = True
+            self.update_progress_bar()
+            # Save session state
+            self.save_session_state()    
+
+    def save_state_annotation(self, new_entries, dialog, current_annotation, original_H_start):
+        updated_annotation = {field: new_entries[field].get() for field in ['Name', 'H_start', 'H_end']}
+        start_time = self.parse_time(updated_annotation['H_start'])
+        end_time = self.parse_time(updated_annotation['H_end'])
+        
+        # Calculate duration
+        duration = end_time - start_time if end_time and start_time else None
+        updated_annotation['Start'] = self.format_time_machine_readable(start_time)
+        updated_annotation['End'] = self.format_time_machine_readable(end_time)
+        updated_annotation['Duration'] = self.format_time_machine_readable(duration)
+        updated_annotation['Manual Edit'] = 'manual edit'
+        updated_annotation['original_H_start'] = original_H_start
+
+        # Update CSV with new annotation data
+        self.update_csv_annotation(updated_annotation, is_state_annotation=True)
+
+        # Reload annotations
+        self.load_annotations()
+        self.update_annotations()
+
+        # Save session state
+        self.save_session_state()
+
+        # Close the dialog after saving
+        self.edit_dialog.destroy()
+        self.edit_dialog = None
+
+    def save_point_annotation(self, new_entries, dialog, current_annotation, original_H_start):
+        updated_annotation = {field: new_entries[field].get() for field in ['Name', 'H_start']}
+        start_time = self.parse_time(updated_annotation['H_start'])
+        
+        updated_annotation['Start'] = self.format_time_machine_readable(start_time)
+        updated_annotation['Manual Edit'] = 'manual edit'
+        updated_annotation['original_H_start'] = original_H_start
+
+        # Update CSV with new point annotation data
+        self.update_csv_annotation(updated_annotation, is_state_annotation=False)
+
+        # Reload annotations
+        self.load_annotations()
+        self.update_annotations()
+
+        # Save session state
+        self.save_session_state()
+
+        # Close the dialog after saving
+        self.edit_dialog.destroy()
+        self.edit_dialog = None
 
     def on_delete_key_press(self, event):
         # Check which listbox triggered the event
@@ -1227,45 +1527,99 @@ class BehaviorLogger:
         if widget == self.state_annotations_listbox:
             selection = self.state_annotations_listbox.curselection()
             if selection:
-                index = selection[0]
-                # Use the actual number of displayed state events
-                event_dict = self.displayed_state_events[index]
-                self.delete_state_behavior(event_dict)
+                index = selection[0]  # Get the index of the selected item
+                self.delete_state_annotation(index)  # Pass index to delete function
                 self.update_annotations()
+                # Save session state
+                self.save_session_state()
         # Check if it's from the point annotations listbox
         elif widget == self.point_annotations_listbox:
             selection = self.point_annotations_listbox.curselection()
             if selection:
-                index = selection[0]
-                # Use the actual number of displayed point events
-                event_dict = self.displayed_point_events[index]
-                self.delete_annotation(event_dict)
+                index = selection[0]  # Get the index of the selected item
+                self.delete_point_annotation(index)
                 self.update_annotations()
+                # Save session state
+                self.save_session_state()
 
-    def delete_annotation(self, event):
-        # Remove the event from the point_events list
-        self.point_events.remove(event)
-        # Close the CSV file if it's open
-        if self.csv_file and not self.csv_file.closed:
-            self.csv_file.close()
-        # Use the correct annotations file name
+    def remove_csv_annotation(self, event, is_state_annotation):
         annotations_file = f'{self.video_name}_Annotations.csv'
-        # Remove the corresponding entry from the CSV file
-        try:
-            with open(annotations_file, 'r') as file:
-                lines = file.readlines()
-            with open(annotations_file, 'w', newline='') as file:
-                for line in lines:
-                    if not (event['Name'] in line and event['time'] in line):
-                        file.write(line)
-            # Reopen the CSV file and reinitialize the writer
-            self.csv_file = open(annotations_file, 'a', newline='')
-            self.csv_writer = csv.writer(self.csv_file)
-        except Exception as e:
-            print(f"An error occurred while deleting annotation: {e}")
+        with open(annotations_file, 'r') as file:
+            lines = file.readlines()
+        with open(annotations_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(lines[0].strip().split(','))  # Write the header
+            for line in lines[1:]:
+                row = line.strip().split(',')
+                # Match state by start time and name; match point by H_start and name
+                if is_state_annotation and row[0] == event['Name'] and row[1] == self.format_time_machine_readable(event['start_time']):
+                    continue  # Skip this line to delete it
+                elif not is_state_annotation and row[0] == event['Name'] and row[4] == event['time']:
+                    continue  # Skip this line for point deletion
+                writer.writerow(row)
+
+    def delete_state_annotation(self, index=None):
+        if index is None:
+            index = self.selected_index
+        if isinstance(index, int) and 0 <= index < len(self.state_events):
+            event = self.state_events.pop(index)
+            print(f"Deleted state behavior '{event['Name']}'")
+            # Update CSV file to remove the annotation
+            self.remove_csv_annotation(event, is_state_annotation=True)
+            # Update the annotations display
+            self.update_annotations()
+            # Save session state
+            self.save_session_state()
+
+    def delete_point_annotation(self, index=None):
+        if index is None:
+            index = self.selected_index
+        if isinstance(index, int) and 0 <= index < len(self.point_events):
+            event = self.point_events.pop(index)
+            print(f"Deleted point annotation '{event['Name']}'")
+            # Update CSV file to remove the annotation
+            self.remove_csv_annotation(event, is_state_annotation=False)
+            # Update the annotations display
+            self.update_annotations()
+            # Save session state
+            self.save_session_state()
+
+    def update_csv_state_behavior(self, updated_event):
+        annotations_file = f'{self.video_name}_Annotations.csv'
+        with open(annotations_file, 'r') as file:
+            lines = file.readlines()
+
+        with open(annotations_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(lines[0].strip().split(','))  # Write header
+            for line in lines[1:]:
+                row = line.strip().split(',')
+                if row[0] == updated_event['Name'] and row[1] == self.format_time_machine_readable(updated_event['start_time']):
+                    continue  # Skip the row to delete it
+                writer.writerow(row)
+
+    def update_csv_point_behavior(self, updated_event):
+        annotations_file = f'{self.video_name}_Annotations.csv'
+        with open(annotations_file, 'r') as file:
+            lines = file.readlines()
+
+        with open(annotations_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(lines[0].strip().split(','))  # Write header
+            for line in lines[1:]:
+                row = line.strip().split(',')
+                if row[0] == updated_event['Name'] and row[1] == updated_event.get('H_start'):
+                    continue  # Skip the row to delete it
+                writer.writerow(row)
 
     def format_time_human_readable(self, elapsed_time):
         if elapsed_time is None:
+            return "NA"
+        # Try to convert to float if it's a string representation of a number
+        try:
+            elapsed_time = float(elapsed_time) if isinstance(elapsed_time, str) else elapsed_time
+        except ValueError:
+            # Return 'NA' or another default value if it's not a valid time
             return "NA"
         minutes, seconds = divmod(elapsed_time, 60)
         return f"{int(minutes)}m{seconds:.2f}s"
@@ -1296,10 +1650,80 @@ class BehaviorLogger:
         new_frame = max(0, min(self.total_frames - 1, new_frame))
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, new_frame)
         self.current_frame = new_frame
+        # Read and display the frame at the new position
+        ret, frame = self.cap.read()
+        if ret:
+            self.display_frame(frame)
+        else:
+            # Handle case where frame cannot be read
+            print("Failed to read frame after skipping frames.")
+            self.is_paused = True
+            self.current_frame = self.total_frames
+            # Optionally display the last valid frame
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.total_frames - 1)
+            ret, frame = self.cap.read()
+            if ret:
+                self.display_frame(frame)
 
     def skip_seconds(self, seconds):
         frames_to_skip = int(seconds * self.fps)
         self.skip_frames(frames_to_skip)
+
+    def visualize_annotations(self):
+        # Close any existing dialogs
+        if hasattr(self, 'visualize_dialog') and self.visualize_dialog is not None:
+            self.visualize_dialog.destroy()
+            self.visualize_dialog = None
+        if self.edit_dialog is not None:
+            self.edit_dialog.destroy()
+            self.edit_dialog = None
+
+        # Create the dialog
+        self.visualize_dialog = tk.Toplevel(self.root)
+        self.visualize_dialog.protocol("WM_DELETE_WINDOW", lambda: self.close_dialog('visualize_dialog'))
+        self.visualize_dialog.withdraw()
+        self.visualize_dialog.title("Visualize Annotations")
+        self.center_window(self.visualize_dialog, width=300, height=150)
+        self.visualize_dialog.deiconify()
+
+        # Make sure the window stays on top
+        self.visualize_dialog.attributes('-topmost', True)
+        self.visualize_dialog.after_idle(self.visualize_dialog.attributes, '-topmost', True)
+
+        # Add content to the dialog
+        tk.Label(self.visualize_dialog, text="Annotations Visualization\nIs Currently Under Development.").pack(pady=20)
+        tk.Button(self.visualize_dialog, text="OK", command=lambda: self.close_dialog('visualize_dialog')).pack(pady=5)
+
+    def generate_summary_statistics(self):
+        # Close any existing dialogs
+        if hasattr(self, 'summary_dialog') and self.summary_dialog is not None:
+            self.summary_dialog.destroy()
+            self.summary_dialog = None
+        if self.edit_dialog is not None:
+            self.edit_dialog.destroy()
+            self.edit_dialog = None
+
+        # Create the dialog
+        self.summary_dialog = tk.Toplevel(self.root)
+        self.summary_dialog.protocol("WM_DELETE_WINDOW", lambda: self.close_dialog('summary_dialog'))
+        self.summary_dialog.withdraw()
+        self.summary_dialog.title("Generate Summary Statistics")
+        self.center_window(self.summary_dialog, width=300, height=150)
+        self.summary_dialog.deiconify()
+
+        # Make sure the window stays on top
+        self.summary_dialog.attributes('-topmost', True)
+        self.summary_dialog.after_idle(self.summary_dialog.attributes, '-topmost', True)
+
+        # Add content to the dialog
+        tk.Label(self.summary_dialog, text="Generating Summary Statistics\n Is Currently Under Development").pack(pady=20)
+        tk.Button(self.summary_dialog, text="OK", command=lambda: self.close_dialog('summary_dialog')).pack(pady=5)
+
+    def close_dialog(self, dialog_name):
+        dialog = getattr(self, dialog_name, None)
+        if dialog is not None:
+            dialog.destroy()
+            setattr(self, dialog_name, None)
 
 if __name__ == "__main__":
     BehaviorLogger()
