@@ -10,6 +10,7 @@ import json
 from screeninfo import get_monitors
 import tkinter as tk
 import tkinter.font as tkfont
+from tkinter import ttk
 from tkinter import filedialog, messagebox, simpledialog
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 
@@ -266,9 +267,9 @@ class BehaviorLogger:
         self.behavior_key_file_var = tk.StringVar()
 
         if behavior_files:
-            self.behavior_key_file_var.set(behavior_files[0])  # Default value
+            self.behavior_key_file_var.set(behavior_files[0])
         else:
-            self.behavior_key_file_var.set('No file found')  # Set to a placeholder if no files are found
+            self.behavior_key_file_var.set('No file found')
 
         # Create OptionMenu to select behavior key file
         self.behavior_key_menu = tk.OptionMenu(behavior_key_frame, self.behavior_key_file_var, *(behavior_files if behavior_files else ['No file found']))
@@ -347,7 +348,7 @@ class BehaviorLogger:
         reserved_keys_label.grid(row=22, column=0, columnspan=4, padx=5, pady=5, sticky='w')
 
         # Set window size, center it, and make sure it's on top
-        self.center_window(self.root, width=1025, height=725)
+        self.center_window(self.root, width=970, height=700)
         self.root.attributes('-topmost', True)
         self.root.deiconify()
         self.update_behavior_key_editor()
@@ -449,17 +450,17 @@ class BehaviorLogger:
                 return
     
         # Create the dialog for entering the new file name
-        dialog = tk.Toplevel(self.root)
-        dialog.title("New Behavior Key File")
-    
-        # Center the dialog on the screen and set dimensions
-        self.center_window(dialog, width=350, height=150)
+        new_file_dialog = tk.Toplevel(self.root)
+        new_file_dialog.withdraw()
+        new_file_dialog.title("New Behavior Key File")
+        self.center_window(new_file_dialog, width=350, height=150)
+        new_file_dialog.deiconify()
     
         # Create a label and entry for the file name input
-        label = tk.Label(dialog, text="Enter a name for the new Behavior Key file:")
+        label = tk.Label(new_file_dialog, text="Enter a name for the new Behavior Key file:")
         label.pack(pady=10)
     
-        entry = tk.Entry(dialog, width=30)  # Set a fixed width for the entry
+        entry = tk.Entry(new_file_dialog, width=30)  # Set a fixed width for the entry
         entry.pack(padx=20, pady=5)
         entry.focus_set()  # Set the focus on the Entry widget
     
@@ -503,19 +504,19 @@ class BehaviorLogger:
                 self.new_behavior_dialog_open = False  # Reset the flag when dialog is closed
         
         # Create OK button
-        ok_button = tk.Button(dialog, text="OK", command=on_ok)
+        ok_button = tk.Button(new_file_dialog, text="OK", command=on_ok)
         ok_button.pack(pady=5)
         
         # Make the dialog modal to prevent interaction with the main window until it's closed
-        dialog.grab_set()
-        dialog.focus_set()  # Ensure the dialog has focus
+        new_file_dialog.grab_set()
+        new_file_dialog.focus_set()  # Ensure the dialog has focus
     
         # Ensure the dialog stays in front of the main window
-        dialog.attributes('-topmost', True)
-        dialog.after_idle(dialog.attributes, '-topmost', True)
+        new_file_dialog.attributes('-topmost', True)
+        new_file_dialog.after_idle(new_file_dialog.attributes, '-topmost', True)
     
         # Add a protocol to reset the flag when the window is closed
-        dialog.protocol("WM_DELETE_WINDOW", lambda: [dialog.destroy(), setattr(self, 'new_behavior_dialog_open', False)])
+        new_file_dialog.protocol("WM_DELETE_WINDOW", lambda: [new_file_dialog.destroy(), setattr(self, 'new_behavior_dialog_open', False)])
             
     def save_behaviors(self):
         # Check if a behavior key file is selected
@@ -692,7 +693,7 @@ class BehaviorLogger:
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
 
         # Calculate video frame dimensions while maintaining aspect ratio
-        self.annotations_panel_width = 350
+        self.annotations_panel_width = 320
         self.progress_bar_height = 20
         original_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         original_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -717,8 +718,8 @@ class BehaviorLogger:
         self.auto_save_session_state()
                         
     def create_video_window(self):
-        self.listbox_font = tkfont.Font(family="Helvetica",  size=11, weight="bold")
-        self.header_font = tkfont.Font(family="Helvetica",  size=12, weight="bold")
+        self.listbox_font = tkfont.Font(family="Helvetica", size=11, weight="bold")
+        self.header_font = tkfont.Font(family="Helvetica", size=12, weight="bold")
         self.video_window = tk.Toplevel(self.root)
         self.video_window.title(f"{self.video_name}")
         self.video_window.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -730,7 +731,7 @@ class BehaviorLogger:
         elif current_os == "Linux":
             self.video_window.attributes('-zoomed', True)
 
-        # Change the background color of the main frame to dark grey
+        # Main frame
         main_frame = tk.Frame(self.video_window)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -738,110 +739,163 @@ class BehaviorLogger:
         video_frame = tk.Frame(main_frame)
         video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Increase the width of the annotations frame
+        # Annotations frame
         annotations_frame = tk.Frame(main_frame, width=self.annotations_panel_width + 70)
-        annotations_frame.pack(side=tk.RIGHT, fill=tk.Y, expand=False)
-        
-        # In the video display frame, create the Canvas for the video frame
+        annotations_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        # Configure grid layout for annotations_frame
+        annotations_frame.columnconfigure(0, weight=1)
+        annotations_frame.rowconfigure(1, weight=1)  # For state behaviors
+        annotations_frame.rowconfigure(3, weight=1)  # For point behaviors
+        annotations_frame.rowconfigure(5, weight=1)  # For state annotations
+        annotations_frame.rowconfigure(7, weight=1)  # For point annotations
+
+        # Video canvas
         self.video_canvas = tk.Canvas(video_frame, width=self.frame_width, height=self.frame_height)
         self.video_canvas.pack()
 
-        # Create the progress bar Canvas
+        # Progress bar canvas
         self.progress_bar_canvas = tk.Canvas(video_frame, width=self.frame_width, height=self.progress_bar_height * 2)
         self.progress_bar_canvas.pack()
 
-        # State Behaviors Listbox with Scrollbar
-        self.state_behaviors_label = tk.Label(annotations_frame, text="State Behaviors", font=self.header_font)
-        self.state_behaviors_label.pack(pady=2)
-        state_behaviors_frame = tk.Frame(annotations_frame)
-        state_behaviors_frame.pack(fill=tk.BOTH, expand=True)
-        state_scrollbar = tk.Scrollbar(state_behaviors_frame, orient=tk.VERTICAL)
-        self.state_behaviors_listbox = tk.Listbox(state_behaviors_frame, width=70, font=self.listbox_font, yscrollcommand=state_scrollbar.set, height=4)
-        state_scrollbar.config(command=self.state_behaviors_listbox.yview)
-        self.state_behaviors_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        state_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Styles for Treeview widgets
+        self.style = ttk.Style()
+        self.style.configure("Treeview", font=self.listbox_font)
+        self.style.configure("Treeview.Heading", font=self.header_font)
 
-        # Point Behaviors Listbox with Scrollbar
-        self.point_behaviors_label = tk.Label(annotations_frame, text="Point Behaviors", font=self.header_font)
-        self.point_behaviors_label.pack(pady=2)
-        point_behaviors_frame = tk.Frame(annotations_frame)
-        point_behaviors_frame.pack(fill=tk.BOTH, expand=True)
-        point_scrollbar = tk.Scrollbar(point_behaviors_frame, orient=tk.VERTICAL)
-        self.point_behaviors_listbox = tk.Listbox(point_behaviors_frame, width=70, font=self.listbox_font, yscrollcommand=point_scrollbar.set, height=4)
-        point_scrollbar.config(command=self.point_behaviors_listbox.yview)
-        self.point_behaviors_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        point_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # --- State Behaviors Label and Listbox ---
+        state_behaviors_header = tk.Frame(annotations_frame)
+        state_behaviors_header.grid(row=0, column=0, sticky="ew")
+        self.state_behaviors_label = tk.Label(state_behaviors_header, text="State Behaviors", font=self.header_font)
+        self.state_behaviors_label.pack(side=tk.LEFT)
 
-        # State Annotations Label and Sort Button
+        state_behaviors_container = tk.Frame(annotations_frame)
+        state_behaviors_container.grid(row=1, column=0, sticky="nsew")
+        state_behaviors_container.grid_propagate(False)
+
+        self.state_behaviors_listbox = tk.Listbox(state_behaviors_container, width=30, height=7, font=self.listbox_font)
+        self.state_behaviors_listbox.pack(fill="both", expand=True)
+
+        # --- Point Behaviors Label and Listbox ---
+        point_behaviors_header = tk.Frame(annotations_frame)
+        point_behaviors_header.grid(row=2, column=0, sticky="ew")
+        self.point_behaviors_label = tk.Label(point_behaviors_header, text="Point Behaviors", font=self.header_font)
+        self.point_behaviors_label.pack(side=tk.LEFT)
+
+        point_behaviors_container = tk.Frame(annotations_frame)
+        point_behaviors_container.grid(row=3, column=0, sticky="nsew")
+        point_behaviors_container.grid_propagate(False)
+
+        # Initialize point annotations listbox correctly here
+        self.point_annotations_listbox = tk.Listbox(point_behaviors_container, width=30, height=7, font=self.listbox_font)
+        self.point_annotations_listbox.pack(fill="both", expand=True)
+
+        # Create a frame for the point behaviors list box
+        point_behaviors_container = tk.Frame(annotations_frame)
+        point_behaviors_container.grid(row=3, column=0, sticky="nsew")
+        point_behaviors_container.grid_propagate(False)
+
+        # Initialize the point behaviors list box here
+        self.point_behaviors_listbox = tk.Listbox(point_behaviors_container, width=30, height=7, font=self.listbox_font)
+        self.point_behaviors_listbox.pack(fill="both", expand=True)
+
+        # Adjust row weights to control height of listboxes in the grid
+        annotations_frame.rowconfigure(1, weight=0)
+        annotations_frame.rowconfigure(3, weight=0)
+        annotations_frame.rowconfigure(5, weight=1)
+        annotations_frame.rowconfigure(7, weight=1)
+
+        # --- State Annotations Label ---
         state_annotations_header = tk.Frame(annotations_frame)
-        state_annotations_header.pack(pady=2)
+        state_annotations_header.grid(row=4, column=0, sticky="ew")
         self.state_annotations_label = tk.Label(state_annotations_header, text="State Annotations", font=self.header_font)
         self.state_annotations_label.pack(side=tk.LEFT)
         state_sort_button = tk.Button(state_annotations_header, text="Sort", command=self.sort_state_annotations, width=3)
         state_sort_button.pack(side=tk.RIGHT, padx=30)
 
-        # State Annotations Listbox with Scrollbar
-        state_annotations_frame = tk.Frame(annotations_frame)
-        state_annotations_frame.pack(fill=tk.BOTH, expand=True)
-        state_annotation_scrollbar = tk.Scrollbar(state_annotations_frame, orient=tk.VERTICAL)
-        self.state_annotations_listbox = tk.Listbox(state_annotations_frame, width=70, font=self.listbox_font, yscrollcommand=state_annotation_scrollbar.set)
-        state_annotation_scrollbar.config(command=self.state_annotations_listbox.yview)
-        self.state_annotations_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        state_annotation_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # --- State Annotations Treeview and Scrollbar ---
+        state_annotations_container = tk.Frame(annotations_frame)
+        state_annotations_container.grid(row=5, column=0, sticky="nsew")
+        state_annotations_container.columnconfigure(0, weight=1)
+        state_annotations_container.rowconfigure(0, weight=1)
 
-        # Point Annotations Label and Sort Button
+        self.state_annotations_tree = ttk.Treeview(
+            state_annotations_container, columns=("Name", "Start", "End"), show='headings'
+        )
+        state_scrollbar = tk.Scrollbar(state_annotations_container, orient=tk.VERTICAL, command=self.state_annotations_tree.yview)
+        self.state_annotations_tree.configure(yscrollcommand=state_scrollbar.set)
+        self.state_annotations_tree.heading("Name", text="Name")
+        self.state_annotations_tree.heading("Start", text="Start")
+        self.state_annotations_tree.heading("End", text="End")
+        self.state_annotations_tree.column("Name", width=100)
+        self.state_annotations_tree.column("Start", width=100)
+        self.state_annotations_tree.column("End", width=100)
+        self.state_annotations_tree.grid(row=0, column=0, sticky="nsew")
+        state_scrollbar.grid(row=0, column=1, sticky="ns")
+
+        # --- Point Annotations Label ---
         point_annotations_header = tk.Frame(annotations_frame)
-        point_annotations_header.pack(pady=2)
+        point_annotations_header.grid(row=6, column=0, sticky="ew")
         self.point_annotations_label = tk.Label(point_annotations_header, text="Point Annotations", font=self.header_font)
         self.point_annotations_label.pack(side=tk.LEFT)
         point_sort_button = tk.Button(point_annotations_header, text="Sort", command=self.sort_point_annotations, width=3)
         point_sort_button.pack(side=tk.RIGHT, padx=30)
 
-        # Point Annotations Listbox with Scrollbar
-        point_annotations_frame = tk.Frame(annotations_frame)
-        point_annotations_frame.pack(fill=tk.BOTH, expand=True)
-        point_annotation_scrollbar = tk.Scrollbar(point_annotations_frame, orient=tk.VERTICAL)
-        self.point_annotations_listbox = tk.Listbox(point_annotations_frame, width=70, font=self.listbox_font, yscrollcommand=point_annotation_scrollbar.set)
-        point_annotation_scrollbar.config(command=self.point_annotations_listbox.yview)
-        self.point_annotations_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        point_annotation_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # --- Point Annotations Treeview and Scrollbar ---
+        point_annotations_container = tk.Frame(annotations_frame)
+        point_annotations_container.grid(row=7, column=0, sticky="nsew")
+        point_annotations_container.columnconfigure(0, weight=1)
+        point_annotations_container.rowconfigure(0, weight=1)
 
-        # Add dummy buttons to the annotations frame
+        self.point_annotations_tree = ttk.Treeview(
+            point_annotations_container, columns=("Name", "Time"), show='headings'
+        )
+        point_scrollbar = tk.Scrollbar(point_annotations_container, orient=tk.VERTICAL, command=self.point_annotations_tree.yview)
+        self.point_annotations_tree.configure(yscrollcommand=point_scrollbar.set)
+        self.point_annotations_tree.heading("Name", text="Name")
+        self.point_annotations_tree.heading("Time", text="Time")
+        self.point_annotations_tree.column("Name", width=100)
+        self.point_annotations_tree.column("Time", width=100)
+        self.point_annotations_tree.grid(row=0, column=0, sticky="nsew")
+        point_scrollbar.grid(row=0, column=1, sticky="ns")
+
+        # --- Buttons Frame ---
         buttons_frame = tk.Frame(annotations_frame)
-        buttons_frame.pack(pady=5)
-        
+        buttons_frame.grid(row=8, column=0, pady=5, sticky="ew")
+
         visualize_button = tk.Button(
             buttons_frame,
             text="Visualize Annotations",
-            command=self.visualize_annotations  # Placeholder button
+            command=self.visualize_annotations
         )
         visualize_button.pack(side=tk.LEFT, padx=0)
-        
+
         summary_button = tk.Button(
             buttons_frame,
             text="Summary Statistics",
-            command=self.generate_summary_statistics  # Placeholder button
+            command=self.generate_summary_statistics
         )
         summary_button.pack(side=tk.LEFT, padx=0)
 
-        # Bind events to the video_canvas
+        # --- Event Bindings ---
         self.video_window.bind("<Key>", self.on_key_press)
         self.progress_bar_canvas.bind("<Button-1>", self.on_progress_bar_click)
 
-        # Bind Delete key for state and point annotations
-        self.state_annotations_listbox.bind('<Delete>', self.on_delete_key_press)
-        self.point_annotations_listbox.bind('<Delete>', self.on_delete_key_press)
-
-        # Create right-click menu
+        # Right-click menu
         self.annotation_menu = tk.Menu(self.root, tearoff=0)
+        self.annotation_menu.add_command(label="Edit", command=self.edit_annotation)
         self.annotation_menu.add_command(label="Skip to Annotation", command=self.skip_to_annotation)
-        self.annotation_menu.add_command(label="Edit", command=self.show_annotation_menu)
+        self.annotation_menu.add_command(label="Delete", command=self.delete_annotation)
 
-        # Bind right-click to listboxes for annotations
-        self.state_annotations_listbox.bind("<Button-3>", self.show_annotation_menu)
-        self.point_annotations_listbox.bind("<Button-3>", self.show_annotation_menu)
+        # Bind right-click to treeviews
+        self.state_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
+        self.point_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
 
-        # Bind wasd and arrow keys to navigation functions
+        # Bind Delete key
+        self.state_annotations_tree.bind('<Delete>', self.on_delete_key_press)
+        self.point_annotations_tree.bind('<Delete>', self.on_delete_key_press)
+
+        # Bind navigation keys
         self.video_window.bind("<a>", self.on_navigation_key)
         self.video_window.bind("<d>", self.on_navigation_key)
         self.video_window.bind("<w>", self.on_navigation_key)
@@ -849,21 +903,17 @@ class BehaviorLogger:
         self.video_window.bind("<Left>", self.on_navigation_key)
         self.video_window.bind("<Right>", self.on_navigation_key)
 
-        # Bind spacebar for play/pause
+        # Bind play/pause
         self.video_window.bind("<space>", lambda event: self.toggle_play_pause())
 
-        # Bind "-" key to decrease playback speed
+        # Bind playback speed keys
         self.video_window.bind("<minus>", lambda event: self.change_playback_speed(decrease=True))
-
-        # Bind "=" and "+" keys to increase playback speed
         self.video_window.bind("<equal>", lambda event: self.change_playback_speed(decrease=False))
         self.video_window.bind("<plus>", lambda event: self.change_playback_speed(decrease=False))
 
-        # Load behavior lists into GUI
+        # Load behaviors and annotations
         self.update_behavior_listboxes()
-
-        # Initialize annotations display
-        self.update_annotations()                       
+        self.update_annotations()
 
     def sort_state_annotations(self):
         # Sort the state_events list by start_time
@@ -1274,48 +1324,59 @@ class BehaviorLogger:
         self.progress_bar_canvas.create_text(self.frame_width - 5, y_position_text, anchor=tk.E, text=total_time, fill="black", font=self.listbox_font)
 
     def update_annotations(self):
-        # Clear the state annotations listbox
-        self.state_annotations_listbox.delete(0, tk.END)
-        # Display all state events
-        for event in self.state_events:
-            start_time = self.format_time_human_readable(event['start_time'])
-            if event['end_time'] is None:
-                self.state_annotations_listbox.insert(tk.END, f"{event['Name']}: {start_time} - ")
-            else:
-                end_time = self.format_time_human_readable(event['end_time'])
-                self.state_annotations_listbox.insert(tk.END, f"{event['Name']}: {start_time} - {end_time}")
-        # Automatically scroll to the bottom
-        self.state_annotations_listbox.yview(tk.END)
+        # Clear the state annotations treeview
+        self.state_annotations_tree.delete(*self.state_annotations_tree.get_children())
 
-        # Clear and update point annotations
-        self.point_annotations_listbox.delete(0, tk.END)
+        # Populate the state annotations treeview
+        for event in self.state_events:
+            name = event['Name']
+            start_time = self.format_time_human_readable(event['start_time'])
+            end_time = self.format_time_human_readable(event['end_time']) if event['end_time'] else ''
+            self.state_annotations_tree.insert('', tk.END, values=(name, start_time, end_time))
+
+        # Scroll to the bottom of the state annotations treeview
+        state_items = self.state_annotations_tree.get_children()
+        if state_items:
+            self.state_annotations_tree.see(state_items[-1])
+
+        # Clear the point annotations treeview
+        self.point_annotations_tree.delete(*self.point_annotations_tree.get_children())
+
+        # Populate the point annotations treeview
         for event in self.point_events:
+            name = event['Name']
             time_ = event['time']
-            self.point_annotations_listbox.insert(tk.END, f"{event['Name']}: {time_}")
-        # Save session state
-        self.save_session_state()
-        # Automatically scroll to the bottom of the list box
-        self.point_annotations_listbox.yview(tk.END)
+            self.point_annotations_tree.insert('', tk.END, values=(name, time_))
+
+        # Scroll to the bottom of the point annotations treeview
+        point_items = self.point_annotations_tree.get_children()
+        if point_items:
+            self.point_annotations_tree.see(point_items[-1])
 
     def show_annotation_menu(self, event):
-        # Determine the type of annotation selected (State or Point)
-        self.selected_listbox = event.widget
-        self.selected_index = self.selected_listbox.nearest(event.y)  # Get the clicked item index
-        # Determine which edit and delete functions to use based on the selected listbox
-        if self.selected_listbox == self.state_annotations_listbox:
-            edit_command = self.edit_state_annotation
-            delete_command = self.delete_state_annotation  # Use existing method
-        elif self.selected_listbox == self.point_annotations_listbox:
-            edit_command = self.edit_point_annotation
-            delete_command = self.delete_point_annotation  # Use existing method
-        else:
+        # Determine which treeview was clicked
+        widget = event.widget
+        self.selected_treeview = widget
+
+        # Get selected item
+        item_id = widget.identify_row(event.y)
+        if not item_id:
             return
-        # Update the annotation menu to use the correct commands
+
+        widget.selection_set(item_id)
+        self.selected_item = item_id
+
+        # Set the selected index
+        if self.selected_treeview == self.state_annotations_tree:
+            self.selected_index = self.state_annotations_tree.index(self.selected_item)
+        else:
+            self.selected_index = self.point_annotations_tree.index(self.selected_item)
+
+        # Create the menu
         self.annotation_menu = tk.Menu(self.root, tearoff=0)
-        self.annotation_menu.add_command(label="Edit", command=edit_command)
+        self.annotation_menu.add_command(label="Edit", command=self.edit_annotation)
         self.annotation_menu.add_command(label="Skip to Annotation", command=self.skip_to_annotation)
-        self.annotation_menu.add_command(label="Delete", command=delete_command)
-        # Show menu at the cursor location
+        self.annotation_menu.add_command(label="Delete", command=self.delete_annotation)
         self.annotation_menu.tk_popup(event.x_root, event.y_root)
 
     def edit_state_annotation(self):
@@ -1324,6 +1385,7 @@ class BehaviorLogger:
 
         # Get the currently selected annotation
         selected_annotation = self.state_events[self.selected_index]
+
 
         # Load the annotation data first
         latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_start', 'H_end') 
@@ -1341,7 +1403,7 @@ class BehaviorLogger:
         self.edit_dialog.protocol("WM_DELETE_WINDOW", self.on_edit_dialog_close)
         self.edit_dialog.withdraw()
         self.edit_dialog.title("Edit State Annotation")
-        self.center_window(self.edit_dialog, width=300, height=300)
+        self.center_window(self.edit_dialog, width=275, height=250)
         self.edit_dialog.deiconify()
 
         # Show current annotation in non-editable fields
@@ -1401,7 +1463,7 @@ class BehaviorLogger:
         self.edit_dialog.protocol("WM_DELETE_WINDOW", self.on_edit_dialog_close)
         self.edit_dialog.withdraw()
         self.edit_dialog.title("Edit Point Annotation")
-        self.center_window(self.edit_dialog, width=300, height=300)
+        self.center_window(self.edit_dialog, width=275, height=250)
         self.edit_dialog.deiconify()
 
         # Display current annotation in non-editable fields
@@ -1449,27 +1511,52 @@ class BehaviorLogger:
         return latest_annotation
 
     def skip_to_annotation(self):
-        if self.selected_index is None:
+        if not hasattr(self, 'selected_treeview') or not self.selected_item:
             return
-        # Determine whether it is a state or point annotation
-        annotation = self.state_events[self.selected_index] if self.selected_listbox == self.state_annotations_listbox else self.point_events[self.selected_index]
-        start_time = annotation.get('start_time') if 'start_time' in annotation else self.parse_time(annotation.get('time'))
 
+        values = self.selected_treeview.item(self.selected_item, 'values')
+
+        # Determine the type of annotation
+        if self.selected_treeview == self.state_annotations_tree:
+            start_time_str = values[1]
+        else:
+            start_time_str = values[1]
+
+        start_time = self.parse_time(start_time_str)
         if start_time is not None:
-            # Calculate the frame to skip to
             target_frame = int(start_time * self.fps)
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
             self.current_frame = target_frame
 
-            # Read and display the frame at the new position
             ret, frame = self.cap.read()
             if ret:
                 self.display_frame(frame)
-            # Pause the video to stay on the frame
+
             self.is_paused = True
             self.update_progress_bar()
-            # Save session state
-            self.save_session_state()    
+            self.save_session_state()
+
+    def edit_annotation(self):
+        if not hasattr(self, 'selected_treeview') or not self.selected_item:
+            return
+
+        if self.selected_treeview == self.state_annotations_tree:
+            # Call the edit method without passing extra arguments
+            self.edit_state_annotation()
+        else:
+            # Call the edit method without passing extra arguments
+            self.edit_point_annotation()
+
+    def delete_annotation(self):
+        if not hasattr(self, 'selected_treeview') or not self.selected_item:
+            return
+
+        if self.selected_treeview == self.state_annotations_tree:
+            index = self.state_annotations_tree.index(self.selected_item)
+            self.delete_state_annotation(index)
+        else:
+            index = self.point_annotations_tree.index(self.selected_item)
+            self.delete_point_annotation(index)
 
     def save_state_annotation(self, new_entries, dialog, current_annotation, original_H_start):
         updated_annotation = {field: new_entries[field].get() for field in ['Name', 'H_start', 'H_end']}
@@ -1521,26 +1608,21 @@ class BehaviorLogger:
         self.edit_dialog = None
 
     def on_delete_key_press(self, event):
-        # Check which listbox triggered the event
         widget = event.widget
-        # Check if it's from the state annotations listbox
-        if widget == self.state_annotations_listbox:
-            selection = self.state_annotations_listbox.curselection()
-            if selection:
-                index = selection[0]  # Get the index of the selected item
-                self.delete_state_annotation(index)  # Pass index to delete function
-                self.update_annotations()
-                # Save session state
-                self.save_session_state()
-        # Check if it's from the point annotations listbox
-        elif widget == self.point_annotations_listbox:
-            selection = self.point_annotations_listbox.curselection()
-            if selection:
-                index = selection[0]  # Get the index of the selected item
+        if widget == self.state_annotations_tree:
+            selected_items = widget.selection()
+            for item in selected_items:
+                index = widget.index(item)
+                self.delete_state_annotation(index)
+            self.update_annotations()
+            self.save_session_state()
+        elif widget == self.point_annotations_tree:
+            selected_items = widget.selection()
+            for item in selected_items:
+                index = widget.index(item)
                 self.delete_point_annotation(index)
-                self.update_annotations()
-                # Save session state
-                self.save_session_state()
+            self.update_annotations()
+            self.save_session_state()
 
     def remove_csv_annotation(self, event, is_state_annotation):
         annotations_file = f'{self.video_name}_Annotations.csv'
