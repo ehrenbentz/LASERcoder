@@ -500,7 +500,7 @@ class BehaviorLogger:
                 print(f"File Error: An error occurred while creating the file: {e}")
                 return
             finally:
-                dialog.destroy()
+                new_file_dialog.destroy()
                 self.new_behavior_dialog_open = False  # Reset the flag when dialog is closed
         
         # Create OK button
@@ -694,7 +694,7 @@ class BehaviorLogger:
 
         # Calculate video frame dimensions while maintaining aspect ratio
         self.annotations_panel_width = 320
-        self.progress_bar_height = 20
+        self.progress_bar_height = 25
         original_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         original_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         aspect_ratio = original_width / original_height if original_height != 0 else 1.0
@@ -867,17 +867,17 @@ class BehaviorLogger:
             buttons_frame,
             text="Visualize Annotations",
             command=self.visualize_annotations,
-            width=15
+            width=20
         )
-        visualize_button.pack(side=tk.LEFT, padx=0)
+        visualize_button.pack(side=tk.LEFT, padx=3)
 
         summary_button = tk.Button(
             buttons_frame,
             text="Summary Statistics",
             command=self.generate_summary_statistics,
-            width=18
+            width=20
         )
-        summary_button.pack(side=tk.LEFT, padx=0)
+        summary_button.pack(side=tk.LEFT, padx=3)
 
 
         # --- Event Bindings ---
