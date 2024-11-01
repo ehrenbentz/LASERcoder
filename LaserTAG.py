@@ -866,16 +866,19 @@ class BehaviorLogger:
         visualize_button = tk.Button(
             buttons_frame,
             text="Visualize Annotations",
-            command=self.visualize_annotations
+            command=self.visualize_annotations,
+            width=15
         )
         visualize_button.pack(side=tk.LEFT, padx=0)
 
         summary_button = tk.Button(
             buttons_frame,
             text="Summary Statistics",
-            command=self.generate_summary_statistics
+            command=self.generate_summary_statistics,
+            width=18
         )
         summary_button.pack(side=tk.LEFT, padx=0)
+
 
         # --- Event Bindings ---
         self.video_window.bind("<Key>", self.on_key_press)
