@@ -35,56 +35,76 @@ class BehaviorLogger:
         self.total_frames = 0
         self.current_frame = 0
         self.is_paused = False
-        self.frame_skip = 1  # Frame skipping for playback speed
+        self.frame_skip = 1
         self.frame_skip_factors = [1, 2, 5, 8, 15, 20, 30, 40, 50]
-        self.current_speed_index = 0  # Start at normal speed (index 0 in the frame_skip_factors list)
-        self.frame_skip = self.frame_skip_factors[self.current_speed_index]  # Initial frame skipping (normal speed)
+        self.current_speed_index = 0
+        self.frame_skip = self.frame_skip_factors[self.current_speed_index]
         # Initialize session-related variables
-        self.saved_state = None  # Will hold the saved session state
-        self.start_frame = 0     # Frame to start from when resuming a session
-        self.ask_resume_window = None  # Handle for the "ask resume" window
+        self.saved_state = None
+        self.start_frame = 0
+        self.ask_resume_window = None
         # Initialize video file related variables
-        self.video_path = None    # Path to the selected video file
-        self.video_name = None    # Name of the selected video
-        self.session_state_file = None  # Path to the session state file
+        self.video_path = None
+        self.video_name = None
+        self.session_state_file = None
         self.csv_writer = None
         self.csv_file = None
         # Initialize Behavior Key related variables
         self.behavior_key_files = {}
         self.behavior_key_file_var = None
-        self.behaviors = [["", "", "point"] for _ in range(20)]  # Initialize with 20 blank behaviors
+        self.behaviors = [["", "", "point"] for _ in range(20)]
         self.point_behaviors = {}
-        self.state_behaviors = {}     
-        self.new_behavior_dialog_open = False          
-        # Initialize the Tk root window
-        self.root = tk.Tk()
-        self.root.withdraw()  # Start hidden
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing) # Handle window closing
+        self.state_behaviors = {}
+        self.new_behavior_dialog_open = False
         #Initialize tkinter GUI elements
-        self.video_window = None  # For displaying video frames
-        self.canvas = None       # Canvas for drawing annotations
-        self.photo_image = None  # Frame to hold the video and annotations
+        self.video_window = None
+        self.canvas = None
+        self.photo_image = None
         self.edit_dialog = None
         # Create a '.resume' directory if it doesn't exist
         self.resume_dir = 'resume'
         os.makedirs(self.resume_dir, exist_ok=True)
+        # Initialize the Tk root window
+        self.get_monitor_info()
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        # Center the root window on the primary monitor
+        self.center_window(self.root, width=970, height=700)
+        # Start the video selection process 
+        self.select_video_file()
+        # Start Tkinter main event loop
+        self.root.mainloop()
 
-        # Initialize Display variables
+    def get_monitor_info(self):
+        """Retrieve primary monitor's details and set them as instance attributes."""
         monitors = get_monitors()
         self.primary_monitor = next((m for m in monitors if m.is_primary), monitors[0])
         self.primary_screen_width = self.primary_monitor.width
         self.primary_screen_height = self.primary_monitor.height
-
-        # Start the video selection process 
-        self.select_video_file()
-
-        # Start Tkinter main event loop
-        self.root.mainloop()
+        self.primary_screen_x = self.primary_monitor.x  # X coordinate of primary monitor
+        self.primary_screen_y = self.primary_monitor.y  # Y coordinate of primary monitor
+        # Print primary monitor details
+        print(f"Primary Monitor: {self.primary_monitor.name}")
+        print(f"Width: {self.primary_screen_width}, Height: {self.primary_screen_height}")
+        print(f"X Coordinate: {self.primary_screen_x}, Y Coordinate: {self.primary_screen_y}")
+        # Print details of all monitors
+        for monitor in monitors:
+            print(f"Monitor: {monitor.name}, Primary: {monitor.is_primary}, Width: {monitor.width}, "
+                  f"Height: {monitor.height}, X: {monitor.x}, Y: {monitor.y}")
+        # Return monitor attributes if needed (though they are now stored as instance variables)
+        return self.primary_screen_height, self.primary_screen_width, self.primary_monitor
 
     def center_window(self, window, width, height):
-        self.root.update_idletasks()
-        x_offset = int((self.primary_screen_width - width) / 2)
-        y_offset = int((self.primary_screen_height - height) / 2)
+        # Calculate the center position based on the primary monitor dimensions and position
+        if len(get_monitors()) == 1:
+            # No additional offset for single-monitor setup
+            x_offset = int((self.primary_screen_width - width) / 2)
+            y_offset = int((self.primary_screen_height - height) / 2)
+        else:
+            # Apply offset for multi-monitor setups
+            x_offset = int((self.primary_screen_width - width) / 2) + self.primary_screen_x
+            y_offset = int((self.primary_screen_height - height) / 2) + self.primary_screen_y
         window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
 
     def select_video_file(self):
