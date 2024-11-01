@@ -36,7 +36,7 @@ class BehaviorLogger:
         self.current_frame = 0
         self.is_paused = False
         self.frame_skip = 1
-        self.frame_skip_factors = [1, 2, 5, 8, 15, 20, 30, 40, 50]
+        self.frame_skip_factors = [1, 2, 5, 8, 10, 15, 20, 30, 40, 50]
         self.current_speed_index = 0
         self.frame_skip = self.frame_skip_factors[self.current_speed_index]
         # Initialize session-related variables
@@ -697,6 +697,9 @@ class BehaviorLogger:
             # Updated header without 'Total Count/Duration' column
             self.csv_writer.writerow(['Name', 'Start', 'End', 'Duration', 'H_start', 'H_end'])
 
+        # Load behaviors
+        self.load_behaviors()
+
         # Load annotations
         self.load_annotations()
 
@@ -713,23 +716,35 @@ class BehaviorLogger:
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
 
         # Calculate video frame dimensions while maintaining aspect ratio
-        self.annotations_panel_width = 320
+        self.annotations_panel_width = 300
         self.progress_bar_height = 25
         original_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         original_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         aspect_ratio = original_width / original_height if original_height != 0 else 1.0
 
-        # Calculate width and height to fit within the available space
+        # Maximum dimensions available for the video frame
         max_frame_width = self.primary_screen_width - self.annotations_panel_width
-        max_frame_height = self.primary_screen_height - (self.progress_bar_height * 2)
-        if max_frame_width / aspect_ratio <= max_frame_height:
-            self.frame_width = max_frame_width
-            self.frame_height = int(self.frame_width / aspect_ratio)
-        else:
-            self.frame_height = max_frame_height
-            self.frame_width = int(self.frame_height * aspect_ratio)
+        max_frame_height = self.primary_screen_height - (self.progress_bar_height + 100)
+
+        # First, calculate potential width and height based on max_frame_width constraint
+        calculated_width = min(max_frame_width, int(max_frame_height * aspect_ratio))
+        calculated_height = int(calculated_width / aspect_ratio)
+
+        # If height exceeds max_frame_height, scale down to fit within height constraint
+        if calculated_height > max_frame_height:
+            calculated_height = max_frame_height
+            calculated_width = int(calculated_height * aspect_ratio)
+
+        # Set frame dimensions
+        self.frame_width = calculated_width
+        self.frame_height = calculated_height
         self.is_paused = False
         self.total_time = self.format_time_human_readable(self.total_frames / self.fps)
+
+        if abs((calculated_width / calculated_height) - aspect_ratio) < 0.01:
+            print("Aspect ratio maintained.")
+        else:
+            print("Aspect ratio not maintained.")
 
         # Start main GUI
         self.create_video_window()
@@ -755,7 +770,7 @@ class BehaviorLogger:
         main_frame = tk.Frame(self.video_window)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Create the video display frame
+        # Video display frame
         video_frame = tk.Frame(main_frame)
         video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -774,58 +789,61 @@ class BehaviorLogger:
         self.video_canvas = tk.Canvas(video_frame, width=self.frame_width, height=self.frame_height)
         self.video_canvas.pack()
 
-        # Progress bar canvas
-        self.progress_bar_canvas = tk.Canvas(video_frame, width=self.frame_width, height=self.progress_bar_height * 2)
+        # Progress bar
+        self.progress_bar_frame = tk.Frame(video_frame, bg="black", padx=2, pady=2)
+        self.progress_bar_frame.pack()
+        self.progress_bar_canvas = tk.Canvas(self.progress_bar_frame, width=self.frame_width, height=self.progress_bar_height + 25, bg="lightgrey")
         self.progress_bar_canvas.pack()
+        self.initialize_progress_bar()
 
-        # Styles for Treeview widgets
+        # Configure Treeview styles
         self.style = ttk.Style()
         self.style.configure("Treeview", font=self.listbox_font)
         self.style.configure("Treeview.Heading", font=self.header_font)
 
-        # --- State Behaviors Label and Listbox ---
+        # State Behaviors Treeview (Smaller Height)
         state_behaviors_header = tk.Frame(annotations_frame)
         state_behaviors_header.grid(row=0, column=0, sticky="ew")
         self.state_behaviors_label = tk.Label(state_behaviors_header, text="State Behaviors", font=self.header_font)
         self.state_behaviors_label.pack(side=tk.LEFT)
 
-        state_behaviors_container = tk.Frame(annotations_frame)
-        state_behaviors_container.grid(row=1, column=0, sticky="nsew")
-        state_behaviors_container.grid_propagate(False)
+        self.state_behaviors_tree = ttk.Treeview(annotations_frame, columns=("Name", "Key", "ME Group"), show="headings", height=4)
+        self.state_behaviors_tree.heading("Name", text="Name")
+        self.state_behaviors_tree.heading("Key", text="Key")
+        self.state_behaviors_tree.heading("ME Group", text="ME Group")
+        self.state_behaviors_tree.column("Name", width=100)
+        self.state_behaviors_tree.column("Key", width=50)
+        self.state_behaviors_tree.column("ME Group", width=80)
+        self.state_behaviors_tree.grid(row=1, column=0, sticky="nsew")
 
-        self.state_behaviors_listbox = tk.Listbox(state_behaviors_container, width=30, height=7, font=self.listbox_font)
-        self.state_behaviors_listbox.pack(fill="both", expand=True)
+        # Configure the "active" tag for the state_behaviors_tree
+        self.state_behaviors_tree.tag_configure("active", foreground="darkorange")
 
-        # --- Point Behaviors Label and Listbox ---
+        # Point Behaviors Treeview (Smaller Height)
         point_behaviors_header = tk.Frame(annotations_frame)
         point_behaviors_header.grid(row=2, column=0, sticky="ew")
         self.point_behaviors_label = tk.Label(point_behaviors_header, text="Point Behaviors", font=self.header_font)
         self.point_behaviors_label.pack(side=tk.LEFT)
 
-        point_behaviors_container = tk.Frame(annotations_frame)
-        point_behaviors_container.grid(row=3, column=0, sticky="nsew")
-        point_behaviors_container.grid_propagate(False)
+        self.point_behaviors_tree = ttk.Treeview(annotations_frame, columns=("Name", "Key", "ME Group"), show="headings", height=4)
+        self.point_behaviors_tree.heading("Name", text="Name")
+        self.point_behaviors_tree.heading("Key", text="Key")
+        self.point_behaviors_tree.heading("ME Group", text="ME Group")
+        self.point_behaviors_tree.column("Name", width=100)
+        self.point_behaviors_tree.column("Key", width=50)
+        self.point_behaviors_tree.column("ME Group", width=80)
+        self.point_behaviors_tree.grid(row=3, column=0, sticky="nsew")
 
-        # Initialize point annotations listbox correctly here
-        self.point_annotations_listbox = tk.Listbox(point_behaviors_container, width=30, height=7, font=self.listbox_font)
-        self.point_annotations_listbox.pack(fill="both", expand=True)
+        # Adjust row weights to prioritize space for annotations
+        annotations_frame.rowconfigure(1, weight=10)  # State Behaviors (smaller height)
+        annotations_frame.rowconfigure(3, weight=10)  # Point Behaviors (smaller height)
+        annotations_frame.rowconfigure(5, weight=11)  # State Annotations (larger height)
+        annotations_frame.rowconfigure(7, weight=11)  # Point Annotations (larger height)
 
-        # Create a frame for the point behaviors list box
-        point_behaviors_container = tk.Frame(annotations_frame)
-        point_behaviors_container.grid(row=3, column=0, sticky="nsew")
-        point_behaviors_container.grid_propagate(False)
+        # Populate behaviors in Treeviews
+        self.populate_behavior_treeviews()
 
-        # Initialize the point behaviors list box here
-        self.point_behaviors_listbox = tk.Listbox(point_behaviors_container, width=30, height=7, font=self.listbox_font)
-        self.point_behaviors_listbox.pack(fill="both", expand=True)
-
-        # Adjust row weights to control height of listboxes in the grid
-        annotations_frame.rowconfigure(1, weight=0)
-        annotations_frame.rowconfigure(3, weight=0)
-        annotations_frame.rowconfigure(5, weight=1)
-        annotations_frame.rowconfigure(7, weight=1)
-
-        # --- State Annotations Label ---
+        # State Annotations Treeview
         state_annotations_header = tk.Frame(annotations_frame)
         state_annotations_header.grid(row=4, column=0, sticky="ew")
         self.state_annotations_label = tk.Label(state_annotations_header, text="State Annotations", font=self.header_font)
@@ -833,15 +851,12 @@ class BehaviorLogger:
         state_sort_button = tk.Button(state_annotations_header, text="Sort", command=self.sort_state_annotations, width=3)
         state_sort_button.pack(side=tk.RIGHT, padx=30)
 
-        # --- State Annotations Treeview and Scrollbar ---
         state_annotations_container = tk.Frame(annotations_frame)
         state_annotations_container.grid(row=5, column=0, sticky="nsew")
         state_annotations_container.columnconfigure(0, weight=1)
         state_annotations_container.rowconfigure(0, weight=1)
 
-        self.state_annotations_tree = ttk.Treeview(
-            state_annotations_container, columns=("Name", "Start", "End"), show='headings'
-        )
+        self.state_annotations_tree = ttk.Treeview(state_annotations_container, columns=("Name", "Start", "End"), show="headings")
         state_scrollbar = tk.Scrollbar(state_annotations_container, orient=tk.VERTICAL, command=self.state_annotations_tree.yview)
         self.state_annotations_tree.configure(yscrollcommand=state_scrollbar.set)
         self.state_annotations_tree.heading("Name", text="Name")
@@ -853,7 +868,7 @@ class BehaviorLogger:
         self.state_annotations_tree.grid(row=0, column=0, sticky="nsew")
         state_scrollbar.grid(row=0, column=1, sticky="ns")
 
-        # --- Point Annotations Label ---
+        # Point Annotations Treeview
         point_annotations_header = tk.Frame(annotations_frame)
         point_annotations_header.grid(row=6, column=0, sticky="ew")
         self.point_annotations_label = tk.Label(point_annotations_header, text="Point Annotations", font=self.header_font)
@@ -861,15 +876,12 @@ class BehaviorLogger:
         point_sort_button = tk.Button(point_annotations_header, text="Sort", command=self.sort_point_annotations, width=3)
         point_sort_button.pack(side=tk.RIGHT, padx=30)
 
-        # --- Point Annotations Treeview and Scrollbar ---
         point_annotations_container = tk.Frame(annotations_frame)
         point_annotations_container.grid(row=7, column=0, sticky="nsew")
         point_annotations_container.columnconfigure(0, weight=1)
         point_annotations_container.rowconfigure(0, weight=1)
 
-        self.point_annotations_tree = ttk.Treeview(
-            point_annotations_container, columns=("Name", "Time"), show='headings'
-        )
+        self.point_annotations_tree = ttk.Treeview(point_annotations_container, columns=("Name", "Time"), show="headings")
         point_scrollbar = tk.Scrollbar(point_annotations_container, orient=tk.VERTICAL, command=self.point_annotations_tree.yview)
         self.point_annotations_tree.configure(yscrollcommand=point_scrollbar.set)
         self.point_annotations_tree.heading("Name", text="Name")
@@ -878,8 +890,7 @@ class BehaviorLogger:
         self.point_annotations_tree.column("Time", width=100)
         self.point_annotations_tree.grid(row=0, column=0, sticky="nsew")
         point_scrollbar.grid(row=0, column=1, sticky="ns")
-
-        # --- Buttons Frame ---
+        # Buttons Frame
         buttons_frame = tk.Frame(annotations_frame)
         buttons_frame.grid(row=8, column=0, pady=5, sticky="ew")
 
@@ -887,17 +898,17 @@ class BehaviorLogger:
             buttons_frame,
             text="Visualize Annotations",
             command=self.visualize_annotations,
-            width=20
+            width=16
         )
-        visualize_button.pack(side=tk.LEFT, padx=3)
+        visualize_button.pack(side=tk.LEFT, padx=1)
 
         summary_button = tk.Button(
             buttons_frame,
             text="Summary Statistics",
             command=self.generate_summary_statistics,
-            width=20
+            width=16
         )
-        summary_button.pack(side=tk.LEFT, padx=3)
+        summary_button.pack(side=tk.LEFT, padx=1)
 
 
         # --- Event Bindings ---
@@ -910,6 +921,12 @@ class BehaviorLogger:
         self.annotation_menu.add_command(label="Skip to Annotation", command=self.skip_to_annotation)
         self.annotation_menu.add_command(label="Delete", command=self.delete_annotation)
 
+        # Bind right-click and Control-Click for macOS
+        self.state_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
+        self.state_annotations_tree.bind("<Control-Button-1>", self.show_annotation_menu)
+        self.point_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
+        self.point_annotations_tree.bind("<Control-Button-1>", self.show_annotation_menu)
+
         # Bind right-click to treeviews
         self.state_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
         self.point_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
@@ -917,6 +934,12 @@ class BehaviorLogger:
         # Bind Delete key
         self.state_annotations_tree.bind('<Delete>', self.on_delete_key_press)
         self.point_annotations_tree.bind('<Delete>', self.on_delete_key_press)
+
+        # Bind Delete and Backspace keys to handle deletion on macOS
+        self.state_annotations_tree.bind('<Delete>', self.on_delete_key_press)
+        self.state_annotations_tree.bind('<BackSpace>', self.on_delete_key_press)
+        self.point_annotations_tree.bind('<Delete>', self.on_delete_key_press)
+        self.point_annotations_tree.bind('<BackSpace>', self.on_delete_key_press)
 
         # Bind navigation keys
         self.video_window.bind("<a>", self.on_navigation_key)
@@ -935,8 +958,29 @@ class BehaviorLogger:
         self.video_window.bind("<plus>", lambda event: self.change_playback_speed(decrease=False))
 
         # Load behaviors and annotations
+        self.load_behaviors()
         self.update_behavior_listboxes()
         self.update_annotations()
+
+    def populate_behavior_treeviews(self):
+        # Clear any existing entries in the Treeviews
+        self.state_behaviors_tree.delete(*self.state_behaviors_tree.get_children())
+        self.point_behaviors_tree.delete(*self.point_behaviors_tree.get_children())
+
+        # Insert state behaviors with "(Active)" text and "active" tag if they're active
+        for behavior in self.behaviors:
+            name, key, b_type, me_group = behavior
+            if b_type == "state":
+                # If the behavior is active, append "(Active)" and apply the "active" tag
+                display_name = f"{name} (ACTIVE)" if key in self.active_state_behaviors else name
+                tag = ("active",) if key in self.active_state_behaviors else ()
+                self.state_behaviors_tree.insert("", "end", values=(display_name, key, me_group), tags=tag)
+
+        # Insert point behaviors without active tagging
+        for behavior in self.behaviors:
+            name, key, b_type, me_group = behavior
+            if b_type == "point":
+                self.point_behaviors_tree.insert("", "end", values=(name, key, me_group))
 
     def sort_state_annotations(self):
         # Sort the state_events list by start_time
@@ -990,9 +1034,8 @@ class BehaviorLogger:
         try:
             if not self.is_paused:
                 start_time = time.time()
-
                 # For playback speeds <= 10x, use regular frame skipping logic
-                if self.frame_skip <= 8:
+                if self.frame_skip <= 10:
                     # Read and display the next frame
                     ret, frame = self.cap.read()
                     if not ret or frame is None:
@@ -1004,7 +1047,6 @@ class BehaviorLogger:
                     else:
                         self.current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
                         self.display_frame(frame)
-
                     # Skip the next frame_skip - 1 frames
                     for _ in range(self.frame_skip - 1):
                         ret, _ = self.cap.read()
@@ -1013,13 +1055,11 @@ class BehaviorLogger:
                             self.current_frame = self.total_frames
                         else:
                             self.current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
-
                     # Calculate the time taken to process frames
                     processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
                     # Calculate the delay to maintain original FPS, adjusted for processing time
                     delay = max(1, int(1000 / self.fps - processing_time))
                     self.video_window.after(delay, self.update_frame)
-
                 # For playback speeds > 10x, skip large chunks of frames
                 else:
                     if self.frame_skip == 15:
@@ -1032,10 +1072,8 @@ class BehaviorLogger:
                         seconds_to_skip = 12
                     elif self.frame_skip == 50:
                         seconds_to_skip = 15
-
                     # Use skip_seconds method to skip ahead
                     self.skip_seconds(seconds_to_skip)
-
                     # Read and display only one frame after the large skip
                     ret, frame = self.cap.read()
                     if not ret or frame is None:
@@ -1045,38 +1083,26 @@ class BehaviorLogger:
                     else:
                         self.current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
                         self.display_frame(frame)
-
                     # For high-speed playback, delay the next frame update to simulate skipping
                     self.video_window.after(100, self.update_frame)
-
             else:
                 # If paused, check again after a short delay
                 self.video_window.after(100, self.update_frame)
-
         except Exception as e:
             print(f"Error in update_frame: {e}")
             self.on_closing()
 
     def update_behavior_listboxes(self):
-        # Clear the existing entries in both listboxes
-        self.state_behaviors_listbox.delete(0, tk.END)
-        self.point_behaviors_listbox.delete(0, tk.END)
-    
-        # Add the loaded state behaviors to the state_behaviors_listbox
+        # Clear all entries in state behaviors Treeview
+        self.state_behaviors_tree.delete(*self.state_behaviors_tree.get_children())
+
+        # Re-insert state behaviors with updated active statuses
         for key, behavior in self.state_behaviors.items():
-            me_group = self.me_groups.get(key, None)  # Get ME group (if any)
+            me_group = self.me_groups.get(key, None)
             group_label = f" (Group {me_group})" if me_group else ""
-            # Check if the behavior is currently active and change the color accordingly
-            if key in self.active_state_behaviors:
-                # Active behaviors are shown in a different color
-                self.state_behaviors_listbox.insert(tk.END, f"{behavior}  ({key}){group_label} (Active)")
-                self.state_behaviors_listbox.itemconfig(tk.END, {'fg': 'darkorange'})
-            else:
-                self.state_behaviors_listbox.insert(tk.END, f"{behavior}  ({key}){group_label}")
-    
-        # Add the loaded point behaviors to the point_behaviors_listbox
-        for key, behavior in self.point_behaviors.items():
-            self.point_behaviors_listbox.insert(tk.END, f"{behavior}  ({key}) ")
+            display_name = f"{behavior} (Active)" if key in self.active_state_behaviors else behavior
+            tag = ("active",) if key in self.active_state_behaviors else ()
+            self.state_behaviors_tree.insert("", "end", values=(display_name, key, me_group), tags=tag)
 
     def on_key_press(self, event):
         key = event.char
@@ -1101,18 +1127,13 @@ class BehaviorLogger:
             self.point_events.append({'Name': Name, 'time': formatted_timestamp, 'y_position': 0})
             # Write the event to the CSV file
             self.csv_writer.writerow([Name, self.format_time_machine_readable(frame_timestamp), '', '', formatted_timestamp, ''])
-            self.csv_file.flush()
-            # Update point annotations display
-            self.point_annotations_listbox.insert(tk.END, f"{Name}: {formatted_timestamp}")
-            # Update the annotations and listboxes
+            self.csv_file.flush()            
+            # Insert into point annotations Treeview
+            self.point_annotations_tree.insert("", "end", values=(Name, formatted_timestamp))
             self.update_annotations()
         # Handle state behaviors
         elif key_char in self.state_behaviors:
-            # Instead of handling directly, call handle_state_behavior
             self.handle_state_behavior(key_char, frame_timestamp, formatted_timestamp)
-        else:
-            # Print unhandled keys and return
-            print(f"Unhandled key press: {key_char}")
 
     def toggle_play_pause(self):
         # Toggle between play and pause
@@ -1334,17 +1355,33 @@ class BehaviorLogger:
                 else:
                     writer.writerow(row)  # Write unchanged rows
 
+    def initialize_progress_bar(self):
+        # Draw the static background for the progress bar on the existing canvas
+        self.progress_bar_canvas.create_rectangle(0, 0, self.frame_width, self.progress_bar_height, fill="grey", tags="background")
+
+        # Add static text placeholders below the progress bar (these only need to be updated with new values)
+        y_position_text = self.progress_bar_height + 15
+        self.progress_bar_canvas.create_text(5, y_position_text, anchor=tk.W, text="", fill="black", font=self.listbox_font, tags="time_text_left")
+        self.progress_bar_canvas.create_text(self.frame_width - 5, y_position_text, anchor=tk.E, text="", fill="black", font=self.listbox_font, tags="time_text_right")
+
     def update_progress_bar(self):
-        self.progress_bar_canvas.delete("all")
+        # Clear only the progress bar rectangle (not the entire canvas)
+        self.progress_bar_canvas.delete("progress_bar")
+
+        # Calculate the progress as a fraction of the total width
         progress = int((self.current_frame / self.total_frames) * self.frame_width)
-        self.progress_bar_canvas.create_rectangle(0, 0, progress, self.progress_bar_height, fill="darkblue")
+
+        # Draw the dynamic progress bar rectangle with a specific tag
+        self.progress_bar_canvas.create_rectangle(0, 0, progress, self.progress_bar_height, fill="darkblue", tags="progress_bar")
+
+        # Update the text below the progress bar
         current_time = self.format_time_human_readable(self.current_frame / self.fps)
         total_time = self.format_time_human_readable(self.total_frames / self.fps)
         playback_speed = f"{self.frame_skip}x"
         
-        y_position_text = self.progress_bar_height + 15  # put the time text below the progress bar
-        self.progress_bar_canvas.create_text(5, y_position_text, anchor=tk.W, text=f"{current_time} ({playback_speed})", fill="black", font=self.listbox_font)
-        self.progress_bar_canvas.create_text(self.frame_width - 5, y_position_text, anchor=tk.E, text=total_time, fill="black", font=self.listbox_font)
+        # Update the text elements using their tags
+        self.progress_bar_canvas.itemconfig("time_text_left", text=f"{current_time} ({playback_speed})")
+        self.progress_bar_canvas.itemconfig("time_text_right", text=total_time)
 
     def update_annotations(self):
         # Clear the state annotations treeview
