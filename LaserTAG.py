@@ -825,13 +825,11 @@ class BehaviorLogger:
         self.point_behaviors_label = tk.Label(point_behaviors_header, text="Point Behaviors", font=self.header_font)
         self.point_behaviors_label.pack(side=tk.LEFT)
 
-        self.point_behaviors_tree = ttk.Treeview(annotations_frame, columns=("Name", "Key", "ME Group"), show="headings", height=4)
+        self.point_behaviors_tree = ttk.Treeview(annotations_frame, columns=("Name", "Key"), show="headings", height=4)
         self.point_behaviors_tree.heading("Name", text="Name")
         self.point_behaviors_tree.heading("Key", text="Key")
-        self.point_behaviors_tree.heading("ME Group", text="ME Group")
         self.point_behaviors_tree.column("Name", width=100)
         self.point_behaviors_tree.column("Key", width=50)
-        self.point_behaviors_tree.column("ME Group", width=80)
         self.point_behaviors_tree.grid(row=3, column=0, sticky="nsew")
 
         # Adjust row weights to prioritize space for annotations
