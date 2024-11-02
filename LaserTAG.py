@@ -816,9 +816,6 @@ class BehaviorLogger:
         self.state_behaviors_tree.column("ME Group", width=80)
         self.state_behaviors_tree.grid(row=1, column=0, sticky="nsew")
 
-        # Configure the "active" tag for the state_behaviors_tree
-        self.state_behaviors_tree.tag_configure("active", foreground="darkorange")
-
         # Point Behaviors Treeview (Smaller Height)
         point_behaviors_header = tk.Frame(annotations_frame)
         point_behaviors_header.grid(row=2, column=0, sticky="ew")
@@ -965,14 +962,16 @@ class BehaviorLogger:
         self.state_behaviors_tree.delete(*self.state_behaviors_tree.get_children())
         self.point_behaviors_tree.delete(*self.point_behaviors_tree.get_children())
 
-        # Insert state behaviors with "(Active)" text and "active" tag if they're active
+        # Configure the "active" tag with a background color
+        self.state_behaviors_tree.tag_configure("active", background="lightblue")  # Example color: light blue
+
+        # Insert state behaviors with background highlight if they're active
         for behavior in self.behaviors:
             name, key, b_type, me_group = behavior
             if b_type == "state":
-                # If the behavior is active, append "(Active)" and apply the "active" tag
-                display_name = f"{name} (ACTIVE)" if key in self.active_state_behaviors else name
+                # If the behavior is active, apply the "active" tag for background highlighting
                 tag = ("active",) if key in self.active_state_behaviors else ()
-                self.state_behaviors_tree.insert("", "end", values=(display_name, key, me_group), tags=tag)
+                self.state_behaviors_tree.insert("", "end", values=(name, key, me_group), tags=tag)
 
         # Insert point behaviors without active tagging
         for behavior in self.behaviors:
@@ -1098,7 +1097,7 @@ class BehaviorLogger:
         for key, behavior in self.state_behaviors.items():
             me_group = self.me_groups.get(key, None)
             group_label = f" (Group {me_group})" if me_group else ""
-            display_name = f"{behavior} (Active)" if key in self.active_state_behaviors else behavior
+            display_name = f"{behavior}" if key in self.active_state_behaviors else behavior
             tag = ("active",) if key in self.active_state_behaviors else ()
             self.state_behaviors_tree.insert("", "end", values=(display_name, key, me_group), tags=tag)
 
