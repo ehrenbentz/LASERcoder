@@ -18,11 +18,6 @@ class BehaviorLogger:
     def __init__(self):
         # Stack to store deleted annotations for undo functionality
         self.deleted_annotations_stack = []
-        # Dictionary to track the timestamp of the last key press for each key
-        self.last_key_press_time = {}
-        # Set the minimum time interval between presses for the same key in milliseconds
-        self.key_press_cooldown = 500  # e.g., 500 ms cooldown
-
         # Initialize behavior types
         self.behaviors = []
         self.point_behaviors = {}
@@ -913,7 +908,7 @@ class BehaviorLogger:
         summary_button.pack(side=tk.LEFT, padx=1)
 
 
-        # --- Event Bindings ---
+        # Event Bindings
         self.video_window.bind("<Key>", self.on_key_press)
         self.progress_bar_canvas.bind("<Button-1>", self.on_progress_bar_click)
 
@@ -1112,43 +1107,6 @@ class BehaviorLogger:
             tag = ("active",) if key in self.active_state_behaviors else ()
             self.state_behaviors_tree.insert("", "end", values=(display_name, key, me_group), tags=tag)
 
-    def on_key_press(self, event):
-        key = event.char
-        if key == '\x1b':  # Escape key
-            self.on_closing()
-        elif key == ' ':  # Spacebar for play/pause
-            self.toggle_play_pause()
-        elif key == '-':  # Reduce playback speed
-            self.change_playback_speed(decrease=True)
-        elif key in ['+', '=']:  # Increase playback speed
-            self.change_playback_speed(decrease=False)
-        elif key:
-            self.key_press(key)
-
-    def key_press(self, key_char):
-        frame_timestamp = self.current_frame / self.fps
-        formatted_timestamp = self.format_time_human_readable(frame_timestamp)
-        # Handle point behaviors
-        if key_char in self.point_behaviors:
-            Name = self.point_behaviors[key_char]
-            # Log point event and update point events list
-            self.point_events.append({'Name': Name, 'time': formatted_timestamp, 'y_position': 0})
-            # Write the event to the CSV file
-            self.csv_writer.writerow([Name, self.format_time_machine_readable(frame_timestamp), '', '', formatted_timestamp, ''])
-            self.csv_file.flush()            
-            # Insert into point annotations Treeview
-            self.point_annotations_tree.insert("", "end", values=(Name, formatted_timestamp))
-            self.update_annotations()
-            # Highlight point behavior briefly
-            for item in self.point_behaviors_tree.get_children():
-                if self.point_behaviors_tree.item(item, "values")[0] == Name:
-                    self.point_behaviors_tree.item(item, tags="highlight")
-                    self.video_window.after(250, lambda item=item: self.point_behaviors_tree.item(item, tags=""))  # Remove highlight after 0.25s
-            self.update_annotations()
-        # Handle state behaviors
-        elif key_char in self.state_behaviors:
-            self.handle_state_behavior(key_char, frame_timestamp, formatted_timestamp)
-
     def toggle_play_pause(self):
         # Toggle between play and pause
         self.is_paused = not self.is_paused
@@ -1190,80 +1148,6 @@ class BehaviorLogger:
         if ret:
             self.display_frame(frame)
 
-    def deactivate_me_group(self, me_group, frame_timestamp, current_behavior_key):
-        # Deactivate all active state behaviors in the same mutually exclusive group, except the current one
-        to_remove = []
-        print(f"Deactivating ME group: {me_group}, except for the current behavior: {current_behavior_key}")
-    
-        for key, start_time in list(self.active_state_behaviors.items()):
-            # Check if the behavior belongs to the same ME group, but skip the current behavior
-            if self.me_groups.get(key) == me_group and key != current_behavior_key:
-                Name = self.state_behaviors[key]
-                duration = frame_timestamp - start_time
-                formatted_duration = f"{duration:.2f}"
-                formatted_start_time = self.format_time_human_readable(start_time)
-                formatted_end_time = self.format_time_human_readable(frame_timestamp)
-    
-                # Deactivate the state behavior and log it to CSV
-                print(f"Deactivating behavior: {Name} (Key: {key}, ME Group: {me_group})")
-                self.csv_writer.writerow([Name, self.format_time_machine_readable(start_time),
-                                          self.format_time_machine_readable(frame_timestamp),
-                                          self.format_time_machine_readable(duration),
-                                          formatted_start_time, formatted_end_time])
-                
-                # Update the state_events list with the end time (for GUI update)
-                for event in self.state_events:
-                    if event['Name'] == Name and event['end_time'] is None:
-                        event['end_time'] = frame_timestamp  # Update the end time in state_events list
-                        break    
-                to_remove.append(key)
-    
-        # Remove deactivated behaviors from active state behaviors
-        for key in to_remove:
-            print(f"Removing active state: {key}")
-            self.active_state_behaviors.pop(key)
-    
-        # Update annotations and behavior listboxes
-        self.update_annotations()
-        self.update_behavior_listboxes()
-        
-    def handle_state_behavior(self, key, frame_timestamp, formatted_timestamp):
-        """Handles state behavior events triggered by key presses."""
-        Name = self.state_behaviors[key]
-        me_group = self.me_groups.get(key, None)  # Get the ME group (if any) for the state behavior
-    
-        # Deactivate other behaviors in the same ME group, but skip the current behavior
-        if me_group:
-            print(f"Key {key} belongs to ME Group {me_group}. Deactivating other behaviors in this group.")
-            self.deactivate_me_group(me_group, frame_timestamp, current_behavior_key=key)
-    
-        if key in self.active_state_behaviors:
-            # End the state behavior
-            start_time = self.active_state_behaviors.pop(key)
-            duration = frame_timestamp - start_time
-            formatted_duration = f"{duration:.2f}"
-            formatted_start_time = self.format_time_human_readable(start_time)
-            formatted_end_time = self.format_time_human_readable(frame_timestamp)
-    
-            # Log the state behavior
-            for event in self.state_events:
-                if event['Name'] == Name and event['end_time'] is None:
-                    event['end_time'] = frame_timestamp
-                    break
-            self.csv_writer.writerow([Name, self.format_time_machine_readable(start_time),
-                                      self.format_time_machine_readable(frame_timestamp),
-                                      self.format_time_machine_readable(duration),
-                                      formatted_start_time, formatted_end_time])
-            self.csv_file.flush()
-            self.update_annotations()
-            self.update_behavior_listboxes()
-        else:
-            # Start a new state behavior
-            self.active_state_behaviors[key] = frame_timestamp
-            self.state_events.append({'Name': Name, 'start_time': frame_timestamp, 'end_time': None})
-            self.update_annotations()
-            self.update_behavior_listboxes()
-            
     def load_annotations(self):
         self.point_events = []
         self.state_events = []
@@ -1456,17 +1340,12 @@ class BehaviorLogger:
     def edit_state_annotation(self):
         if self.selected_index is None:
             return
-
         # Get the currently selected annotation
         selected_annotation = self.state_events[self.selected_index]
-
-
         # Load the annotation data first
         latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_start', 'H_end') 
-
         # Skip to annotation to edit, and pause video
         self.skip_to_annotation()
-
         # If an edit dialog is already open, destroy it
         if self.edit_dialog is not None:
             self.edit_dialog.destroy()
@@ -1621,6 +1500,117 @@ class BehaviorLogger:
             # Call the edit method without passing extra arguments
             self.edit_point_annotation()
 
+    def on_key_press(self, event):
+        key = event.char
+        if key == '\x1b':  # Escape key
+            self.on_closing()
+        elif key == ' ':  # Spacebar for play/pause
+            self.toggle_play_pause()
+        elif key == '-':  # Reduce playback speed
+            self.change_playback_speed(decrease=True)
+        elif key in ['+', '=']:  # Increase playback speed
+            self.change_playback_speed(decrease=False)
+        elif key:
+            self.key_press(key)
+
+    def key_press(self, key_char):
+        frame_timestamp = self.current_frame / self.fps
+        formatted_timestamp = self.format_time_human_readable(frame_timestamp)
+        # Handle point behaviors
+        if key_char in self.point_behaviors:
+            Name = self.point_behaviors[key_char]
+            # Log point event and update point events list
+            self.point_events.append({'Name': Name, 'time': formatted_timestamp, 'y_position': 0})
+            # Write the event to the CSV file
+            self.csv_writer.writerow([Name, self.format_time_machine_readable(frame_timestamp), '', '', formatted_timestamp, ''])
+            self.csv_file.flush()            
+            # Insert into point annotations Treeview
+            self.point_annotations_tree.insert("", "end", values=(Name, formatted_timestamp))
+            self.update_annotations()
+            # Highlight point behavior briefly
+            for item in self.point_behaviors_tree.get_children():
+                if self.point_behaviors_tree.item(item, "values")[0] == Name:
+                    self.point_behaviors_tree.item(item, tags="highlight")
+                    self.video_window.after(250, lambda item=item: self.point_behaviors_tree.item(item, tags=""))  # Remove highlight after 0.25s
+            self.update_annotations()
+        # Handle state behaviors
+        elif key_char in self.state_behaviors:
+            self.handle_state_behavior(key_char, frame_timestamp, formatted_timestamp)
+        
+    def handle_state_behavior(self, key, frame_timestamp, formatted_timestamp):
+        """Handles state behavior events triggered by key presses."""
+        Name = self.state_behaviors[key]
+        me_group = self.me_groups.get(key, None)  # Get the ME group (if any) for the state behavior
+    
+        # Deactivate other behaviors in the same ME group, but skip the current behavior
+        if me_group:
+            print(f"Key {key} belongs to ME Group {me_group}. Deactivating other behaviors in this group.")
+            self.deactivate_me_group(me_group, frame_timestamp, current_behavior_key=key)
+    
+        if key in self.active_state_behaviors:
+            # End the state behavior
+            start_time = self.active_state_behaviors.pop(key)
+            duration = frame_timestamp - start_time
+            formatted_duration = f"{duration:.2f}"
+            formatted_start_time = self.format_time_human_readable(start_time)
+            formatted_end_time = self.format_time_human_readable(frame_timestamp)
+    
+            # Log the state behavior
+            for event in self.state_events:
+                if event['Name'] == Name and event['end_time'] is None:
+                    event['end_time'] = frame_timestamp
+                    break
+            self.csv_writer.writerow([Name, self.format_time_machine_readable(start_time),
+                                      self.format_time_machine_readable(frame_timestamp),
+                                      self.format_time_machine_readable(duration),
+                                      formatted_start_time, formatted_end_time])
+            self.csv_file.flush()
+            self.update_annotations()
+            self.update_behavior_listboxes()
+        else:
+            # Start a new state behavior
+            self.active_state_behaviors[key] = frame_timestamp
+            self.state_events.append({'Name': Name, 'start_time': frame_timestamp, 'end_time': None})
+            self.update_annotations()
+            self.update_behavior_listboxes()
+            
+    def deactivate_me_group(self, me_group, frame_timestamp, current_behavior_key):
+        # Deactivate all active state behaviors in the same mutually exclusive group, except the current one
+        to_remove = []
+        print(f"Deactivating ME group: {me_group}, except for the current behavior: {current_behavior_key}")
+    
+        for key, start_time in list(self.active_state_behaviors.items()):
+            # Check if the behavior belongs to the same ME group, but skip the current behavior
+            if self.me_groups.get(key) == me_group and key != current_behavior_key:
+                Name = self.state_behaviors[key]
+                duration = frame_timestamp - start_time
+                formatted_duration = f"{duration:.2f}"
+                formatted_start_time = self.format_time_human_readable(start_time)
+                formatted_end_time = self.format_time_human_readable(frame_timestamp)
+    
+                # Deactivate the state behavior and log it to CSV
+                print(f"Deactivating behavior: {Name} (Key: {key}, ME Group: {me_group})")
+                self.csv_writer.writerow([Name, self.format_time_machine_readable(start_time),
+                                          self.format_time_machine_readable(frame_timestamp),
+                                          self.format_time_machine_readable(duration),
+                                          formatted_start_time, formatted_end_time])
+                
+                # Update the state_events list with the end time (for GUI update)
+                for event in self.state_events:
+                    if event['Name'] == Name and event['end_time'] is None:
+                        event['end_time'] = frame_timestamp  # Update the end time in state_events list
+                        break    
+                to_remove.append(key)
+    
+        # Remove deactivated behaviors from active state behaviors
+        for key in to_remove:
+            print(f"Removing active state: {key}")
+            self.active_state_behaviors.pop(key)
+    
+        # Update annotations and behavior listboxes
+        self.update_annotations()
+        self.update_behavior_listboxes()
+
     def save_state_annotation(self, new_entries, dialog, current_annotation, original_H_start):
         updated_annotation = {field: new_entries[field].get() for field in ['Name', 'H_start', 'H_end']}
         start_time = self.parse_time(updated_annotation['H_start'])
@@ -1670,23 +1660,6 @@ class BehaviorLogger:
         self.edit_dialog.destroy()
         self.edit_dialog = None
 
-    def on_delete_key_press(self, event):
-        widget = event.widget
-        if widget == self.state_annotations_tree:
-            selected_items = widget.selection()
-            for item in selected_items:
-                index = widget.index(item)
-                self.delete_state_annotation(index)
-            self.update_annotations()
-            self.save_session_state()
-        elif widget == self.point_annotations_tree:
-            selected_items = widget.selection()
-            for item in selected_items:
-                index = widget.index(item)
-                self.delete_point_annotation(index)
-            self.update_annotations()
-            self.save_session_state()
-
     def remove_csv_annotation(self, event, is_state_annotation):
         annotations_file = f'{self.video_name}_Annotations.csv'
         with open(annotations_file, 'r') as file:
@@ -1702,6 +1675,17 @@ class BehaviorLogger:
                 elif not is_state_annotation and row[0] == event['Name'] and row[4] == event['time']:
                     continue  # Skip this line for point deletion
                 writer.writerow(row)
+
+    def on_delete_key_press(self, event):
+        widget = event.widget
+        if widget == self.state_annotations_tree or widget == self.point_annotations_tree:
+            self.selected_treeview = widget
+            selected_items = widget.selection()
+            for item in selected_items:
+                self.selected_item = item
+                self.delete_annotation()  # This will handle both deletion and undo functionality
+            self.update_annotations()
+            self.save_session_state()
 
     def delete_state_annotation(self, index=None):
         if index is None:
@@ -1747,19 +1731,15 @@ class BehaviorLogger:
 
     def undo_deletion(self, event=None):  # Adding event parameter for compatibility with bind
         if not self.deleted_annotations_stack:
-            messagebox.showinfo("Undo", "No deletions to undo.")
             return
-
         # Retrieve the last deleted annotation
         annotation_type, deleted_annotation = self.deleted_annotations_stack.pop()
-
         if annotation_type == "state":
             self.state_events.append(deleted_annotation)  # Restore in-memory state events
             self.update_csv_state_behavior(deleted_annotation)  # Add back to CSV
         elif annotation_type == "point":
             self.point_events.append(deleted_annotation)  # Restore in-memory point events
             self.update_csv_point_behavior(deleted_annotation)  # Add back to CSV
-
         # Update the annotations display in the UI
         self.update_annotations()
 
@@ -1770,7 +1750,7 @@ class BehaviorLogger:
 
         with open(annotations_file, 'w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(lines[0].strip().split(','))  # Write header
+            writer.writerow(lines[0].strip().split(',')) 
             for line in lines[1:]:
                 row = line.strip().split(',')
                 if row[0] == updated_event['Name'] and row[1] == self.format_time_machine_readable(updated_event['start_time']):
