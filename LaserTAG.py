@@ -968,8 +968,8 @@ class BehaviorLogger:
         self.point_behaviors_tree.delete(*self.point_behaviors_tree.get_children())
 
         # Configure the "active" tag with a background color
-        self.state_behaviors_tree.tag_configure("active", background="lightblue")  # Example color: light blue
-        self.point_behaviors_tree.tag_configure("highlight", background="lightgreen")
+        self.state_behaviors_tree.tag_configure("active", background="darkorange")
+        self.point_behaviors_tree.tag_configure("highlight", background="dodgerblue")
 
         # Insert state behaviors with background highlight if they're active
         for behavior in self.behaviors:
