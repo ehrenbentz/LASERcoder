@@ -1120,8 +1120,11 @@ class BehaviorLogger:
             self.current_speed_index = min(len(self.frame_skip_factors) - 1, self.current_speed_index + 1)  # Increase speed, but don't exceed the max index
         # Set the new frame skipping factor
         self.frame_skip = self.frame_skip_factors[self.current_speed_index]
+        # Update the progress bar
+        self.update_progress_bar()
         # Output the current speed for debugging
         print(f"Playback speed: {self.frame_skip}x")
+
 
     def on_navigation_key(self, event):
         key = event.keysym  # Get the symbolic name of the key
@@ -1886,3 +1889,4 @@ class BehaviorLogger:
 
 if __name__ == "__main__":
     BehaviorLogger()
+
