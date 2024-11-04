@@ -16,6 +16,13 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 
 class BehaviorLogger:
     def __init__(self):
+        # Stack to store deleted annotations for undo functionality
+        self.deleted_annotations_stack = []
+        # Dictionary to track the timestamp of the last key press for each key
+        self.last_key_press_time = {}
+        # Set the minimum time interval between presses for the same key in milliseconds
+        self.key_press_cooldown = 500  # e.g., 500 ms cooldown
+
         # Initialize behavior types
         self.behaviors = []
         self.point_behaviors = {}
@@ -69,9 +76,6 @@ class BehaviorLogger:
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        # Intitialize undo stack
-        self.deleted_annotations_stack = []
-        self.root.bind("<Control-z>", self.undo_deletion)
         # Center the root window on the primary monitor
         self.center_window(self.root, width=970, height=700)
         # Start the video selection process 
@@ -371,7 +375,7 @@ class BehaviorLogger:
         reserved_keys_label.grid(row=22, column=0, columnspan=4, padx=5, pady=5, sticky='w')
 
         # Set window size, center it, and make sure it's on top
-        self.center_window(self.root, width=970, height=800)
+        self.center_window(self.root, width=970, height=700)
         self.root.attributes('-topmost', True)
         self.root.deiconify()
         self.update_behavior_key_editor()
@@ -833,10 +837,10 @@ class BehaviorLogger:
         self.point_behaviors_tree.grid(row=3, column=0, sticky="nsew")
 
         # Adjust row weights to prioritize space for annotations
-        annotations_frame.rowconfigure(1, weight=2)  # State Behaviors (smaller height)
-        annotations_frame.rowconfigure(3, weight=2)  # Point Behaviors (smaller height)
-        annotations_frame.rowconfigure(5, weight=1)  # State Annotations (larger height)
-        annotations_frame.rowconfigure(7, weight=1)  # Point Annotations (larger height)
+        annotations_frame.rowconfigure(1, weight=10)  # State Behaviors (smaller height)
+        annotations_frame.rowconfigure(3, weight=10)  # Point Behaviors (smaller height)
+        annotations_frame.rowconfigure(5, weight=11)  # State Annotations (larger height)
+        annotations_frame.rowconfigure(7, weight=11)  # Point Annotations (larger height)
 
         # Populate behaviors in Treeviews
         self.populate_behavior_treeviews()
@@ -911,9 +915,10 @@ class BehaviorLogger:
 
         # --- Event Bindings ---
         self.video_window.bind("<Key>", self.on_key_press)
-        self.video_window.bind("<Control-z>", self.undo_deletion)
         self.progress_bar_canvas.bind("<Button-1>", self.on_progress_bar_click)
 
+        # Bind ctl+z for "undo"
+        self.video_window.bind("<Control-z>", lambda event: self.undo_deletion())
 
         # Right-click menu
         self.annotation_menu = tk.Menu(self.root, tearoff=0)
@@ -1143,7 +1148,7 @@ class BehaviorLogger:
         # Handle state behaviors
         elif key_char in self.state_behaviors:
             self.handle_state_behavior(key_char, frame_timestamp, formatted_timestamp)
-            
+
     def toggle_play_pause(self):
         # Toggle between play and pause
         self.is_paused = not self.is_paused
@@ -1223,20 +1228,24 @@ class BehaviorLogger:
         self.update_behavior_listboxes()
         
     def handle_state_behavior(self, key, frame_timestamp, formatted_timestamp):
-        """Handles state behavior events triggered by key presses, allowing immediate reactivation."""
+        """Handles state behavior events triggered by key presses."""
         Name = self.state_behaviors[key]
         me_group = self.me_groups.get(key, None)  # Get the ME group (if any) for the state behavior
-
-        # Check if the key was previously active, which would mean we need to end this state.
+    
+        # Deactivate other behaviors in the same ME group, but skip the current behavior
+        if me_group:
+            print(f"Key {key} belongs to ME Group {me_group}. Deactivating other behaviors in this group.")
+            self.deactivate_me_group(me_group, frame_timestamp, current_behavior_key=key)
+    
         if key in self.active_state_behaviors:
             # End the state behavior
-            start_time = self.active_state_behaviors.pop(key)  # Remove it from active list to enable reactivation
+            start_time = self.active_state_behaviors.pop(key)
             duration = frame_timestamp - start_time
             formatted_duration = f"{duration:.2f}"
             formatted_start_time = self.format_time_human_readable(start_time)
             formatted_end_time = self.format_time_human_readable(frame_timestamp)
-
-            # Log the state behavior end
+    
+            # Log the state behavior
             for event in self.state_events:
                 if event['Name'] == Name and event['end_time'] is None:
                     event['end_time'] = frame_timestamp
@@ -1249,13 +1258,12 @@ class BehaviorLogger:
             self.update_annotations()
             self.update_behavior_listboxes()
         else:
-            # Start a new state behavior immediately if the key is not active
+            # Start a new state behavior
             self.active_state_behaviors[key] = frame_timestamp
             self.state_events.append({'Name': Name, 'start_time': frame_timestamp, 'end_time': None})
             self.update_annotations()
             self.update_behavior_listboxes()
-        self.video_window.focus_set()            
-
+            
     def load_annotations(self):
         self.point_events = []
         self.state_events = []
@@ -1418,7 +1426,6 @@ class BehaviorLogger:
         point_items = self.point_annotations_tree.get_children()
         if point_items:
             self.point_annotations_tree.see(point_items[-1])
-        self.video_window.focus_set()
 
     def show_annotation_menu(self, event):
         # Determine which treeview was clicked
@@ -1680,74 +1687,6 @@ class BehaviorLogger:
             self.update_annotations()
             self.save_session_state()
 
-    def delete_annotation(self):
-        if not hasattr(self, 'selected_treeview') or not self.selected_item:
-            return
-
-        if self.selected_treeview == self.state_annotations_tree:
-            index = self.state_annotations_tree.index(self.selected_item)
-            self.delete_state_annotation(index)
-        else:
-            index = self.point_annotations_tree.index(self.selected_item)
-            self.delete_point_annotation(index)
-
-    def delete_state_annotation(self, index=None):
-        if index is None:
-            index = self.selected_index
-        if isinstance(index, int) and 0 <= index < len(self.state_events):
-            event = self.state_events.pop(index)
-            print(f"Deleted state behavior '{event['Name']}'")
-            
-            # Add the deleted annotation to the stack
-            self.deleted_annotations_stack.append(("state", event))
-            
-            # Update CSV file to remove the annotation
-            self.remove_csv_annotation(event, is_state_annotation=True)
-            
-            # Update the annotations display
-            self.update_annotations()
-            
-            # Save session state
-            self.save_session_state()
-
-    def delete_point_annotation(self, index=None):
-        if index is None:
-            index = self.selected_index
-        if isinstance(index, int) and 0 <= index < len(self.point_events):
-            event = self.point_events.pop(index)
-            print(f"Deleted point annotation '{event['Name']}'")
-            
-            # Add the deleted annotation to the stack
-            self.deleted_annotations_stack.append(("point", event))
-            
-            # Update CSV file to remove the annotation
-            self.remove_csv_annotation(event, is_state_annotation=False)
-            
-            # Update the annotations display
-            self.update_annotations()
-            
-            # Save session state
-            self.save_session_state()
-
-
-    def undo_deletion(self, event=None):  # event parameter for compatibility with bind
-        if not self.deleted_annotations_stack:
-            return
-
-        # Retrieve the last deleted annotation
-        annotation_type, deleted_annotation = self.deleted_annotations_stack.pop()
-
-        # Restore the annotation in memory and CSV file
-        if annotation_type == "state":
-            self.state_events.append(deleted_annotation)
-            self.update_csv_state_behavior(deleted_annotation)  # Add back to CSV
-        elif annotation_type == "point":
-            self.point_events.append(deleted_annotation)
-            self.update_csv_point_behavior(deleted_annotation)  # Add back to CSV
-
-        # Refresh the annotations in the UI
-        self.update_annotations()
-
     def remove_csv_annotation(self, event, is_state_annotation):
         annotations_file = f'{self.video_name}_Annotations.csv'
         with open(annotations_file, 'r') as file:
@@ -1763,6 +1702,66 @@ class BehaviorLogger:
                 elif not is_state_annotation and row[0] == event['Name'] and row[4] == event['time']:
                     continue  # Skip this line for point deletion
                 writer.writerow(row)
+
+    def delete_state_annotation(self, index=None):
+        if index is None:
+            index = self.selected_index
+        if isinstance(index, int) and 0 <= index < len(self.state_events):
+            event = self.state_events.pop(index)
+            print(f"Deleted state behavior '{event['Name']}'")
+            # Update CSV file to remove the annotation
+            self.remove_csv_annotation(event, is_state_annotation=True)
+            # Update the annotations display
+            self.update_annotations()
+            # Save session state
+            self.save_session_state()
+
+    def delete_point_annotation(self, index=None):
+        if index is None:
+            index = self.selected_index
+        if isinstance(index, int) and 0 <= index < len(self.point_events):
+            event = self.point_events.pop(index)
+            print(f"Deleted point annotation '{event['Name']}'")
+            # Update CSV file to remove the annotation
+            self.remove_csv_annotation(event, is_state_annotation=False)
+            # Update the annotations display
+            self.update_annotations()
+            # Save session state
+            self.save_session_state()
+
+    def delete_annotation(self):
+        if not hasattr(self, 'selected_treeview') or not self.selected_item:
+            return
+
+        # Store annotation to the deleted annotations stack for undo
+        if self.selected_treeview == self.state_annotations_tree:
+            index = self.state_annotations_tree.index(self.selected_item)
+            deleted_annotation = self.state_events[index]
+            self.deleted_annotations_stack.append(("state", deleted_annotation))
+            self.delete_state_annotation(index)
+        else:
+            index = self.point_annotations_tree.index(self.selected_item)
+            deleted_annotation = self.point_events[index]
+            self.deleted_annotations_stack.append(("point", deleted_annotation))
+            self.delete_point_annotation(index)
+
+    def undo_deletion(self, event=None):  # Adding event parameter for compatibility with bind
+        if not self.deleted_annotations_stack:
+            messagebox.showinfo("Undo", "No deletions to undo.")
+            return
+
+        # Retrieve the last deleted annotation
+        annotation_type, deleted_annotation = self.deleted_annotations_stack.pop()
+
+        if annotation_type == "state":
+            self.state_events.append(deleted_annotation)  # Restore in-memory state events
+            self.update_csv_state_behavior(deleted_annotation)  # Add back to CSV
+        elif annotation_type == "point":
+            self.point_events.append(deleted_annotation)  # Restore in-memory point events
+            self.update_csv_point_behavior(deleted_annotation)  # Add back to CSV
+
+        # Update the annotations display in the UI
+        self.update_annotations()
 
     def update_csv_state_behavior(self, updated_event):
         annotations_file = f'{self.video_name}_Annotations.csv'
