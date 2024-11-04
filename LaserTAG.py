@@ -832,10 +832,10 @@ class BehaviorLogger:
         self.point_behaviors_tree.grid(row=3, column=0, sticky="nsew")
 
         # Adjust row weights to prioritize space for annotations
-        annotations_frame.rowconfigure(1, weight=10)  # State Behaviors (smaller height)
-        annotations_frame.rowconfigure(3, weight=10)  # Point Behaviors (smaller height)
-        annotations_frame.rowconfigure(5, weight=11)  # State Annotations (larger height)
-        annotations_frame.rowconfigure(7, weight=11)  # Point Annotations (larger height)
+        annotations_frame.rowconfigure(1, weight=1)  # State Behaviors (smaller height)
+        annotations_frame.rowconfigure(3, weight=1)  # Point Behaviors (smaller height)
+        annotations_frame.rowconfigure(5, weight=0)  # State Annotations (larger height)
+        annotations_frame.rowconfigure(7, weight=0)  # Point Annotations (larger height)
 
         # Populate behaviors in Treeviews
         self.populate_behavior_treeviews()
@@ -1299,6 +1299,7 @@ class BehaviorLogger:
         state_items = self.state_annotations_tree.get_children()
         if state_items:
             self.state_annotations_tree.see(state_items[-1])
+            self.state_annotations_tree.yview_moveto(1)  # Scroll to bottom
 
         # Clear the point annotations treeview
         self.point_annotations_tree.delete(*self.point_annotations_tree.get_children())
@@ -1313,7 +1314,8 @@ class BehaviorLogger:
         point_items = self.point_annotations_tree.get_children()
         if point_items:
             self.point_annotations_tree.see(point_items[-1])
-
+            self.point_annotations_tree.yview_moveto(1)  # Scroll to bottom
+            
     def show_annotation_menu(self, event):
         # Determine which treeview was clicked
         widget = event.widget
@@ -1697,7 +1699,7 @@ class BehaviorLogger:
             event = self.state_events.pop(index)
             print(f"Deleted state behavior '{event['Name']}'")
             # Update CSV file to remove the annotation
-            self.remove_csv_annotation(event, is_state_annotation=True)
+            self.remove_csv_state_annotation(event)
             # Update the annotations display
             self.update_annotations()
             # Save session state
@@ -1710,7 +1712,7 @@ class BehaviorLogger:
             event = self.point_events.pop(index)
             print(f"Deleted point annotation '{event['Name']}'")
             # Update CSV file to remove the annotation
-            self.remove_csv_annotation(event, is_state_annotation=False)
+            self.remove_csv_point_annotation(event)
             # Update the annotations display
             self.update_annotations()
             # Save session state
@@ -1739,39 +1741,53 @@ class BehaviorLogger:
         annotation_type, deleted_annotation = self.deleted_annotations_stack.pop()
         if annotation_type == "state":
             self.state_events.append(deleted_annotation)  # Restore in-memory state events
-            self.update_csv_state_behavior(deleted_annotation)  # Add back to CSV
+            # Add back to CSV
+            self.csv_writer.writerow([
+                deleted_annotation['Name'],
+                self.format_time_machine_readable(deleted_annotation['start_time']),
+                self.format_time_machine_readable(deleted_annotation['end_time']),
+                self.format_time_machine_readable(deleted_annotation['end_time'] - deleted_annotation['start_time']) if deleted_annotation['end_time'] else '',
+                self.format_time_human_readable(deleted_annotation['start_time']),
+                self.format_time_human_readable(deleted_annotation['end_time']) if deleted_annotation['end_time'] else ''
+            ])
+            self.csv_file.flush()
         elif annotation_type == "point":
             self.point_events.append(deleted_annotation)  # Restore in-memory point events
-            self.update_csv_point_behavior(deleted_annotation)  # Add back to CSV
+            # Add back to CSV
+            self.csv_writer.writerow([
+                deleted_annotation['Name'],
+                self.format_time_machine_readable(self.parse_time(deleted_annotation['time'])),
+                '', '',  # End time and duration are empty for point annotations
+                deleted_annotation['time'], ''
+            ])
+            self.csv_file.flush()
         # Update the annotations display in the UI
         self.update_annotations()
 
-    def update_csv_state_behavior(self, updated_event):
+    def remove_csv_state_annotation(self, event):
         annotations_file = f'{self.video_name}_Annotations.csv'
         with open(annotations_file, 'r') as file:
             lines = file.readlines()
-
-        with open(annotations_file, 'w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(lines[0].strip().split(',')) 
-            for line in lines[1:]:
-                row = line.strip().split(',')
-                if row[0] == updated_event['Name'] and row[1] == self.format_time_machine_readable(updated_event['start_time']):
-                    continue  # Skip the row to delete it
-                writer.writerow(row)
-
-    def update_csv_point_behavior(self, updated_event):
-        annotations_file = f'{self.video_name}_Annotations.csv'
-        with open(annotations_file, 'r') as file:
-            lines = file.readlines()
-
         with open(annotations_file, 'w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(lines[0].strip().split(','))  # Write header
             for line in lines[1:]:
                 row = line.strip().split(',')
-                if row[0] == updated_event['Name'] and row[1] == updated_event.get('H_start'):
-                    continue  # Skip the row to delete it
+                if row[0] == event['Name'] and row[1] == self.format_time_machine_readable(event['start_time']):
+                    continue  # Skip the line to delete it
+                writer.writerow(row)
+
+    def remove_csv_point_annotation(self, event):
+        annotations_file = f'{self.video_name}_Annotations.csv'
+        with open(annotations_file, 'r') as file:
+            lines = file.readlines()
+        with open(annotations_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(lines[0].strip().split(','))  # Write header
+            for line in lines[1:]:
+                row = line.strip().split(',')
+                if row[0] == event['Name'] and row[4] == event['time']:
+                    continue  # Skip the line to delete it
                 writer.writerow(row)
 
     def format_time_human_readable(self, elapsed_time):
