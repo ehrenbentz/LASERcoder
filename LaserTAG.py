@@ -390,7 +390,7 @@ class BehaviorLogger:
         reserved_keys_label.grid(row=22, column=0, columnspan=4, padx=5, pady=5, sticky='w')
 
         # Set window size, center it, and make sure it's on top
-        self.center_window(self.root, width=970, height=700)
+        self.center_window(self.root, width=825, height=850)
         self.root.attributes('-topmost', True)
         self.root.deiconify()
         self.update_behavior_key_editor()
@@ -741,7 +741,7 @@ class BehaviorLogger:
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
 
         # Calculate video frame dimensions while maintaining aspect ratio
-        self.annotations_panel_width = 300
+        self.annotations_panel_width = 325
         self.progress_bar_height = 25
         original_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         original_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -784,8 +784,8 @@ class BehaviorLogger:
         self.auto_save_session_state()
                         
     def create_video_window(self):
-        self.listbox_font = tkfont.Font(family="Helvetica", size=11, weight="bold")
-        self.header_font = tkfont.Font(family="Helvetica", size=12, weight="bold")
+        self.listbox_font = tkfont.Font(family="Helvetica", size=10, weight="bold")
+        self.header_font = tkfont.Font(family="Helvetica", size=11, weight="bold")
         self.video_window = tk.Toplevel(self.root)
         self.video_window.title(f"{self.video_name}")
         self.video_window.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -1450,7 +1450,7 @@ class BehaviorLogger:
         self.edit_dialog.protocol("WM_DELETE_WINDOW", self.on_edit_dialog_close)
         self.edit_dialog.withdraw()
         self.edit_dialog.title("Edit State Annotation")
-        self.center_window(self.edit_dialog, width=275, height=250)
+        self.center_window(self.edit_dialog, width=250, height=300)
         self.edit_dialog.deiconify()
 
         # Show current annotation in non-editable fields
