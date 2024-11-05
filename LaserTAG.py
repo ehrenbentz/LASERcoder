@@ -41,7 +41,13 @@ class BehaviorLogger:
         self.frame_skip_factors = [1, 2, 5, 8, 10, 15, 20, 30, 40, 50]
         self.current_speed_index = 0
         self.frame_skip = self.frame_skip_factors[self.current_speed_index]
+        # Initialize LaserTAG directory and its subdirectories
+        self.lasertag_dir = 'LaserTAG'
+        self.behavior_key_dir = os.path.join(self.lasertag_dir, 'Behavior_Keys')
+        self.annotations_dir = os.path.join(self.lasertag_dir, 'Annotations')
+        self.resume_dir = os.path.join(self.lasertag_dir, 'resume')        
         # Initialize session-related variables
+        self.session_state_file=None
         self.saved_state = None
         self.start_frame = 0
         self.ask_resume_window = None
@@ -63,9 +69,6 @@ class BehaviorLogger:
         self.canvas = None
         self.photo_image = None
         self.edit_dialog = None
-        # Create a '.resume' directory if it doesn't exist
-        self.resume_dir = 'resume'
-        os.makedirs(self.resume_dir, exist_ok=True)
         # Initialize the Tk root window
         self.get_monitor_info()
         self.root = tk.Tk()
@@ -120,23 +123,40 @@ class BehaviorLogger:
         )
         if self.video_path:
             self.video_name = os.path.basename(self.video_path).split('.')[0]
-            self.session_state_file = os.path.join(self.resume_dir, f'{self.video_name}_session_state.json')
-            # Initialize video capture with the selected video file
-            self.cap = cv2.VideoCapture(self.video_path)
+            # Now that video_name is set, initialize the directories
+            self.initialize_lasertag_dir()
+            # Initialize session state file with the video name
+            self.initialize_session_state_file(self.video_name)
             # Check for an existing session
             self.check_existing_session()
         else:
             print("No video selected. Exiting.")
             self.root.destroy()
 
+    def initialize_lasertag_dir(self):
+        """Create the main LaserTAG directory and its subdirectories."""
+        os.makedirs(self.lasertag_dir, exist_ok=True)
+        os.makedirs(self.behavior_key_dir, exist_ok=True)
+        os.makedirs(self.annotations_dir, exist_ok=True)
+        os.makedirs(self.resume_dir, exist_ok=True)
+        print(f"Initialized LaserTAG directories:\n - {self.lasertag_dir}\n - {self.behavior_key_dir}\n - {self.annotations_dir}\n - {self.resume_dir}")
+
+    def initialize_session_state_file(self, video_name):
+        """Initialize session state file in the resume subdirectory."""
+        self.session_state_file = os.path.join(self.resume_dir, f'{video_name}_session_state.json')
+        # Ensure directory exists (redundant here but safe in larger context)
+        os.makedirs(self.resume_dir, exist_ok=True)
+        print(f"Initialized session state file: {self.session_state_file}")
+
     def initialize_annotation_file(self):
-        annotations_file = f'{self.video_name}_Annotations.csv'
-        if not os.path.exists(annotations_file):
-            with open(annotations_file, 'w', newline='') as file:
+        """Initialize the annotation file in the annotations subdirectory."""
+        self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
+        if not os.path.exists(self.annotations_file):
+            with open(self.annotations_file, 'w', newline='') as file:
                 writer = csv.writer(file)
-                writer.writerow(['Name', 'Start', 'End', 'Duration', 'H_start', 'H_end'])
-            print(f"Created new annotations file: {annotations_file}")
-        return annotations_file
+                writer.writerow(['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End', 'Start', 'End', 'Duration', 'Manual_Edit'])
+            print(f"Created new annotations file: {self.annotations_file}")
+        return self.annotations_file
 
     def check_existing_session(self):
         if os.path.exists(self.session_state_file):
@@ -191,9 +211,9 @@ class BehaviorLogger:
         )
         if confirm:
             # Delete annotations file and session state
-            annotations_file = f'{self.video_name}_Annotations.csv'
-            if os.path.exists(annotations_file):
-                os.remove(annotations_file)
+            self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
+            if os.path.exists(self.annotations_file):
+                os.remove(self.annotations_file)
             if os.path.exists(self.session_state_file):
                 os.remove(self.session_state_file)
             self.start_frame = 0
@@ -280,10 +300,10 @@ class BehaviorLogger:
         label.grid(row=0, column=0, padx=5)
 
         # Find all behavior key files
-        behavior_files = [f for f in os.listdir('.') if f.endswith('_behaviors.csv')]
+        behavior_files = [f for f in os.listdir(f'{self.behavior_key_dir}') if f.endswith('_behaviors.csv')]
 
         # Create a mapping from file names to their full paths
-        self.behavior_key_files = {f: os.path.abspath(f) for f in behavior_files}
+        self.behavior_key_files = {f: os.path.join(self.behavior_key_dir, f) for f in behavior_files}
 
         # Variable to store the selected behavior key file
         self.behavior_key_file_var = tk.StringVar()
@@ -436,8 +456,8 @@ class BehaviorLogger:
             
     def update_behavior_key_ui(self):
         # Find all behavior key files again
-        behavior_files = [f for f in os.listdir('.') if f.endswith('_behaviors.csv')]
-        self.behavior_key_files = {f: os.path.abspath(f) for f in behavior_files}
+        behavior_files = [f for f in os.listdir(self.behavior_key_dir) if f.endswith('_behaviors.csv')]
+        self.behavior_key_files = {f: os.path.join(self.behavior_key_dir, f) for f in behavior_files}
     
         # Rebuild the OptionMenu widget using the stored reference to the OptionMenu
         menu = self.behavior_key_menu['menu']  # Access the menu directly
@@ -454,53 +474,62 @@ class BehaviorLogger:
             self.behavior_key_file_var.set('')  # Clear the selection if no files are found
 
     def behavior_key_file_var_changed(self, *args):
-        self.load_behaviors()
-        self.update_behavior_key_editor()
+        selected_file = self.behavior_key_file_var.get()
+        if selected_file and selected_file != 'No file found':
+            # Use the full path in the Behavior_Keys directory
+            self.behavior_key_file = os.path.join(self.behavior_key_dir, selected_file)
+            print(f"Loading behavior key file from: {self.behavior_key_file}")
+            self.load_behaviors()
+            self.update_behavior_key_editor()
+        else:
+            print("No behavior key file selected or available.")
+
 
     def new_behavior_key_file(self):
         # Check if the dialog is already open, and return if it is
         if self.new_behavior_dialog_open:
             return
-    
+
         # Set the flag to indicate that the dialog is open
         self.new_behavior_dialog_open = True
-    
+
         # Save the currently loaded file, if any
         if self.behavior_key_file_var.get() and self.behavior_key_file_var.get() != 'No file found':
             if not self.save_behaviors():
                 self.new_behavior_dialog_open = False
                 return
-    
+
         # Create the dialog for entering the new file name
         new_file_dialog = tk.Toplevel(self.root)
         new_file_dialog.withdraw()
         new_file_dialog.title("New Behavior Key File")
         self.center_window(new_file_dialog, width=350, height=150)
         new_file_dialog.deiconify()
-    
+
         # Create a label and entry for the file name input
         label = tk.Label(new_file_dialog, text="Enter a name for the new Behavior Key file:")
         label.pack(pady=10)
-    
+
         entry = tk.Entry(new_file_dialog, width=30)  # Set a fixed width for the entry
         entry.pack(padx=20, pady=5)
         entry.focus_set()  # Set the focus on the Entry widget
-    
+
         # Function to close the dialog and handle the entered value
         def on_ok():
             new_behavior_key_name = entry.get().strip()
             if not new_behavior_key_name:
                 messagebox.showwarning("No Name Entered", "You must enter a name for the Behavior Key file.")
                 return
-    
+
             if not new_behavior_key_name.endswith('_behaviors.csv'):
                 new_behavior_key_name += '_behaviors.csv'
-    
-            self.behavior_key_file = new_behavior_key_name
-    
+
+            # Set the file path to the Behavior_Keys directory
+            self.behavior_key_file = os.path.join(self.behavior_key_dir, new_behavior_key_name)
+
             # Clear the behavior editor fields to make it empty for the new file
             self.behaviors = [["", "", "point", ""] for _ in range(20)]  # Reset behaviors to empty
-    
+
             # Create the new behavior key file with empty fields
             try:
                 with open(self.behavior_key_file, 'w', newline='') as file:
@@ -508,35 +537,34 @@ class BehaviorLogger:
                     # Write the empty fields in the new file
                     for behavior in self.behaviors:
                         writer.writerow(behavior)
-    
+
                 # Add the new file to the dropdown list and set it as the selected file
-                behavior_key_path = os.path.abspath(self.behavior_key_file)
-                self.behavior_key_files[self.behavior_key_file] = behavior_key_path
-                self.behavior_key_file_var.set(self.behavior_key_file)
-    
+                self.behavior_key_files[new_behavior_key_name] = self.behavior_key_file
+                self.behavior_key_file_var.set(new_behavior_key_name)
+
                 # Update the dropdown and refresh the editor with the new (empty) file
                 self.update_behavior_key_ui()
                 self.update_behavior_key_editor()
-    
+
             except Exception as e:
                 print(f"File Error: An error occurred while creating the file: {e}")
                 return
             finally:
                 new_file_dialog.destroy()
                 self.new_behavior_dialog_open = False  # Reset the flag when dialog is closed
-        
+
         # Create OK button
         ok_button = tk.Button(new_file_dialog, text="OK", command=on_ok)
         ok_button.pack(pady=5)
-        
+
         # Make the dialog modal to prevent interaction with the main window until it's closed
         new_file_dialog.grab_set()
         new_file_dialog.focus_set()  # Ensure the dialog has focus
-    
+
         # Ensure the dialog stays in front of the main window
         new_file_dialog.attributes('-topmost', True)
         new_file_dialog.after_idle(new_file_dialog.attributes, '-topmost', True)
-    
+
         # Add a protocol to reset the flag when the window is closed
         new_file_dialog.protocol("WM_DELETE_WINDOW", lambda: [new_file_dialog.destroy(), setattr(self, 'new_behavior_dialog_open', False)])
             
@@ -623,8 +651,7 @@ class BehaviorLogger:
                     del self.behavior_key_files[selected_file]
     
                     # Check if there are any _behaviors.csv files left after deletion
-                    behavior_files_remaining = [f for f in os.listdir('.') if f.endswith('_behaviors.csv')]
-                    
+                    behavior_files_remaining = [f for f in os.listdir(self.behavior_key_dir) if f.endswith('_behaviors.csv')]
                     if behavior_files_remaining:
                         # Update the behavior_key_file_var dropdown with remaining files
                         self.update_behavior_key_ui()
@@ -686,22 +713,18 @@ class BehaviorLogger:
         # Save updated behaviors to the Behavior Key file
         if not self.save_behaviors():
             return  # If saving failed, do not proceed
-        
-        # Create _Annotations.csv
+    
+        # Initialize annotations file    
         self.initialize_annotation_file()
-
         # Open CSV file and initialize csv_writer
-        annotations_file = f'{self.video_name}_Annotations.csv'
-        self.csv_file = open(annotations_file, 'a', newline='')
+        self.csv_file = open(self.annotations_file, 'a', newline='')
         self.csv_writer = csv.writer(self.csv_file)
-
-        if os.stat(annotations_file).st_size == 0:
-            # Updated header without 'Total Count/Duration' column
-            self.csv_writer.writerow(['Name', 'Start', 'End', 'Duration', 'H_start', 'H_end'])
+        # Check if header is needed
+        if os.stat(self.annotations_file).st_size == 0:
+            self.csv_writer.writerow(['Video', 'Name', 'H_Start', 'H_End', 'Start', 'End', 'Duration', 'Manual_Edit'])
 
         # Load behaviors
         self.load_behaviors()
-
         # Load annotations
         self.load_annotations()
 
@@ -747,6 +770,12 @@ class BehaviorLogger:
             print("Aspect ratio maintained.")
         else:
             print("Aspect ratio not maintained.")
+
+        # Initialize annotations file
+        self.initialize_annotation_file()
+        # Open CSV file and initialize csv_writer
+        self.csv_file = open(self.annotations_file, 'a', newline='')
+        self.csv_writer = csv.writer(self.csv_file)
 
         # Start main GUI
         self.create_video_window()
@@ -1002,23 +1031,55 @@ class BehaviorLogger:
         self.update_annotations()
 
     def save_sorted_annotations(self):
-        annotations_file = f'{self.video_name}_Annotations.csv'
-        with open(annotations_file, 'w', newline='') as file:
+        self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
+        with open(self.annotations_file, 'w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(['Name', 'Start', 'End', 'Duration', 'H_start', 'H_end'])
-            # Write state annotations
+            # Include new columns in the header
+            writer.writerow(['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End', 'Start', 'End', 'Duration', 'Manual_Edit'])
+
+            # Write sorted state annotations with all necessary columns
             for event in self.state_events:
                 start_time = self.format_time_machine_readable(event['start_time'])
-                end_time = self.format_time_machine_readable(event['end_time']) if event['end_time'] is not None else ''
-                duration = self.format_time_machine_readable(event['end_time'] - event['start_time']) if event['end_time'] is not None else ''
+                end_time = self.format_time_machine_readable(event['end_time']) if event['end_time'] is not None else 'NA'
+                duration = self.format_time_machine_readable(event['end_time'] - event['start_time']) if event['end_time'] is not None else 'NA'
                 H_start = self.format_time_human_readable(event['start_time'])
-                H_end = self.format_time_human_readable(event['end_time']) if event['end_time'] is not None else ''
-                writer.writerow([event['Name'], start_time, end_time, duration, H_start, H_end])
-            # Write point annotations
+                H_end = self.format_time_human_readable(event['end_time']) if event['end_time'] is not None else 'NA'
+
+                # Use the actual value of Manual_Edit from the event data
+                manual_edit = 'True' if event.get('Manual_Edit') else 'False'
+
+                writer.writerow([
+                    self.video_name,
+                    event['Name'],
+                    event.get('Type', 'State'),
+                    event.get('Mutually_Exclusive', 'False'),
+                    H_start,
+                    H_end,
+                    start_time,
+                    end_time,
+                    duration,
+                    manual_edit  # Ensure preservation of Manual_Edit
+                ])
+
+            # Write sorted point annotations with the necessary columns
             for event in self.point_events:
                 time_machine = self.format_time_machine_readable(self.parse_time(event['time']))
-                writer.writerow([event['Name'], time_machine, '', '', event['time'], ''])
-        # Flush and save the CSV file
+                manual_edit = 'True' if event.get('Manual_Edit') else 'False'
+
+                writer.writerow([
+                    self.video_name,
+                    event['Name'],
+                    event.get('Type', 'Point'),
+                    event.get('Mutually_Exclusive', 'False'),
+                    event['time'],
+                    'NA',  # No end time for point annotations
+                    time_machine,
+                    'NA',  # No machine-readable end time for point annotations
+                    'NA',  # No duration for point annotations
+                    manual_edit  # Ensure preservation of Manual_Edit
+                ])
+
+        # Ensure CSV file is saved
         self.csv_file.flush()
 
     def run_video_processing(self):
@@ -1154,35 +1215,45 @@ class BehaviorLogger:
     def load_annotations(self):
         self.point_events = []
         self.state_events = []
-        annotations_file = f'{self.video_name}_Annotations.csv'
-        if os.path.exists(annotations_file):
+        if os.path.exists(self.annotations_file):
             try:
-                with open(annotations_file, 'r') as file:
+                with open(self.annotations_file, 'r') as file:
                     reader = csv.DictReader(file)
-                    # Check if the file is empty or has no 'Name' column
                     if reader.fieldnames is None or 'Name' not in reader.fieldnames:
                         raise KeyError("'Name' column not found in the CSV file.")
                     for row in reader:
-                        Name = row.get('Name', '')  # Safely get the 'Name' field
-                        start_time_str = row.get('H_start', '')
-                        end_time_str = row.get('H_end', '')
+                        Name = row.get('Name', '')
+                        annotation_type = row.get('Type', 'Point')
+                        start_time_str = row.get('H_Start', '')
+                        end_time_str = row.get('H_End', '')
                         start_time = self.parse_time(start_time_str) if start_time_str else None
-                        end_time = self.parse_time(end_time_str) if end_time_str else None
-                        if end_time_str:
+                        end_time = self.parse_time(end_time_str) if end_time_str and end_time_str != 'NA' else None
+                        manual_edit = row.get('Manual_Edit', 'False') == 'True'  # Load Manual_Edit flag
+
+                        if annotation_type == 'State':
                             # State behavior
-                            self.state_events.append({'Name': Name, 'start_time': start_time, 'end_time': end_time})
+                            self.state_events.append({
+                                'Name': Name,
+                                'start_time': start_time,
+                                'end_time': end_time,
+                                'Manual_Edit': manual_edit
+                            })
                         else:
                             # Point behavior
                             time_ = self.parse_time(start_time_str)
                             formatted_time = self.format_time_human_readable(time_)
-                            self.point_events.append({'Name': Name, 'time': formatted_time, 'y_position': 0})
+                            self.point_events.append({
+                                'Name': Name,
+                                'time': formatted_time,
+                                'Manual_Edit': manual_edit,
+                                'y_position': 0
+                            })
             except KeyError as e:
                 print(f"Error: {e}")
                 messagebox.showerror("Error", f"An error occurred: {e}")
             except Exception as e:
                 messagebox.showerror("Error", f"An error occurred while loading annotations: {e}")
         else:
-            # No annotations file found or it's empty
             print(f"No annotations file found for {self.video_name}. Starting fresh.")
             
     def display_frame(self, frame):
@@ -1198,7 +1269,7 @@ class BehaviorLogger:
         self.update_progress_bar()
 
     def update_csv_state_behavior(self, updated_event):
-        self.delete_state_annotation(updated_event)  # Remove the old entry
+        self.delete_state_annotation(updated_event)
         self.csv_writer.writerow([
             updated_event['Name'],
             self.format_time_machine_readable(updated_event['start_time']),
@@ -1210,51 +1281,61 @@ class BehaviorLogger:
         self.csv_file.flush()  # Ensure changes are saved
 
     def update_csv_point_behavior(self, updated_event):
-        self.delete_point_annotation(updated_event)  # Remove the old entry
+        self.delete_point_annotation(updated_event)
         self.csv_writer.writerow([
             updated_event['Name'],
             updated_event.get('H_start', ""),
-            "", "",  # End and Duration columns not used for point behaviors
+            "", "",
             updated_event.get('H_start', ""),
             ""
         ])
         self.csv_file.flush()
 
     def update_csv_annotation(self, updated_annotation, is_state_annotation):
-        annotations_file = f'{self.video_name}_Annotations.csv'
-        with open(annotations_file, 'r') as file:
-            lines = file.readlines()
+        self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
+        
+        with open(self.annotations_file, 'r') as file:
+            reader = csv.DictReader(file)
+            rows = list(reader)
+            fieldnames = reader.fieldnames
 
-        with open(annotations_file, 'w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(lines[0].strip().split(','))  # Write header
-            for line in lines[1:]:
-                row = line.strip().split(',')
-                if row[0] == updated_annotation['Name'] and row[4] == updated_annotation.get('original_H_start', ''):
+        with open(self.annotations_file, 'w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for row in rows:
+                # Check if the row matches the annotation we want to update
+                if (row['Name'] == updated_annotation['Name'] and 
+                    row['H_Start'] == updated_annotation['original_H_Start']):
+                    
+                    # Update state annotation fields
                     if is_state_annotation:
-                        # Write updated state annotation
-                        writer.writerow([
-                            updated_annotation['Name'],
-                            updated_annotation['Start'],
-                            updated_annotation.get('End', ''),
-                            updated_annotation.get('Duration', ''),
-                            updated_annotation['H_start'],
-                            updated_annotation.get('H_end', ''),
-                            updated_annotation.get('Manual Edit', '')
-                        ])
+                        row.update({
+                            'Type': 'State',
+                            'Mutually_Exclusive': updated_annotation['Mutually_Exclusive'],
+                            'H_Start': updated_annotation['H_Start'],
+                            'H_End': updated_annotation['H_End'] if updated_annotation['H_End'] else 'NA',
+                            'Start': updated_annotation['Start'],
+                            'End': updated_annotation['End'],
+                            'Duration': updated_annotation['Duration'],
+                            'Manual_Edit': updated_annotation['Manual_Edit']  # Preserve the flag
+                        })
+                    # Update point annotation fields
                     else:
-                        # Write updated point annotation
-                        writer.writerow([
-                            updated_annotation['Name'],
-                            updated_annotation['Start'],
-                            '',  # End time is empty for point annotations
-                            '',  # Duration is empty for point annotations
-                            updated_annotation['H_start'],
-                            '',  # H_end is empty for point annotations
-                            updated_annotation.get('Manual Edit', '')
-                        ])
+                        row.update({
+                            'Type': 'Point',
+                            'Mutually_Exclusive': 'False',
+                            'H_Start': updated_annotation['H_Start'],
+                            'H_End': 'NA',
+                            'Start': updated_annotation['Start'],
+                            'End': 'NA',
+                            'Duration': 'NA',
+                            'Manual_Edit': updated_annotation['Manual_Edit']  # Preserve the flag
+                        })
+
+                    writer.writerow(row)
                 else:
-                    writer.writerow(row)  # Write unchanged rows
+                    writer.writerow(row)
 
     def initialize_progress_bar(self):
         # Draw the static background for the progress bar on the existing canvas
@@ -1291,9 +1372,11 @@ class BehaviorLogger:
         # Populate the state annotations treeview
         for event in self.state_events:
             name = event['Name']
+            annotation_type = event.get('Type', 'State')  # Default to 'State' if Type is missing
+            mutually_exclusive = event.get('Mutually_Exclusive', 'False')  # Default to 'False' if missing
             start_time = self.format_time_human_readable(event['start_time'])
-            end_time = self.format_time_human_readable(event['end_time']) if event['end_time'] else ''
-            self.state_annotations_tree.insert('', tk.END, values=(name, start_time, end_time))
+            end_time = self.format_time_human_readable(event['end_time']) if event['end_time'] else 'NA'
+            self.state_annotations_tree.insert('', tk.END, values=(name, start_time, end_time, annotation_type, mutually_exclusive))
 
         # Scroll to the bottom of the state annotations treeview
         state_items = self.state_annotations_tree.get_children()
@@ -1345,18 +1428,24 @@ class BehaviorLogger:
     def edit_state_annotation(self):
         if self.selected_index is None:
             return
-        # Get the currently selected annotation
+
         selected_annotation = self.state_events[self.selected_index]
-        # Load the annotation data first
-        latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_start', 'H_end') 
-        # Skip to annotation to edit, and pause video
-        self.skip_to_annotation()
-        # If an edit dialog is already open, destroy it
+
+        # Check if the annotation has an end time, if not, prompt the user
+        if selected_annotation['end_time'] is None:
+            messagebox.showwarning("Edit Error", "Please deactivate the state behavior before editing.")
+            return
+
+        # Proceed with loading the annotation for editing
+        latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_Start', 'H_End')
+
+        # Debugging: Print the latest_annotation to check if it has correct data
+        print(f"Editing state annotation: {latest_annotation}")
+
+        # Create the edit dialog if it's not already open
         if self.edit_dialog is not None:
             self.edit_dialog.destroy()
-            self.edit_dialog = None
 
-        # Create the edit dialog
         self.edit_dialog = tk.Toplevel(self.root)
         self.edit_dialog.protocol("WM_DELETE_WINDOW", self.on_edit_dialog_close)
         self.edit_dialog.withdraw()
@@ -1369,52 +1458,52 @@ class BehaviorLogger:
         tk.Label(self.edit_dialog, text="Name:").grid(row=1, column=0)
         tk.Label(self.edit_dialog, text=latest_annotation['Name']).grid(row=1, column=1)
         tk.Label(self.edit_dialog, text="Start:").grid(row=2, column=0)
-        tk.Label(self.edit_dialog, text=latest_annotation['H_start']).grid(row=2, column=1)
+        tk.Label(self.edit_dialog, text=latest_annotation['H_Start']).grid(row=2, column=1)
         tk.Label(self.edit_dialog, text="End:").grid(row=3, column=0)
-        tk.Label(self.edit_dialog, text=latest_annotation['H_end']).grid(row=3, column=1)
+        tk.Label(self.edit_dialog, text=latest_annotation['H_End']).grid(row=3, column=1)
 
         # Editable new annotation fields
         tk.Label(self.edit_dialog, text="New Annotation").grid(row=4, column=0, columnspan=2, pady=5)
         new_entries = {}
-        new_fields = ['Name', 'H_start', 'H_end']
+        new_fields = ['Name', 'H_Start', 'H_End']
         for i, field in enumerate(new_fields, start=5):
             tk.Label(self.edit_dialog, text=f"{field}:").grid(row=i, column=0)
             entry = tk.Entry(self.edit_dialog)
-            entry.insert(0, latest_annotation.get(field, ""))  # Use latest_annotation here
-            entry.grid(row=i, column=1)  # Add grid() call to display the entry box
+            entry.insert(0, latest_annotation.get(field, ""))  # Populate entry with latest_annotation data
+            entry.grid(row=i, column=1)
             new_entries[field] = entry
 
         # Save button
         save_button = tk.Button(
             self.edit_dialog, text="Save",
-            command=lambda: self.save_state_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_start'])
+            command=lambda: self.save_state_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_Start'])
         )
         save_button.grid(row=i + 1, column=0, columnspan=2, pady=10)
 
-    def on_edit_dialog_close(self):
-        if self.edit_dialog is not None:
-            self.edit_dialog.destroy()
-            self.edit_dialog = None
-            # Save session state
-            self.save_session_state()
-
     def edit_point_annotation(self):
+        # Check if there are active state annotations
+        if self.active_state_behaviors:
+            messagebox.showwarning("Active Annotation", "Please end the active state annotation before editing.")
+            return
+
+        # Proceed with the rest of the editing code
         if self.selected_index is None:
             return
 
-        # Retrieve the selected point annotation
         selected_annotation = self.point_events[self.selected_index]
         
+        # Debugging: Print to verify the selected annotation details
+        print(f"Editing point annotation: {selected_annotation}")
+        
         # Load the latest annotation data from the CSV
-        latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_start')
+        latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_Start')
 
-        # Skip to annotation to edit, and pause video
-        self.skip_to_annotation()
+        # Debugging: Verify that the loaded data is correct
+        print(f"Latest annotation data for editing: {latest_annotation}")
 
-        # If an edit dialog is already open, destroy it
+        # Close any existing edit dialogs
         if self.edit_dialog is not None:
             self.edit_dialog.destroy()
-            self.edit_dialog = None
 
         # Create the edit dialog
         self.edit_dialog = tk.Toplevel(self.root)
@@ -1429,44 +1518,53 @@ class BehaviorLogger:
         tk.Label(self.edit_dialog, text="Name:").grid(row=1, column=0)
         tk.Label(self.edit_dialog, text=latest_annotation['Name']).grid(row=1, column=1)
         tk.Label(self.edit_dialog, text="Start:").grid(row=2, column=0)
-        tk.Label(self.edit_dialog, text=latest_annotation['H_start']).grid(row=2, column=1)
+        tk.Label(self.edit_dialog, text=latest_annotation['H_Start']).grid(row=2, column=1)
 
         # Editable new annotation fields
         tk.Label(self.edit_dialog, text="New Annotation").grid(row=4, column=0, columnspan=2, pady=5)
         new_entries = {}
-        new_fields = ['Name', 'H_start']
+        new_fields = ['Name', 'H_Start']
         for i, field in enumerate(new_fields, start=5):
             tk.Label(self.edit_dialog, text=f"{field}:").grid(row=i, column=0)
             entry = tk.Entry(self.edit_dialog)
-            entry.insert(0, latest_annotation.get(field, ""))  # Load the latest annotation data
+            entry.insert(0, latest_annotation.get(field, ""))  # Populate entry with latest_annotation data
             entry.grid(row=i, column=1)
             new_entries[field] = entry
 
         # Save button
         save_button = tk.Button(
             self.edit_dialog, text="Save",
-            command=lambda: self.save_point_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_start'])
+            command=lambda: self.save_point_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_Start'])
         )
         save_button.grid(row=i + 1, column=0, columnspan=2, pady=10)
 
     def load_annotation_data(self, annotation, *fields):
-        annotations_file = f'{self.video_name}_Annotations.csv'
         latest_annotation = {field: "" for field in fields}
-        with open(annotations_file, 'r') as file:
+        print(f"Loading annotation data for {annotation}")  # Debugging line
+        with open(self.annotations_file, 'r') as file:
             reader = csv.DictReader(file)
             for row in reader:
-                # For state, compare 'Name' and 'H_start' after converting to human-readable format
+                # For state, compare 'Name' and 'H_Start' after converting to human-readable format
                 if (
                     row['Name'] == annotation['Name'] and
-                    row['H_start'] == self.format_time_human_readable(annotation.get('start_time', 0))
+                    row['H_Start'] == self.format_time_human_readable(annotation.get('start_time', 0))
                 ):
                     latest_annotation.update({field: row.get(field, "") for field in fields})
+                    print(f"Found matching row: {latest_annotation}")  # Debugging line
                     break
-                # For point, check 'H_start' only
-                elif 'H_start' in row and row['H_start'] == annotation.get('time'):
+                # For point, check 'H_Start' only
+                elif 'H_Start' in row and row['H_Start'] == annotation.get('time'):
                     latest_annotation.update({field: row.get(field, "") for field in fields})
+                    print(f"Found matching point row: {latest_annotation}")  # Debugging line
                     break
         return latest_annotation
+
+    def on_edit_dialog_close(self):
+        if self.edit_dialog is not None:
+            self.edit_dialog.destroy()
+            self.edit_dialog = None
+            # Save session state
+            self.save_session_state()
 
     def skip_to_annotation(self):
         if not hasattr(self, 'selected_treeview') or not self.selected_item:
@@ -1526,9 +1624,20 @@ class BehaviorLogger:
             Name = self.point_behaviors[key_char]
             # Log point event and update point events list
             self.point_events.append({'Name': Name, 'time': formatted_timestamp, 'y_position': 0})
-            # Write the event to the CSV file
-            self.csv_writer.writerow([Name, self.format_time_machine_readable(frame_timestamp), '', '', formatted_timestamp, ''])
-            self.csv_file.flush()            
+            # Write the event to the CSV file with updated columns
+            self.csv_writer.writerow([
+                self.video_name,
+                Name,
+                'Point',  # Added 'Type' column
+                'False',  # 'Mutually_Exclusive' is False for point behaviors
+                formatted_timestamp,  # H_Start
+                'NA',  # H_End
+                self.format_time_machine_readable(frame_timestamp),  # Start
+                'NA',  # End
+                'NA',  # Duration
+                'False'  # Manual_Edit is False by default
+            ])
+            self.csv_file.flush()
             # Insert into point annotations Treeview
             self.point_annotations_tree.insert("", "end", values=(Name, formatted_timestamp))
             self.update_annotations()
@@ -1546,138 +1655,214 @@ class BehaviorLogger:
         """Handles state behavior events triggered by key presses."""
         Name = self.state_behaviors[key]
         me_group = self.me_groups.get(key, None)  # Get the ME group (if any) for the state behavior
-    
+
         # Deactivate other behaviors in the same ME group, but skip the current behavior
         if me_group:
             print(f"Key {key} belongs to ME Group {me_group}. Deactivating other behaviors in this group.")
             self.deactivate_me_group(me_group, frame_timestamp, current_behavior_key=key)
-    
+
         if key in self.active_state_behaviors:
             # End the state behavior
+            video = self.video_name
             start_time = self.active_state_behaviors.pop(key)
             duration = frame_timestamp - start_time
             formatted_duration = f"{duration:.2f}"
-            formatted_start_time = self.format_time_human_readable(start_time)
-            formatted_end_time = self.format_time_human_readable(frame_timestamp)
-    
-            # Log the state behavior
+            human_readable_start_time = self.format_time_human_readable(start_time)
+            human_readable_end_time = self.format_time_human_readable(frame_timestamp)
+            machine_readable_start_time = self.format_time_machine_readable(start_time)
+            machine_readable_end_time = self.format_time_machine_readable(frame_timestamp)
+            machine_readable_duration = self.format_time_machine_readable(duration)
+
+            # Log the state behavior with updated columns
+            self.csv_writer.writerow([
+                self.video_name,
+                Name,
+                'State',  # 'Type' column
+                'True' if me_group else 'False',  # 'Mutually_Exclusive' column
+                human_readable_start_time,  # H_Start
+                human_readable_end_time,    # H_End
+                machine_readable_start_time,  # Start
+                machine_readable_end_time,    # End
+                machine_readable_duration,    # Duration
+                'False'  # Manual_Edit is False by default
+            ])
+            self.csv_file.flush()
+
+            # Update the state_events list to reflect the end time for UI consistency
             for event in self.state_events:
                 if event['Name'] == Name and event['end_time'] is None:
                     event['end_time'] = frame_timestamp
+                    event['Duration'] = duration
                     break
-            self.csv_writer.writerow([Name, self.format_time_machine_readable(start_time),
-                                      self.format_time_machine_readable(frame_timestamp),
-                                      self.format_time_machine_readable(duration),
-                                      formatted_start_time, formatted_end_time])
-            self.csv_file.flush()
+
             self.update_annotations()
             self.update_behavior_listboxes()
         else:
             # Start a new state behavior
             self.active_state_behaviors[key] = frame_timestamp
-            self.state_events.append({'Name': Name, 'start_time': frame_timestamp, 'end_time': None})
+            self.state_events.append({'Name': Name, 'start_time': frame_timestamp, 'end_time': None, 'Type': 'State', 'Mutually_Exclusive': 'True' if me_group else 'False'})
             self.update_annotations()
             self.update_behavior_listboxes()
             
     def deactivate_me_group(self, me_group, frame_timestamp, current_behavior_key):
-        # Deactivate all active state behaviors in the same mutually exclusive group, except the current one
         to_remove = []
-        print(f"Deactivating ME group: {me_group}, except for the current behavior: {current_behavior_key}")
-    
         for key, start_time in list(self.active_state_behaviors.items()):
-            # Check if the behavior belongs to the same ME group, but skip the current behavior
             if self.me_groups.get(key) == me_group and key != current_behavior_key:
-                Name = self.state_behaviors[key]
+                Name = self.state_behaviors[key]  # Get the Name of the behavior
                 duration = frame_timestamp - start_time
-                formatted_duration = f"{duration:.2f}"
-                formatted_start_time = self.format_time_human_readable(start_time)
-                formatted_end_time = self.format_time_human_readable(frame_timestamp)
-    
-                # Deactivate the state behavior and log it to CSV
-                print(f"Deactivating behavior: {Name} (Key: {key}, ME Group: {me_group})")
-                self.csv_writer.writerow([Name, self.format_time_machine_readable(start_time),
-                                          self.format_time_machine_readable(frame_timestamp),
-                                          self.format_time_machine_readable(duration),
-                                          formatted_start_time, formatted_end_time])
-                
-                # Update the state_events list with the end time (for GUI update)
+                human_readable_start_time = self.format_time_human_readable(start_time)
+                human_readable_end_time = self.format_time_human_readable(frame_timestamp)
+                machine_readable_start_time = self.format_time_machine_readable(start_time)
+                machine_readable_end_time = self.format_time_machine_readable(frame_timestamp)
+                machine_readable_duration = self.format_time_machine_readable(duration)
+
+                # Deactivate the state behavior and log it to CSV with all necessary fields
+                self.csv_writer.writerow([
+                    self.video_name,
+                    Name,
+                    'State',  # Explicitly set Type as 'State'
+                    'True',  # Mutually_Exclusive is 'True' for ME group behaviors
+                    human_readable_start_time,  # H_Start
+                    human_readable_end_time,    # H_End
+                    machine_readable_start_time,  # Start
+                    machine_readable_end_time,    # End
+                    machine_readable_duration,    # Duration
+                    'False'  # Set Manual_Edit to 'False' by default
+                ])
+                self.csv_file.flush()
+
+                # Update the state_events list with the end time and necessary fields
                 for event in self.state_events:
                     if event['Name'] == Name and event['end_time'] is None:
-                        event['end_time'] = frame_timestamp  # Update the end time in state_events list
-                        break    
+                        event.update({
+                            'end_time': frame_timestamp,
+                            'Type': 'State',
+                            'Mutually_Exclusive': 'True',
+                            'Manual_Edit': 'False'
+                        })
+                        break
                 to_remove.append(key)
-    
+
         # Remove deactivated behaviors from active state behaviors
         for key in to_remove:
-            print(f"Removing active state: {key}")
             self.active_state_behaviors.pop(key)
-    
+
         # Update annotations and behavior listboxes
         self.update_annotations()
         self.update_behavior_listboxes()
 
     def save_state_annotation(self, new_entries, dialog, current_annotation, original_H_start):
-        updated_annotation = {field: new_entries[field].get() for field in ['Name', 'H_start', 'H_end']}
-        start_time = self.parse_time(updated_annotation['H_start'])
-        end_time = self.parse_time(updated_annotation['H_end'])
-        
-        # Calculate duration
+        updated_annotation = {field: new_entries[field].get() for field in ['Name', 'H_Start', 'H_End']}
+        start_time = self.parse_time(updated_annotation['H_Start'])
+        end_time = self.parse_time(updated_annotation['H_End'])
         duration = end_time - start_time if end_time and start_time else None
+
+        # Set the Manual_Edit flag to True since this is a manual change
+        updated_annotation['Manual_Edit'] = 'True'
+
+        # Map the updated annotation to CSV format and include the Manual_Edit flag
+        updated_annotation['Type'] = 'State'  # Set the 'Type' column
+        updated_annotation['Mutually_Exclusive'] = 'True' if self.me_groups.get(current_annotation['Name']) else 'False'
         updated_annotation['Start'] = self.format_time_machine_readable(start_time)
         updated_annotation['End'] = self.format_time_machine_readable(end_time)
         updated_annotation['Duration'] = self.format_time_machine_readable(duration)
-        updated_annotation['Manual Edit'] = 'manual edit'
-        updated_annotation['original_H_start'] = original_H_start
+        updated_annotation['original_H_Start'] = original_H_start
+        updated_annotation['Video'] = self.video_name
 
-        # Update CSV with new annotation data
+        # Update the CSV file
         self.update_csv_annotation(updated_annotation, is_state_annotation=True)
 
-        # Reload annotations
+        # Reload and update annotations in the GUI
         self.load_annotations()
         self.update_annotations()
 
-        # Save session state
+        # Save session state and close the dialog
         self.save_session_state()
-
-        # Close the dialog after saving
-        self.edit_dialog.destroy()
+        dialog.destroy()
         self.edit_dialog = None
 
     def save_point_annotation(self, new_entries, dialog, current_annotation, original_H_start):
-        updated_annotation = {field: new_entries[field].get() for field in ['Name', 'H_start']}
-        start_time = self.parse_time(updated_annotation['H_start'])
-        
-        updated_annotation['Start'] = self.format_time_machine_readable(start_time)
-        updated_annotation['Manual Edit'] = 'manual edit'
-        updated_annotation['original_H_start'] = original_H_start
+        updated_annotation = {field: new_entries[field].get() for field in ['Name', 'H_Start']}
+        start_time = self.parse_time(updated_annotation['H_Start'])
 
-        # Update CSV with new point annotation data
+        # Set Manual_Edit to True because this is a manual change
+        updated_annotation['Manual_Edit'] = 'True'
+        
+        # Map the updated annotation to CSV format
+        updated_annotation['Type'] = 'Point'  # Set the 'Type' column to Point
+        updated_annotation['Mutually_Exclusive'] = 'False'  # Point behaviors are not mutually exclusive
+        updated_annotation['Start'] = self.format_time_machine_readable(start_time)
+        updated_annotation['End'] = 'NA'  # Set 'NA' for fields not applicable
+        updated_annotation['Duration'] = 'NA'
+        updated_annotation['original_H_Start'] = original_H_start
+        updated_annotation['Video'] = self.video_name
+
+        # Update the CSV file specifically for point annotations
         self.update_csv_annotation(updated_annotation, is_state_annotation=False)
 
-        # Reload annotations
+        # Reload and update annotations in the GUI
         self.load_annotations()
         self.update_annotations()
 
-        # Save session state
+        # Save session state and close the dialog
         self.save_session_state()
-
-        # Close the dialog after saving
-        self.edit_dialog.destroy()
+        dialog.destroy()
         self.edit_dialog = None
 
+    def load_state_annotations(self):
+        """Load only state annotations from the CSV."""
+        self.state_events = []
+        with open(self.annotations_file, 'r') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if row.get('Type') == 'State':
+                    self.state_events.append({
+                        'Name': row['Name'],
+                        'start_time': self.parse_time(row['H_Start']),
+                        'end_time': self.parse_time(row['H_End']) if row['H_End'] != 'NA' else None
+                    })
+
+    def load_point_annotations(self):
+        """Load only point annotations from the CSV."""
+        self.point_events = []
+        with open(self.annotations_file, 'r') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if row.get('Type') == 'Point':
+                    self.point_events.append({
+                        'Name': row['Name'],
+                        'time': row['H_Start']
+                    })
+
+    def update_state_annotations_listbox(self):
+        """Refresh the state annotations displayed in the GUI."""
+        self.state_annotations_tree.delete(*self.state_annotations_tree.get_children())
+        for event in self.state_events:
+            name = event['Name']
+            start_time = self.format_time_human_readable(event['start_time'])
+            end_time = self.format_time_human_readable(event['end_time']) if event['end_time'] else 'NA'
+            self.state_annotations_tree.insert('', tk.END, values=(name, start_time, end_time))
+
+    def update_point_annotations_listbox(self):
+        """Refresh the point annotations displayed in the GUI."""
+        self.point_annotations_tree.delete(*self.point_annotations_tree.get_children())
+        for event in self.point_events:
+            name = event['Name']
+            time_ = event['time']
+            self.point_annotations_tree.insert('', tk.END, values=(name, time_))
+
     def remove_csv_annotation(self, event, is_state_annotation):
-        annotations_file = f'{self.video_name}_Annotations.csv'
-        with open(annotations_file, 'r') as file:
-            lines = file.readlines()
-        with open(annotations_file, 'w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(lines[0].strip().split(','))  # Write the header
-            for line in lines[1:]:
-                row = line.strip().split(',')
-                # Match state by start time and name; match point by H_start and name
-                if is_state_annotation and row[0] == event['Name'] and row[1] == self.format_time_machine_readable(event['start_time']):
+        with open(self.annotations_file, 'r', newline='') as file:
+            reader = csv.DictReader(file)
+            fieldnames = reader.fieldnames
+            rows = list(reader)
+        with open(self.annotations_file, 'w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                if is_state_annotation and row['Name'] == event['Name'] and row['H_Start'] == self.format_time_human_readable(event['start_time']):
                     continue  # Skip this line to delete it
-                elif not is_state_annotation and row[0] == event['Name'] and row[4] == event['time']:
+                elif not is_state_annotation and row['Name'] == event['Name'] and row['H_Start'] == event['time']:
                     continue  # Skip this line for point deletion
                 writer.writerow(row)
 
@@ -1688,7 +1873,7 @@ class BehaviorLogger:
             selected_items = widget.selection()
             for item in selected_items:
                 self.selected_item = item
-                self.delete_annotation()  # This will handle both deletion and undo functionality
+                self.delete_annotation()
             self.update_annotations()
             self.save_session_state()
 
@@ -1765,10 +1950,10 @@ class BehaviorLogger:
         self.update_annotations()
 
     def remove_csv_state_annotation(self, event):
-        annotations_file = f'{self.video_name}_Annotations.csv'
-        with open(annotations_file, 'r') as file:
+        self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
+        with open(self.annotations_file, 'r') as file:
             lines = file.readlines()
-        with open(annotations_file, 'w', newline='') as file:
+        with open(self.annotations_file, 'w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(lines[0].strip().split(','))  # Write header
             for line in lines[1:]:
@@ -1778,10 +1963,10 @@ class BehaviorLogger:
                 writer.writerow(row)
 
     def remove_csv_point_annotation(self, event):
-        annotations_file = f'{self.video_name}_Annotations.csv'
-        with open(annotations_file, 'r') as file:
+        self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
+        with open(self.annotations_file, 'r') as file:
             lines = file.readlines()
-        with open(annotations_file, 'w', newline='') as file:
+        with open(self.annotations_file, 'w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(lines[0].strip().split(','))  # Write header
             for line in lines[1:]:
@@ -1802,13 +1987,14 @@ class BehaviorLogger:
         minutes, seconds = divmod(elapsed_time, 60)
         return f"{int(minutes)}m{seconds:.2f}s"
 
+
     def format_time_machine_readable(self, elapsed_time):
         if elapsed_time is None:
             return "NA"
         return f"{elapsed_time:.2f}"
 
     def parse_time(self, time_str):
-        if not time_str:
+        if not time_str or time_str == 'NA':
             return None
         if 'm' in time_str and 's' in time_str:
             try:
