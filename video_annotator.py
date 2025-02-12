@@ -29,17 +29,21 @@ class VideoAnnotator(tk.Frame):
         self.parent.title(f"LaserTag  {video_path}")
         self.parent.geometry(f"{display_width}x{display_height}+{display_x}+{display_y}")
 
+
         if platform.system() == "Windows":
-            self.parent.attributes("-topmost", True)
+#            self.parent.attributes("-fullscreen", True)  # Keeps window above all others
+            self.parent.attributes("-topmost", True)  # Keeps window above all others
+            self.parent.attributes("-disabled", False)  # Ensures window is interactive
+            self.parent.state('zoomed')
         elif platform.system() in ["Darwin", "Linux"]:
-            self.parent.attributes("-zoomed", True)
+            self.parent.attributes("-zoomed", True)  # Maximized mode for macOS/Linux
 
         # Layout Measurements
         self.panel_width = int(display_width * 0.20)
         self.panel_height = display_height - int(display_height * 0.1)
         self.progress_bar_height = int(display_height * 0.03)
         self.video_width = display_width - self.panel_width
-        self.video_height = self.panel_height
+        self.video_height = self.panel_height - self.progress_bar_height - int(display_height * 0.02)
         self.progress_bar_width = self.video_width
 
         # GUI grid Layout
@@ -76,7 +80,7 @@ class VideoAnnotator(tk.Frame):
 
         # Set font for annotation panel
         self.treeview_font = ("Helvetica", 12)
-        self.treeview_heading_font = ("Helvetica", 14, "bold")
+        self.treeview_heading_font = ("Helvetica", 12, "bold")
 
         # Configure the ttk style
         style = ttk.Style()
@@ -357,17 +361,21 @@ class VideoAnnotator(tk.Frame):
         self.point_events.clear()
 
         print(f"Loading annotations from: {self.annotations_file}")
+
         with open(self.annotations_file, "r", newline="") as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
                 annotation_type = row.get("Type", "").strip().lower()
                 name = row.get("Name", "").strip()
+
                 if annotation_type == "state":
-                    # Use machine-readable start/end times for in-memory storage
+                    # Handle missing or 'NA' values safely
                     start = row.get("Start", "").strip()
                     end = row.get("End", "").strip()
-                    start_time = float(start) if start else None
-                    end_time = float(end) if end else None
+
+                    start_time = float(start) if start and start != "NA" else None
+                    end_time = float(end) if end and end != "NA" else None
+
                     self.state_events.append({
                         'Name': name,
                         'start_time': start_time,
@@ -375,14 +383,15 @@ class VideoAnnotator(tk.Frame):
                         'Type': 'State',
                         'Mutually_Exclusive': row.get("Mutually_Exclusive", "False")
                     })
+
                 elif annotation_type == "point":
-                    # For point annotations, store the human-readable time
                     h_start = row.get("H_Start", "").strip()
                     self.point_events.append({
                         'Name': name,
                         'time': h_start,
                         'Manual_Edit': row.get("Manual_Edit", "False")
                     })
+
 
     def update_annotations(self):
         """
@@ -853,22 +862,30 @@ class VideoAnnotator(tk.Frame):
         self.parent.destroy()
 
     def visualize_annotations(self):
-        # Create the dialog for visualization
         dialog = tk.Toplevel(self.parent)
+        dialog.transient(self.parent)     # Make dialog dependent on the main window
+        dialog.grab_set()                 # Prevent interaction with the main window
+        dialog.focus_force()              # Bring dialog to the front
+        dialog.attributes('-topmost', True)  # Ensure it stays above the main window
+
         dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
         dialog.title("Visualize Annotations")
         self.center_window(dialog, width=300, height=150)
-        dialog.attributes('-topmost', True)
+
         tk.Label(dialog, text="Annotations visualization is\ncurrently under development.").pack(pady=20)
         tk.Button(dialog, text="OK", command=dialog.destroy).pack(pady=5)
 
     def generate_summary_statistics(self):
-        # Create the dialog for summary statistics
         dialog = tk.Toplevel(self.parent)
+        dialog.transient(self.parent)
+        dialog.grab_set()
+        dialog.focus_force()
+        dialog.attributes('-topmost', True)
+
         dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
         dialog.title("Summary Statistics")
         self.center_window(dialog, width=300, height=150)
-        dialog.attributes('-topmost', True)
+
         tk.Label(dialog, text="Generating summary statistics is\ncurrently under development").pack(pady=20)
         tk.Button(dialog, text="OK", command=dialog.destroy).pack(pady=5)
 
@@ -924,8 +941,6 @@ class VideoAnnotator(tk.Frame):
             return
 
         selected_annotation = self.state_events[self.selected_index]
-
-        # For state annotations, ensure the behavior is deactivated before editing
         if selected_annotation['end_time'] is None:
             messagebox.showwarning("Edit Error", "Please end the state behavior before editing.")
             return
@@ -937,6 +952,10 @@ class VideoAnnotator(tk.Frame):
             self.edit_dialog.destroy()
 
         self.edit_dialog = tk.Toplevel(self.parent)
+        self.edit_dialog.transient(self.parent)
+        self.edit_dialog.grab_set()
+        self.edit_dialog.focus_force()
+        self.edit_dialog.attributes('-topmost', True)
         self.edit_dialog.protocol("WM_DELETE_WINDOW", self.on_edit_dialog_close)
         self.edit_dialog.title("Edit State Annotation")
         self.center_window(self.edit_dialog, width=250, height=300)
@@ -964,7 +983,6 @@ class VideoAnnotator(tk.Frame):
             entry.grid(row=i, column=1)
             new_entries[field] = entry
 
-        # Save button calls a method to update the CSV and in‑memory list
         save_button = tk.Button(
             self.edit_dialog, text="Save",
             command=lambda: self.save_state_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_Start'])
@@ -972,7 +990,6 @@ class VideoAnnotator(tk.Frame):
         save_button.grid(row=i + 1, column=0, columnspan=2, pady=10)
 
     def edit_point_annotation(self):
-        # Prevent editing if any state behavior is still active
         if self.active_state_behaviors:
             messagebox.showwarning("Active Annotation", "Please end the active state before editing.")
             return
@@ -990,14 +1007,16 @@ class VideoAnnotator(tk.Frame):
             self.edit_dialog.destroy()
 
         self.edit_dialog = tk.Toplevel(self.parent)
+        self.edit_dialog.transient(self.parent)
+        self.edit_dialog.grab_set()
+        self.edit_dialog.focus_force()
+        self.edit_dialog.attributes('-topmost', True)
         self.edit_dialog.protocol("WM_DELETE_WINDOW", self.on_edit_dialog_close)
         self.edit_dialog.title("Edit Point Annotation")
         self.center_window(self.edit_dialog, width=275, height=250)
 
-        # Bind the Enter key to trigger the save action
         self.edit_dialog.bind("<Return>", lambda event: self.save_point_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_Start']))
 
-        # Display current annotation
         tk.Label(self.edit_dialog, text="Current Annotation").grid(row=0, column=0, columnspan=2, pady=5)
         tk.Label(self.edit_dialog, text="Name:").grid(row=1, column=0)
         tk.Label(self.edit_dialog, text=latest_annotation['Name']).grid(row=1, column=1)
