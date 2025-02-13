@@ -38,7 +38,6 @@ class SetupManager:
         self.ask_resume_window = None
         self.new_behavior_dialog_open = False
 
-
     def select_video_file(self):
         """Open a custom file picker and get the selected video file."""
         file_picker = FilePicker(self.root)
@@ -179,32 +178,75 @@ class SetupManager:
 
     def show_behavior_key_editor(self):
         self.root.title("Behavior Key Editor")
-        behavior_key_frame = tk.Frame(self.root)
-        behavior_key_frame.grid(row=0, column=0, columnspan=4, pady=5)
+        
+        # Define background colors
+        bg_color = "lightgrey"
 
-        label = tk.Label(behavior_key_frame, text="Select Behavior_Key File:")
-        label.grid(row=0, column=0, padx=5)
+        # Dynamically calculate window size as a ratio of primary monitor size.
+        monitors = get_monitors()
+        primary = next((m for m in monitors if m.is_primary), monitors[0])
+        new_width = int(primary.width * 0.4)   # 60% of monitor width
+        new_height = int(primary.height * 0.8) # 80% of monitor height
 
-        # List behavior key files.
+        # Set the main window background.
+        self.root.configure(bg=bg_color)
+
+        # Configure grid on the root for dynamic resizing.
+        self.root.grid_columnconfigure(0, weight=1)
+        for r in range(25):  # Adjust number of rows as needed.
+            self.root.grid_rowconfigure(r, weight=1)
+        
+        # -------------------------------------------------------------------------
+        # Top Frame: Behavior Key file selection
+        # -------------------------------------------------------------------------
+        behavior_key_frame = tk.Frame(self.root, bg=bg_color)
+        behavior_key_frame.grid(row=0, column=0, columnspan=4, sticky="ew", padx=10, pady=2)
+        behavior_key_frame.grid_columnconfigure(1, weight=1)
+        
+        file_label = tk.Label(
+            behavior_key_frame, text="Select Behavior_Key File:", 
+            font=("Helvetica", 13, "bold"), bg=bg_color
+        )
+        file_label.grid(row=0, column=0, sticky="w", padx=5, pady=2)
+
+        # Get behavior key files, using a default if none exist.
         behavior_files = [f for f in os.listdir(self.behavior_key_dir) if f.endswith('_behaviors.csv')]
         self.behavior_key_files = {f: os.path.join(self.behavior_key_dir, f) for f in behavior_files}
-        self.behavior_key_file_var.set(behavior_files[0] if behavior_files else 'No file found')
+        default_file = behavior_files[0] if behavior_files else "No file found"
+        self.behavior_key_file_var.set(default_file)
 
         self.behavior_key_menu = tk.OptionMenu(
-            behavior_key_frame, self.behavior_key_file_var, *(behavior_files if behavior_files else ['No file found']))
-        self.behavior_key_menu.grid(row=0, column=1, padx=5)
+            behavior_key_frame, 
+            self.behavior_key_file_var, 
+            *(behavior_files if behavior_files else ["No file found"])
+        )
+        self.behavior_key_menu.config(font=("Helvetica", 13), bg=bg_color)
+        self.behavior_key_menu.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
         self.behavior_key_file_var.trace('w', self.behavior_key_file_var_changed)
 
-        new_behavior_key_button = tk.Button(behavior_key_frame, text="New Behavior Key File", command=self.new_behavior_key_file)
-        new_behavior_key_button.grid(row=0, column=2, padx=10)
+        new_behavior_key_button = tk.Button(
+            behavior_key_frame, text="New Behavior Key File", 
+            font=("Helvetica", 12), command=self.new_behavior_key_file, bg=bg_color
+        )
+        new_behavior_key_button.grid(row=0, column=2, sticky="e", padx=10, pady=2)
+        
+        # -------------------------------------------------------------------------
+        # Column Headings (Row 1)
+        # -------------------------------------------------------------------------
+        headings = ["Name", "Shortcut Key", "Type", "ME Group"]
+        for col, heading in enumerate(headings):
+            lbl = tk.Label(self.root, text=heading, font=("Helvetica", 12, "bold"), bg=bg_color)
+            lbl.grid(row=1, column=col, sticky="nsew", padx=5, pady=2)
+            self.root.grid_columnconfigure(col, weight=1)
 
-        # Column headings.
-        tk.Label(self.root, text="Name").grid(row=1, column=0, padx=5, pady=5)
-        tk.Label(self.root, text="Shortcut Key").grid(row=1, column=1, padx=5, pady=5)
-        tk.Label(self.root, text="Type").grid(row=1, column=2, padx=5, pady=5)
-        tk.Label(self.root, text="ME Group").grid(row=1, column=3, padx=5, pady=5)
+        # We can specify widths for the Entry widgets:
+        name_width = 20
+        shortcut_width = 10
+        me_group_width = 10
 
-        # Prepare UI entry widgets for behaviors.
+        # -------------------------------------------------------------------------
+        # Rows 2 to 21: Behavior Entry Widgets
+        # -------------------------------------------------------------------------
         self.behavior_entries = []
         self.name_vars = []
         self.key_vars = []
@@ -222,44 +264,60 @@ class SetupManager:
             self.type_vars.append(type_var)
             self.me_group_vars.append(me_group_var)
 
-            name_entry = tk.Entry(self.root, textvariable=name_var)
-            name_entry.grid(row=i + 2, column=0, padx=5, pady=2)
-            key_entry = tk.Entry(self.root, textvariable=key_var)
-            key_entry.grid(row=i + 2, column=1, padx=5, pady=2)
+            # Name Entry (anchored to left by default, but we specify sticky="ew" for resizing)
+            name_entry = tk.Entry(self.root, textvariable=name_var, font=("Helvetica", 12), width=name_width)
+            name_entry.grid(row=i+2, column=0, sticky="w", padx=(10,5), pady=2)
 
-            type_frame = tk.Frame(self.root)
-            type_frame.grid(row=i + 2, column=2, padx=5, pady=2)
-            point_radio = tk.Radiobutton(type_frame, text="Point", variable=type_var, value='point')
-            state_radio = tk.Radiobutton(type_frame, text="State", variable=type_var, value='state')
-            point_radio.pack(side='left')
-            state_radio.pack(side='left')
+            # Shortcut Key Entry (shorter width)
+            key_entry = tk.Entry(self.root, textvariable=key_var, font=("Helvetica", 12), width=shortcut_width)
+            key_entry.grid(row=i+2, column=1, sticky="w", padx=(10,5), pady=2)
 
-            me_group_entry = tk.Entry(self.root, textvariable=me_group_var)
-            me_group_entry.grid(row=i + 2, column=3, padx=5, pady=2)
+            # Type options using radio buttons within a frame
+            type_frame = tk.Frame(self.root, bg=bg_color)
+            type_frame.grid(row=i+2, column=2, sticky="w", padx=5, pady=2)
+            point_radio = tk.Radiobutton(type_frame, text="Point", variable=type_var, value='point', 
+                                         font=("Helvetica", 12), bg=bg_color)
+            state_radio = tk.Radiobutton(type_frame, text="State", variable=type_var, value='state', 
+                                         font=("Helvetica", 12), bg=bg_color)
+            point_radio.pack(side="left", padx=2)  # Add small horizontal pad
+            state_radio.pack(side="left", padx=2)
+
+            # ME Group box, same width as Shortcut Key
+            me_group_entry = tk.Entry(self.root, textvariable=me_group_var, font=("Helvetica", 12), width=shortcut_width)
+            me_group_entry.grid(row=i+2, column=3, sticky="w", padx=(10,5), pady=2)
 
             self.behavior_entries.extend([name_entry, key_entry, point_radio, state_radio, me_group_entry])
 
-        # Control buttons.
-        save_button = tk.Button(self.root, text="Save", command=self.save_behaviors)
-        save_button.grid(row=0, column=4, columnspan=2, pady=10)
+        # -------------------------------------------------------------------------
+        # Row 22: Bottom Control Buttons
+        # -------------------------------------------------------------------------
+        control_frame = tk.Frame(self.root, bg=bg_color)
+        control_frame.grid(row=22, column=0, columnspan=4, sticky="ew", padx=10, pady=10)
+        control_frame.grid_columnconfigure(0, weight=1)
 
-        delete_button = tk.Button(self.root, text="Delete", command=self.delete_behavior_key)
-        delete_button.grid(row=0, column=6, columnspan=2, pady=10)
+        save_button = tk.Button(control_frame, text="Save", font=("Helvetica", 12), 
+                                command=self.save_behaviors, bg=bg_color)
+        save_button.grid(row=0, column=1, padx=10)
+        delete_button = tk.Button(control_frame, text="Delete", font=("Helvetica", 12), 
+                                  command=self.delete_behavior_key, bg=bg_color)
+        delete_button.grid(row=0, column=2, padx=10)
+        start_button = tk.Button(control_frame, text="Start Video", font=("Helvetica", 12, "bold"), 
+                                 command=self.start_video, bg=bg_color)
+        start_button.grid(row=0, column=3, padx=10)
+        cancel_button = tk.Button(control_frame, text="Cancel", font=("Helvetica", 12), 
+                                  command=self.on_closing, bg=bg_color)
+        cancel_button.grid(row=0, column=4, padx=10)
 
-        start_button_font = tkfont.Font(weight="bold")
-        start_video_button = tk.Button(self.root, text="Start Video", font=start_button_font, command=self.start_video)
-        start_video_button.grid(row=1, column=6, columnspan=2, pady=10)
+        reserved_keys_label = tk.Label(self.root, text="Note: 'w', 'a', 's', 'd' are reserved for video navigation. Do not assign these keys to a behavior.",
+                                       font=("Helvetica", 10), bg=bg_color)
+        reserved_keys_label.grid(row=23, column=0, columnspan=4, sticky="w", padx=5, pady=2)
 
-        cancel_button = tk.Button(self.root, text="Cancel", command=self.on_closing)
-        cancel_button.grid(row=1, column=4, columnspan=2, pady=10)
-
-        reserved_keys_label = tk.Label(self.root, text="Note: 'w', 'a', 's', 'd' are reserved for video navigation. Do not assign these keys to a behavior.")
-        reserved_keys_label.grid(row=22, column=0, columnspan=4, padx=5, pady=5, sticky='w')
-
-        self.center_window(self.root, 900, 850)
+        # Center the window using our new dimensions
+        self.center_window(self.root, new_width, new_height)
         self.root.attributes('-topmost', True)
         self.root.deiconify()
         self.update_behavior_key_editor()
+
         if behavior_files:
             self.behavior_key_file_var_changed()
 
@@ -269,9 +327,9 @@ class SetupManager:
             self.new_behavior_key_file()
             return
 
+        # Remove any previously created widgets to avoid duplicates.
         for widget in self.behavior_entries:
-            widget.grid_forget()
-
+            widget.destroy()
         self.behavior_entries = []
 
         for i, (name_var, key_var, type_var, me_group_var) in enumerate(zip(self.name_vars, self.key_vars, self.type_vars, self.me_group_vars)):
@@ -290,20 +348,24 @@ class SetupManager:
                 type_var.set("point")
                 me_group_var.set("")
 
-            name_entry = tk.Entry(self.root, textvariable=name_var)
-            name_entry.grid(row=i + 2, column=0, padx=5, pady=2)
-            key_entry = tk.Entry(self.root, textvariable=key_var)
-            key_entry.grid(row=i + 2, column=1, padx=5, pady=2)
-
-            type_frame = tk.Frame(self.root)
-            type_frame.grid(row=i + 2, column=2, padx=5, pady=2)
-            point_radio = tk.Radiobutton(type_frame, text="Point", variable=type_var, value="point")
-            state_radio = tk.Radiobutton(type_frame, text="State", variable=type_var, value="state")
-            point_radio.pack(side="left")
-            state_radio.pack(side="left")
-
-            me_group_entry = tk.Entry(self.root, textvariable=me_group_var)
-            me_group_entry.grid(row=i + 2, column=3, padx=5, pady=2)
+            # Name Entry
+            name_entry = tk.Entry(self.root, textvariable=name_var, font=("Helvetica", 12))
+            name_entry.grid(row=i+2, column=0, sticky="ew", padx=5, pady=2)
+            # Shortcut Key Entry
+            key_entry = tk.Entry(self.root, textvariable=key_var, font=("Helvetica", 12))
+            key_entry.grid(row=i+2, column=1, sticky="ew", padx=5, pady=2)
+            # Type options using a frame
+            type_frame = tk.Frame(self.root, bg=self.root['bg'])
+            type_frame.grid(row=i+2, column=2, sticky="w", padx=5, pady=2)
+            point_radio = tk.Radiobutton(type_frame, text="Point", variable=type_var, value="point",
+                                         font=("Helvetica", 12), bg=self.root['bg'])
+            state_radio = tk.Radiobutton(type_frame, text="State", variable=type_var, value="state",
+                                         font=("Helvetica", 12), bg=self.root['bg'])
+            point_radio.pack(side="left", padx=2)
+            state_radio.pack(side="left", padx=2)
+            # ME Group Entry
+            me_group_entry = tk.Entry(self.root, textvariable=me_group_var, font=("Helvetica", 12))
+            me_group_entry.grid(row=i+2, column=3, sticky="ew", padx=5, pady=2)
 
             self.behavior_entries.extend([name_entry, key_entry, point_radio, state_radio, me_group_entry])
 
