@@ -29,28 +29,38 @@ class VideoAnnotator(tk.Frame):
         self.parent.title(f"LaserTag  {video_path}")
         self.parent.geometry(f"{display_width}x{display_height}+{display_x}+{display_y}")
 
-
         if platform.system() == "Windows":
-#            self.parent.attributes("-fullscreen", True)  # Keeps window above all others
-            self.parent.attributes("-topmost", True)  # Keeps window above all others
-            self.parent.attributes("-disabled", False)  # Ensures window is interactive
+            self.parent.attributes("-topmost", True)
             self.parent.state('zoomed')
-        elif platform.system() in ["Darwin", "Linux"]:
-            self.parent.attributes("-zoomed", True)  # Maximized mode for macOS/Linux
+        elif platform.system() == "Darwin":
+            self.parent.attributes("-topmost", True)
+            self.parent.state('zoomed')
+        elif platform.system() == "Linux":
+            self.parent.attributes("-zoomed", True)
+
+        # Ensure VLC uses macOS-compatible settings
+        vlc_args = []
+        if platform.system() == "Darwin":
+            os.environ["VLC_PLUGIN_PATH"] = "/Applications/VLC.app/Contents/MacOS/plugins"
+            vlc_args.extend(["--vout=macosx", "--hw-decoder=videotoolbox"])
 
         # Layout Measurements
         self.panel_width = int(display_width * 0.20)
         self.panel_height = display_height - int(display_height * 0.1)
-        self.progress_bar_height = int(display_height * 0.03)
+        self.progress_bar_height = int(display_height * 0.025)
         self.video_width = display_width - self.panel_width
-        self.video_height = self.panel_height - self.progress_bar_height - int(display_height * 0.03)
+        self.video_height = self.panel_height - self.progress_bar_height
         self.progress_bar_width = self.video_width
 
         # GUI grid Layout
         self.columnconfigure(0, minsize=self.video_width, weight=1)
         self.columnconfigure(1, minsize=self.panel_width, weight=1)
         self.rowconfigure(0, minsize=self.video_height, weight=0)
-        self.rowconfigure(1, minsize=self.progress_bar_height + 30, weight=0)
+        self.rowconfigure(1, minsize=self.progress_bar_height, weight=0)
+
+        # set background to black
+        self.parent.configure(bg="black")
+        self.configure(bg="black")
 
         # Video Frame
         self.video_frame = tk.Frame(self, bg="black", width=self.video_width, height=self.video_height)
@@ -66,8 +76,7 @@ class VideoAnnotator(tk.Frame):
         self.point_behaviors = {}  # key -> name for point behaviors
         self.me_groups = {}        # key -> ME group (if any)
         self.behavior_map = {}     # key -> {Name, Type}
-        # For highlighting point behaviors (once pressed)
-        self.used_point_behaviors = set()
+        self.used_point_behaviors = set() # For highlighting point behaviors
         self.undo_stack = []  # Stack to hold deleted annotations for undo
 
         # Define file paths for annotations
@@ -99,16 +108,30 @@ class VideoAnnotator(tk.Frame):
         self.populate_behavior_treeviews()
 
         # Progress Bar setup
-        self.progress_frame = tk.Frame(self, bg="black", width=self.progress_bar_width, height=self.progress_bar_height + 30)
-        self.progress_frame.grid(row=1, column=0, columnspan=2, sticky="nw")
+        self.progress_frame = tk.Frame(
+            self,
+            bg="black",
+            width=self.progress_bar_width,
+            height=self.progress_bar_height,
+            bd=0,
+            highlightthickness=0,
+        )
+        self.progress_frame.grid(row=1, column=0, sticky="nw")
         self.progress_frame.grid_propagate(False)
-        self.progress_bar_canvas = tk.Canvas(self.progress_frame, bg="black", width=self.progress_bar_width, height=self.progress_bar_height + 30)
+
+        self.progress_bar_canvas = tk.Canvas(
+            self.progress_frame,
+            bg="black",
+            width=self.progress_bar_width,
+            height=self.progress_bar_height,
+            bd=0,
+            highlightthickness=0,
+        )
         self.progress_bar_canvas.pack()
-        self.initialize_progress_bar()
         self.progress_bar_canvas.bind("<Button-1>", self.on_progress_click)
 
-        # VLC Instance Setup
-        self.instance = vlc.Instance()
+        # Create VLC instance and player
+        self.instance = vlc.Instance(*vlc_args)
         if not self.instance:
             messagebox.showerror("VLC Error", "Failed to initialize VLC instance.")
             self.destroy()
@@ -117,12 +140,21 @@ class VideoAnnotator(tk.Frame):
         self.player = self.instance.media_player_new()
         media = self.instance.media_new(video_path)
         self.player.set_media(media)
-        self.update()
+
+        # Link player to window
         window_id = self.video_frame.winfo_id()
-        if os.name == "nt":
+        if platform.system() == "Darwin":
+            self.player.set_nsobject(window_id)
+        elif platform.system() == "Windows":
             self.player.set_hwnd(window_id)
         else:
             self.player.set_xwindow(window_id)
+
+        # Load session, start playback
+        self.initialize_progress_bar()
+        self.load_session_state()
+        self.auto_save_session_state()
+        self.player.play()
 
         # Key Bindings for Playback & Speed Controls
         self.parent.bind("<space>", self.toggle_play) # Toggle play/pause
@@ -145,14 +177,6 @@ class VideoAnnotator(tk.Frame):
         self.parent.bind("<Key>", self.on_key_press) # handle key bindings 
         self.parent.bind("<Delete>", self.delete_annotation_key) # Delete an annotation
         self.parent.bind("<Control-z>", self.undo_delete) # Undo deleted annotations
-
-        # Start Playback and Schedule Progress Updates
-        self.player.play()
-        self.after(100, self.update_progress)
-        # Schedule loading the session state after playback has started
-        self.after(100, self.load_session_state)
-        # Start auto-saving session state every 10 seconds
-        self.after(2000, self.auto_save_session_state)
 
     def save_session_state(self):
         """
@@ -207,7 +231,7 @@ class VideoAnnotator(tk.Frame):
 
         # Annotation Panel Frame (Right)
         self.annotation_border_frame = tk.Frame(self, bg="grey", bd=2, relief="solid", height=self.video_height)
-        self.annotation_border_frame.grid(row=0, column=1, sticky="nsew", padx=3, pady=0)
+        self.annotation_border_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=3, pady=0)
         self.annotation_frame = tk.Frame(self.annotation_border_frame, bg="gray",
                                          width=self.panel_width, height=self.video_height)
         self.annotation_frame.pack(fill="both", expand=True, padx=3, pady=0)
@@ -780,6 +804,9 @@ class VideoAnnotator(tk.Frame):
         self.refresh_paused_frame()
 
     def change_speed(self, delta):
+        """
+        Example usage: update the playback speed, and also update the speed_text.
+        """
         speed_steps = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 25, 30]
         current_rate = self.player.get_rate()
         try:
@@ -792,22 +819,91 @@ class VideoAnnotator(tk.Frame):
             self.player.set_rate(new_rate)
             print(f"New speed: {new_rate:.2f}x")
 
+        # Now update the speed_text
+        self.progress_bar_canvas.itemconfig("speed_text", text=f"({new_rate:.1f}x)")
+
     def initialize_progress_bar(self):
+        # Clear any existing canvas elements.
         self.progress_bar_canvas.delete("all")
-        self.progress_bar_canvas.create_text(
-            5, 15, anchor="w", text="(1.0x)", fill="white",
-            font=self.progress_bar_font, tags="speed_text")
-        y_bar = 30
+        bar_height = self.progress_bar_height
+        # Draw the static background.
         self.progress_bar_canvas.create_rectangle(
-            0, y_bar, self.progress_bar_width, y_bar + self.progress_bar_height,
-            fill="grey", tags="background")
-        y_time = y_bar + self.progress_bar_height / 2
+            0, 0, self.progress_bar_width, bar_height,
+            fill="grey", tags="background"
+        )
+        # Pre-create the progress rectangle (initially zero-width).
+        self.progress_rect = self.progress_bar_canvas.create_rectangle(
+            0, 0, 0, bar_height,
+            fill="#454545", tags="progress_bar"
+        )
+        # Create the current-time text on the left.
         self.progress_bar_canvas.create_text(
-            5, y_time, anchor="w", text="0m0.00s", fill="white",
-            font=self.progress_bar_font, tags="time_text_left")
+            5, bar_height / 2, anchor="w",
+            text="0m0.00s",
+            fill="white",
+            font=self.progress_bar_font,
+            tags="time_text_left"
+        )
+        # Create the playback speed text (it will be updated via change_speed()).
         self.progress_bar_canvas.create_text(
-            self.progress_bar_width - 5, y_time, anchor="e", text="0m0.00s",
-            fill="white", font=self.progress_bar_font, tags="time_text_right")
+            110, bar_height / 2, anchor="w",
+            text="(1.0x)",
+            fill="white",
+            font=self.progress_bar_font,
+            tags="speed_text"
+        )
+        # Get total media length.
+        total_ms = self.player.get_length()
+        if total_ms <= 0:
+            # Media not yet loaded; try again in 250ms.
+            self.after(250, self.initialize_progress_bar)
+            return
+        total_sec = total_ms / 1000.0
+        total_time_str = self.format_time_human_readable(total_sec)
+        # Create the total-time text (on the right) once and never update it.
+        self.progress_bar_canvas.create_text(
+            self.progress_bar_width - 5, bar_height / 2, anchor="e",
+            text=total_time_str,
+            fill="white",
+            font=self.progress_bar_font,
+            tags="time_text_right"
+        )
+        # Start polling to update the current time and progress rectangle (every 500ms).
+        self.poll_progress_bar()
+
+    def poll_progress_bar(self):
+        """Update the progress bar and schedule the next update in 500ms."""
+        self.update_progress_bar()
+        state = self.player.get_state()
+        if state == vlc.State.Ended:
+            print("Video ended. Restarting from beginning.")
+            self.player.stop()
+            self.player.set_time(0)
+            self.player.play()
+        self.after(500, self.poll_progress_bar)
+
+    def update_progress_bar(self):
+        """Update only the dynamic parts of the progress bar."""
+        total_ms = self.player.get_length()
+        current_ms = self.player.get_time()
+        ratio = (current_ms / total_ms) if total_ms > 0 else 0
+        progress = int(ratio * self.progress_bar_width)
+
+        # Update the coordinates of the existing progress rectangle.
+        self.progress_bar_canvas.coords(
+            self.progress_rect,
+            0, 0, progress, self.progress_bar_height
+        )
+
+        # Update the current time text (left).
+        current_sec = current_ms / 1000.0
+        current_time_str = self.format_time_human_readable(current_sec)
+        self.progress_bar_canvas.itemconfig("time_text_left", text=current_time_str)
+
+        # Ensure that the text items remain on top.
+        self.progress_bar_canvas.tag_raise("time_text_left")
+        self.progress_bar_canvas.tag_raise("time_text_right")
+        self.progress_bar_canvas.tag_raise("speed_text")
 
     def on_progress_click(self, event):
         click_x = event.x
@@ -816,46 +912,6 @@ class VideoAnnotator(tk.Frame):
         if total_ms > 0:
             target_ms = int(ratio * total_ms)
             self.player.set_time(target_ms)
-
-    def update_progress_bar(self):
-        y_bar = 30
-        self.progress_bar_canvas.delete("progress_bar")
-        total_ms = self.player.get_length()
-        current_ms = self.player.get_time()
-        ratio = current_ms / total_ms if total_ms > 0 else 0
-        progress = int(ratio * self.progress_bar_width)
-        self.progress_bar_canvas.create_rectangle(
-            0, y_bar, progress, y_bar + self.progress_bar_height,
-            fill="darkblue", tags="progress_bar")
-        current_sec = current_ms / 1000.0
-        total_sec = total_ms / 1000.0
-        current_time = self.format_time_human_readable(current_sec)
-        total_time = self.format_time_human_readable(total_sec)
-        self.progress_bar_canvas.itemconfig("time_text_left", text=current_time)
-        self.progress_bar_canvas.itemconfig("time_text_right", text=total_time)
-        current_rate = self.player.get_rate()
-        self.progress_bar_canvas.itemconfig("speed_text", text=f"({current_rate:.1f}x)")
-        self.progress_bar_canvas.tag_raise("speed_text")
-        self.progress_bar_canvas.tag_raise("time_text_left")
-        self.progress_bar_canvas.tag_raise("time_text_right")
-
-    def update_progress(self):
-        self.update_progress_bar()
-        state = self.player.get_state()
-        if state == vlc.State.Ended:
-            print("Video ended. Restarting from beginning.")
-            self.player.stop()
-            self.player.set_time(0)
-            self.player.play()
-        self.after(100, self.update_progress)
-
-    def get_video_length(self):
-        self.total_ms = self.player.get_length()
-        if self.total_ms > 0:
-            print(f"Total video length: {self.total_ms} ms")
-        else:
-            # If length is not available yet, try again after 500ms
-            self.after(500, self.get_video_length)
 
     def on_closing(self):
         self.player.stop()

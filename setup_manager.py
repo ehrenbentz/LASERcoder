@@ -185,16 +185,27 @@ class SetupManager:
         # Dynamically calculate window size as a ratio of primary monitor size.
         monitors = get_monitors()
         primary = next((m for m in monitors if m.is_primary), monitors[0])
-        new_width = int(primary.width * 0.4)   # 60% of monitor width
-        new_height = int(primary.height * 0.8) # 80% of monitor height
+        new_width = int(primary.width * 0.4)   # 40% of monitor width
+        new_height = int(primary.height * 0.8)   # 80% of monitor height
 
         # Set the main window background.
         self.root.configure(bg=bg_color)
 
         # Configure grid on the root for dynamic resizing.
-        self.root.grid_columnconfigure(0, weight=1)
-        for r in range(25):  # Adjust number of rows as needed.
-            self.root.grid_rowconfigure(r, weight=1)
+        # Configure 4 columns with equal weight.
+        for col in range(4):
+            self.root.grid_columnconfigure(col, weight=1)
+        
+        # Configure rows:
+        # Row 0 (top frame) and row 1 (headings) should expand.
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_rowconfigure(1, weight=1)
+        # Rows 2 to 26 (behavior entry widgets) should not expand vertically.
+        for r in range(2, 27):
+            self.root.grid_rowconfigure(r, weight=0)
+        # Rows 27 and 28 (control buttons and reserved keys) can expand.
+        self.root.grid_rowconfigure(27, weight=1)
+        self.root.grid_rowconfigure(28, weight=1)
         
         # -------------------------------------------------------------------------
         # Top Frame: Behavior Key file selection
@@ -209,7 +220,7 @@ class SetupManager:
         )
         file_label.grid(row=0, column=0, sticky="w", padx=5, pady=2)
 
-        # Get behavior key files, using a default if none exist.
+        # Get behavior key files.
         behavior_files = [f for f in os.listdir(self.behavior_key_dir) if f.endswith('_behaviors.csv')]
         self.behavior_key_files = {f: os.path.join(self.behavior_key_dir, f) for f in behavior_files}
         default_file = behavior_files[0] if behavior_files else "No file found"
@@ -239,13 +250,12 @@ class SetupManager:
             lbl.grid(row=1, column=col, sticky="nsew", padx=5, pady=2)
             self.root.grid_columnconfigure(col, weight=1)
 
-        # We can specify widths for the Entry widgets:
+        # Specify widths for the Entry widgets.
         name_width = 20
         shortcut_width = 10
-        me_group_width = 10
 
         # -------------------------------------------------------------------------
-        # Rows 2 to 21: Behavior Entry Widgets
+        # Rows 2 to 26: Behavior Entry Widgets (25 rows)
         # -------------------------------------------------------------------------
         self.behavior_entries = []
         self.name_vars = []
@@ -253,7 +263,7 @@ class SetupManager:
         self.type_vars = []
         self.me_group_vars = []
 
-        for i in range(20):
+        for i in range(25):
             name_var = tk.StringVar()
             key_var = tk.StringVar()
             type_var = tk.StringVar(value='point')
@@ -264,55 +274,65 @@ class SetupManager:
             self.type_vars.append(type_var)
             self.me_group_vars.append(me_group_var)
 
-            # Name Entry (anchored to left by default, but we specify sticky="ew" for resizing)
+            # Name Entry
             name_entry = tk.Entry(self.root, textvariable=name_var, font=("Helvetica", 12), width=name_width)
-            name_entry.grid(row=i+2, column=0, sticky="w", padx=(10,5), pady=2)
+            name_entry.grid(row=i+2, column=0, sticky="w", padx=(10,5), pady=0)
 
-            # Shortcut Key Entry (shorter width)
+            # Shortcut Key Entry
             key_entry = tk.Entry(self.root, textvariable=key_var, font=("Helvetica", 12), width=shortcut_width)
-            key_entry.grid(row=i+2, column=1, sticky="w", padx=(10,5), pady=2)
+            key_entry.grid(row=i+2, column=1, sticky="w", padx=(10,5), pady=0)
 
-            # Type options using radio buttons within a frame
+            # Type options in a frame
             type_frame = tk.Frame(self.root, bg=bg_color)
-            type_frame.grid(row=i+2, column=2, sticky="w", padx=5, pady=2)
-            point_radio = tk.Radiobutton(type_frame, text="Point", variable=type_var, value='point', 
+            type_frame.grid(row=i+2, column=2, sticky="w", padx=5, pady=0)
+            point_radio = tk.Radiobutton(type_frame, text="Point", variable=type_var, value='point',
                                          font=("Helvetica", 12), bg=bg_color)
-            state_radio = tk.Radiobutton(type_frame, text="State", variable=type_var, value='state', 
+            state_radio = tk.Radiobutton(type_frame, text="State", variable=type_var, value='state',
                                          font=("Helvetica", 12), bg=bg_color)
-            point_radio.pack(side="left", padx=2)  # Add small horizontal pad
+            point_radio.pack(side="left", padx=2)
             state_radio.pack(side="left", padx=2)
 
-            # ME Group box, same width as Shortcut Key
+            # ME Group Entry
             me_group_entry = tk.Entry(self.root, textvariable=me_group_var, font=("Helvetica", 12), width=shortcut_width)
-            me_group_entry.grid(row=i+2, column=3, sticky="w", padx=(10,5), pady=2)
+            me_group_entry.grid(row=i+2, column=3, sticky="w", padx=(10,5), pady=0)
 
             self.behavior_entries.extend([name_entry, key_entry, point_radio, state_radio, me_group_entry])
 
         # -------------------------------------------------------------------------
-        # Row 22: Bottom Control Buttons
+        # Row 27: Bottom Control Buttons
         # -------------------------------------------------------------------------
         control_frame = tk.Frame(self.root, bg=bg_color)
-        control_frame.grid(row=22, column=0, columnspan=4, sticky="ew", padx=10, pady=10)
+        control_frame.grid(row=27, column=0, columnspan=4, sticky="ew", padx=10, pady=10)
+        # Create two subframes: one for left-aligned buttons and one for the right-aligned button.
+        left_frame = tk.Frame(control_frame, bg=bg_color)
+        left_frame.grid(row=0, column=0, sticky="w")
+        right_frame = tk.Frame(control_frame, bg=bg_color)
+        right_frame.grid(row=0, column=1, sticky="e")
+        # Expand columns in control_frame so that left_frame and right_frame are separated.
         control_frame.grid_columnconfigure(0, weight=1)
+        control_frame.grid_columnconfigure(1, weight=1)
 
-        save_button = tk.Button(control_frame, text="Save", font=("Helvetica", 12), 
+        # Left side buttons: Save, Delete, Cancel.
+        save_button = tk.Button(left_frame, text="Save", font=("Helvetica", 12), 
                                 command=self.save_behaviors, bg=bg_color)
-        save_button.grid(row=0, column=1, padx=10)
-        delete_button = tk.Button(control_frame, text="Delete", font=("Helvetica", 12), 
+        save_button.pack(side="left", padx=10)
+        delete_button = tk.Button(left_frame, text="Delete", font=("Helvetica", 12), 
                                   command=self.delete_behavior_key, bg=bg_color)
-        delete_button.grid(row=0, column=2, padx=10)
-        start_button = tk.Button(control_frame, text="Start Video", font=("Helvetica", 12, "bold"), 
-                                 command=self.start_video, bg=bg_color)
-        start_button.grid(row=0, column=3, padx=10)
-        cancel_button = tk.Button(control_frame, text="Cancel", font=("Helvetica", 12), 
+        delete_button.pack(side="left", padx=10)
+        cancel_button = tk.Button(left_frame, text="Cancel", font=("Helvetica", 12), 
                                   command=self.on_closing, bg=bg_color)
-        cancel_button.grid(row=0, column=4, padx=10)
+        cancel_button.pack(side="left", padx=10)
+
+        # Right side button: Start Video.
+        start_button = tk.Button(right_frame, text="Start Video", font=("Helvetica", 12, "bold"), 
+                                 command=self.start_video, bg=bg_color)
+        start_button.pack(side="right", padx=10)
 
         reserved_keys_label = tk.Label(self.root, text="Note: 'w', 'a', 's', 'd' are reserved for video navigation. Do not assign these keys to a behavior.",
                                        font=("Helvetica", 10), bg=bg_color)
-        reserved_keys_label.grid(row=23, column=0, columnspan=4, sticky="w", padx=5, pady=2)
+        reserved_keys_label.grid(row=28, column=0, columnspan=4, sticky="w", padx=5, pady=2)
 
-        # Center the window using our new dimensions
+        # Center the window using our new dimensions.
         self.center_window(self.root, new_width, new_height)
         self.root.attributes('-topmost', True)
         self.root.deiconify()
