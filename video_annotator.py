@@ -43,7 +43,7 @@ class VideoAnnotator(tk.Frame):
         self.panel_height = display_height - int(display_height * 0.1)
         self.progress_bar_height = int(display_height * 0.03)
         self.video_width = display_width - self.panel_width
-        self.video_height = self.panel_height - self.progress_bar_height - int(display_height * 0.02)
+        self.video_height = self.panel_height - self.progress_bar_height - int(display_height * 0.03)
         self.progress_bar_width = self.video_width
 
         # GUI grid Layout
