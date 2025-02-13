@@ -1,3 +1,5 @@
+# file_picker.py
+
 import os
 import tkinter as tk
 from tkinter import ttk
@@ -14,154 +16,136 @@ class FilePicker(tk.Toplevel):
         self.initial_dir = os.path.abspath(initial_dir)
         self.current_dir = self.initial_dir
 
-        print(f"Initial directory: {self.initial_dir}")
+        # Colors
+        bg_color = "grey"
+        list_bg = "lightgrey"
 
-        # Define a subtle greyscale palette.
-        bg_color    = "#2471a3"
-        tree_bg = "#eaf2f8"
-
-        # Monitor sizing
+        # Size and placement (initial geometry; will be re-centered)
         monitors = get_monitors()
         primary = next((m for m in monitors if m.is_primary), monitors[0])
-        window_width = int(primary.width * 0.5)
-        window_height = int(primary.height * 0.6)
+        window_width = int(primary.width * 0.4)
+        window_height = int(primary.height * 0.5)
         x = primary.x + (primary.width - window_width) // 3
         y = primary.y + (primary.height - window_height) // 2
         self.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
-        # Styling
+        # Configure ttk styles
         self.style = ttk.Style(self)
         self.style.theme_use("clam")
-
-        # Configure backgrounds:
-        self.style.configure(
-            "TFrame",
-            background=bg_color
-        )
-        self.style.configure(
-            "TPanedwindow",
-            background=bg_color
-        )
-        
-        large_font = ("Helvetica", 14)
-        self.style.configure("Treeview", 
-                             font=large_font, 
-                             background=tree_bg, 
-                             fieldbackground=tree_bg)
-        self.style.configure("TButton", font=large_font)
-        self.style.configure("FileLabel.TLabel",
-                             font=("Helvetica", 13, "bold"),
-                             background=bg_color)
-        
-        # Set the toplevel window background (for non-ttk areas)
+        self.style.configure("TFrame", background=bg_color)
+        self.style.configure("TPanedwindow", background=bg_color)
+        large_font = ("Helvetica", 13)  # Adjusted font size
+        self.style.configure("TButton", font=large_font, padding=(5,2,5,2))
+        self.style.configure("FileLabel.TLabel", font=("Helvetica", 13, "bold"), background=bg_color)
+        # Configure a custom style for the top bar using list_bg:
+        self.style.configure("TopBar.TFrame", background=list_bg)
         self.configure(background=bg_color)
 
-        # Create a horizontal paned window with our styled background.
+        # --- Top area: Up button and current directory Entry ---
+        temp_frame = ttk.Frame(self, style="TopBar.TFrame")
+        temp_frame.pack(fill="x", padx=5, pady=(5,0))
+        top_dir_frame = ttk.Frame(temp_frame, style="TopBar.TFrame")
+        top_dir_frame.pack(fill="x", expand=True)
+        # Up button with reduced width and custom padding
+        self.style.configure("Custom.TButton", padding=(2, 0))
+        up_btn = ttk.Button(top_dir_frame, text="↑", width=1, style="Custom.TButton", command=self.go_up)
+        up_btn.grid(row=0, column=0, padx=(5,5), sticky="ns")
+        # Current directory Entry
+        self.current_dir_entry = ttk.Entry(top_dir_frame, font=("Helvetica", 13))
+        self.current_dir_entry.grid(row=0, column=1, sticky="ew")
+        top_dir_frame.columnconfigure(1, weight=1)
+        self.current_dir_entry.insert(0, self.initial_dir)
+        self.current_dir_entry.bind("<Return>", self.on_entry_update)
+
+        # --- Paned window for directory list and file list ---
         paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL, style="TPanedwindow")
-        paned.pack(fill="both", expand=True, padx=10, pady=10)
+        paned.pack(fill="both", expand=True, padx=5, pady=(0,5))
 
-        # Directory tree panel (ttk.Frame).
-        self.dir_frame = ttk.Frame(paned, style="TFrame")
-        paned.add(self.dir_frame, weight=1)
+        # --- Directory list panel (left) ---
+        self.dir_panel = ttk.Frame(paned, style="TFrame")
+        paned.add(self.dir_panel, weight=1)
+        dir_container = tk.Frame(self.dir_panel, bg=bg_color)
+        dir_container.pack(fill="both", expand=True, padx=5, pady=5)
+        self.dir_listbox = tk.Listbox(dir_container, font=("Helvetica", 13), bg=list_bg)
+        self.dir_listbox.pack(side="left", fill="both", expand=True)
+        dir_scrollbar = ttk.Scrollbar(dir_container, orient="vertical", command=self.dir_listbox.yview)
+        dir_scrollbar.pack(side="right", fill="y")
+        self.dir_listbox.configure(yscrollcommand=dir_scrollbar.set)
+        # Bind double-click on a directory to update current directory
+        self.dir_listbox.bind("<Double-Button-1>", self.on_dir_double_click)
+        self.populate_dir_list(self.initial_dir)
 
-        # File list panel (ttk.Frame).
+        # --- File list panel (right) ---
         self.file_frame = ttk.Frame(paned, style="TFrame")
         paned.add(self.file_frame, weight=3)
-
-        # Label at the top for "Video Files:"
-        file_label = ttk.Label(
-            self.file_frame,
-            text="Video Files:",
-            style="FileLabel.TLabel"
-        )
+        file_label = ttk.Label(self.file_frame, text="Video Files:", style="FileLabel.TLabel")
         file_label.pack(pady=(15, 5), padx=10, anchor="w")
+        file_container = tk.Frame(self.file_frame, bg=bg_color)
+        file_container.pack(fill="both", expand=True, padx=5, pady=5)
+        self.file_listbox = tk.Listbox(file_container, font=("Helvetica", 13), bg=list_bg, bd=5, relief="flat")
+        self.file_listbox.pack(side="left", fill="both", expand=True)
+        self.file_listbox.bind("<Double-Button-1>", self.select_file)
+        file_scrollbar = ttk.Scrollbar(file_container, orient="vertical", command=self.file_listbox.yview)
+        file_scrollbar.pack(side="right", fill="y")
+        self.file_listbox.configure(yscrollcommand=file_scrollbar.set)
 
-        # Create a single inner frame (non-ttk) for extra padding.
-        # Because this is a tk.Frame, we can set bg directly.
-        inner_frame = tk.Frame(self.file_frame, bg=bg_color)
-        inner_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        # --- Bottom button frame ---
+        bottom_btn_frame = ttk.Frame(self, style="TFrame")
+        bottom_btn_frame.pack(fill="x", padx=10, pady=5)
+        select_btn = ttk.Button(bottom_btn_frame, text="Select", command=self.select_file)
+        select_btn.pack(side="right", padx=5, pady=(2,2))
+        cancel_btn = ttk.Button(bottom_btn_frame, text="Cancel", command=self.destroy)
+        cancel_btn.pack(side="right", padx=5, pady=(2,2))
 
-        # Directory tree
-        self.dir_tree = ttk.Treeview(self.dir_frame, show="tree")
-        self.dir_tree.pack(fill="both", expand=True)
-
-        # File list
-        self.file_listbox = tk.Listbox(
-            inner_frame,
-            font=("Helvetica", 16),
-            bg=tree_bg
-        )
-        self.file_listbox.pack(fill="both", expand=True)
-
-        # Buttons at the bottom (ttk.Frame) for background
-        btn_frame = ttk.Frame(self, style="TFrame")
-        btn_frame.pack(fill="x", padx=10, pady=5)
-        select_btn = ttk.Button(btn_frame, text="Select", command=self.select_file)
-        select_btn.pack(side="left", padx=5)
-        cancel_btn = ttk.Button(btn_frame, text="Cancel", command=self.destroy)
-        cancel_btn.pack(side="right", padx=5)
-
-        # Build the directory tree
-        root_node = self.dir_tree.insert(
-            "", "end", text=self.initial_dir, open=True, values=[self.initial_dir]
-        )
-        self.populate_tree(root_node, self.initial_dir)
-
-        # Bind events
-        self.dir_tree.bind("<<TreeviewOpen>>", self.on_tree_expand)
-        self.dir_tree.bind("<<TreeviewSelect>>", self.on_tree_select)
-
-        # Populate file list
         self.populate_file_list(self.initial_dir)
+        # Center the window on the primary monitor
+        self.center_window(self, window_width, window_height)
 
-    def has_subdirectory(self, path):
-        """Return True if the directory has any subdirectories."""
+    def on_entry_update(self, event):
+        new_dir = self.current_dir_entry.get().strip()
+        if os.path.isdir(new_dir):
+            self.current_dir = new_dir
+            self.populate_file_list(new_dir)
+            self.populate_dir_list(new_dir)
+        else:
+            print("Not a valid directory.")
+
+    def go_up(self):
+        parent_dir = os.path.dirname(self.current_dir)
+        if not parent_dir or parent_dir == self.current_dir:
+            return
+        self.current_dir = parent_dir
+        self.populate_file_list(parent_dir)
+        self.populate_dir_list(parent_dir)
+        self.current_dir_entry.delete(0, tk.END)
+        self.current_dir_entry.insert(0, parent_dir)
+
+    def populate_dir_list(self, directory):
+        self.dir_listbox.delete(0, tk.END)
+        if not os.path.isdir(directory):
+            return
         try:
-            for entry in os.listdir(path):
-                full = os.path.join(path, entry)
-                if os.path.isdir(full):
-                    return True
+            dirs = [d for d in os.listdir(directory)
+                    if os.path.isdir(os.path.join(directory, d)) and not d.startswith('.') and not d.startswith('__')]
+            dirs.sort()
         except Exception:
-            pass
-        return False
+            dirs = []
+        for d in dirs:
+            self.dir_listbox.insert(tk.END, d)
 
-    def populate_tree(self, parent_node, parent_path):
-        """Populate a tree node with its immediate subdirectories."""
-        try:
-            subdirs = [
-                d for d in os.listdir(parent_path)
-                if os.path.isdir(os.path.join(parent_path, d))
-            ]
-            subdirs.sort()
-        except Exception:
-            subdirs = []
-        for d in subdirs:
-            full_path = os.path.join(parent_path, d)
-            node = self.dir_tree.insert(parent_node, "end", text=d, values=[full_path])
-            if self.has_subdirectory(full_path):
-                self.dir_tree.insert(node, "end", text="dummy")
-
-    def on_tree_expand(self, event):
-        """When a tree node is expanded, populate it if needed."""
-        node = self.dir_tree.focus()
-        path = self.dir_tree.item(node, "values")[0]
-        children = self.dir_tree.get_children(node)
-        if children:
-            first_child = children[0]
-            if self.dir_tree.item(first_child, "text") == "dummy":
-                self.dir_tree.delete(first_child)
-                self.populate_tree(node, path)
-
-    def on_tree_select(self, event):
-        """When a directory is selected in the tree, update the file list."""
-        node = self.dir_tree.focus()
-        if node:
-            path = self.dir_tree.item(node, "values")[0]
-            self.current_dir = path
-            self.populate_file_list(path)
+    def on_dir_double_click(self, event):
+        selection = self.dir_listbox.curselection()
+        if selection:
+            dir_name = self.dir_listbox.get(selection[0])
+            new_dir = os.path.join(self.current_dir, dir_name)
+            if os.path.isdir(new_dir):
+                self.current_dir = new_dir
+                self.current_dir_entry.delete(0, tk.END)
+                self.current_dir_entry.insert(0, new_dir)
+                self.populate_file_list(new_dir)
+                self.populate_dir_list(new_dir)
 
     def populate_file_list(self, directory):
-        """Populate the file listbox with video files from the selected directory."""
         self.file_listbox.delete(0, tk.END)
         if not os.path.isdir(directory):
             return
@@ -169,18 +153,26 @@ class FilePicker(tk.Toplevel):
             items = os.listdir(directory)
         except Exception:
             return
-        video_files = [
-            f for f in items
-            if os.path.isfile(os.path.join(directory, f))
-            and f.lower().endswith(tuple(ext.lower() for ext in self.file_types))
-        ]
+        video_files = [f for f in items if os.path.isfile(os.path.join(directory, f))
+                       and not f.startswith('.')
+                       and f.lower().endswith(tuple(ext.lower() for ext in self.file_types))]
         for f in sorted(video_files):
             self.file_listbox.insert(tk.END, f)
 
     def select_file(self, event=None):
-        """Select the file and close the dialog."""
         selection = self.file_listbox.curselection()
         if selection:
             file_name = self.file_listbox.get(selection[0])
             self.selected_file = os.path.join(self.current_dir, file_name)
         self.destroy()
+
+    def center_window(self, win, width, height):
+        # Identify the primary monitor
+        monitors = get_monitors()
+        primary_monitor = next((m for m in monitors if m.is_primary), monitors[0])
+        # Calculate center position within primary monitor
+        x = primary_monitor.x + (primary_monitor.width // 2) - (width // 2)
+        y = primary_monitor.y + (primary_monitor.height // 2) - (height // 2)
+        # Apply geometry to window
+        win.geometry(f"{width}x{height}+{x}+{y}")
+        win.update_idletasks()
