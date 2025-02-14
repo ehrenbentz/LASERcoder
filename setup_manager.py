@@ -186,7 +186,7 @@ class SetupManager:
         monitors = get_monitors()
         primary = next((m for m in monitors if m.is_primary), monitors[0])
         new_width = int(primary.width * 0.4)   # 40% of monitor width
-        new_height = int(primary.height * 0.8)   # 80% of monitor height
+        new_height = int(primary.height * 1)   # 80% of monitor height
 
         # Set the main window background.
         self.root.configure(bg=bg_color)

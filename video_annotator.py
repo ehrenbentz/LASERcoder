@@ -10,104 +10,161 @@ import vlc
 import csv
 
 class VideoAnnotator(tk.Frame):
-    def __init__(self, parent, video_path, session_state_file, behavior_file=None):
+    def __init__(self, parent, video_path, session_state_file, behavior_key_file):
+        # Initialize the parent Frame first
         super().__init__(parent)
         self.parent = parent
         self.video_path = video_path
         self.session_state_file = session_state_file
+        self.behavior_key_file = behavior_key_file
 
-        # Identify the primary monitor
+        # Pack the main frame into the parent window
+        self.pack(fill=tk.BOTH, expand=True)
+
+        # Initialize in order
+        self.initialize_data_structures()
+        self.setup_file_paths()
+        self.configure_display()
+        self.setup_layout_measurements()
+        self.setup_grid_layout()
+        self.create_video_frame()
+        self.initialize_vlc_player()
+        self.create_ui_components()
+        self.load_data_and_start()
+        self.setup_key_bindings()
+
+    def initialize_data_structures(self):
+        """Initialize all data structures for annotations and behaviors"""
+        self.state_events = []  # State annotation events
+        self.point_events = []  # Point annotation events
+        self.active_state_behaviors = {}  # Active state keys
+        self.behaviors = []  # All behavior definitions
+        self.state_behaviors = {}  # key -> name for state behaviors
+        self.point_behaviors = {}  # key -> name for point behaviors
+        self.me_groups = {}  # key -> ME group (if any)
+        self.behavior_map = {}  # key -> {Name, Type}
+        self.used_point_behaviors = set()  # For highlighting point behaviors
+        self.undo_stack = []  # Stack for undo functionality
+
+    def setup_file_paths(self):
+        """Set up all necessary file paths"""
+        self.video_name = os.path.basename(self.video_path).split('.')[0]
+        self.annotations_dir = os.path.join(os.getcwd(), "lasertag", "Annotations")
+        self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
+
+    def configure_display(self):
+        """Configure display settings and window properties"""
+        # Get primary monitor information
         monitors = get_monitors()
         primary_monitor = next((m for m in monitors if m.is_primary), monitors[0])
+        
+        # Set display dimensions
+        self.display_width = primary_monitor.width
+        self.display_height = primary_monitor.height
+        self.display_x = primary_monitor.x
+        self.display_y = primary_monitor.y
 
-        # Get primary monitor properties
-        display_width = primary_monitor.width
-        display_height = primary_monitor.height
-        display_x = primary_monitor.x
-        display_y = primary_monitor.y
-
-        self.parent.title(f"LaserTag  {video_path}")
-        self.parent.geometry(f"{display_width}x{display_height}+{display_x}+{display_y}")
-
+        # Configure window
+        self.parent.title(f"LaserTag  {self.video_path}")
+        self.parent.geometry(f"{self.display_width}x{self.display_height}+{self.display_x}+{self.display_y}")
+        
+        # Platform-specific window settings
         if platform.system() == "Windows":
             self.parent.attributes("-topmost", True)
             self.parent.state('zoomed')
-        elif platform.system() == "Darwin":
+        elif platform.system() == "Darwin":  # macOS
             self.parent.attributes("-topmost", True)
             self.parent.state('zoomed')
+            # Ensure VLC can find plugins on macOS
+            os.environ["VLC_PLUGIN_PATH"] = "/Applications/VLC.app/Contents/MacOS/plugins"
         elif platform.system() == "Linux":
             self.parent.attributes("-zoomed", True)
 
-        # Ensure VLC uses macOS-compatible settings
-        vlc_args = []
-        if platform.system() == "Darwin":
-            os.environ["VLC_PLUGIN_PATH"] = "/Applications/VLC.app/Contents/MacOS/plugins"
-            vlc_args.extend(["--vout=macosx", "--hw-decoder=videotoolbox"])
+        # Set background color
+        self.parent.configure(bg="black")
+        self.configure(bg="black")
 
-        # Layout Measurements
-        self.panel_width = int(display_width * 0.20)
-        self.panel_height = display_height - int(display_height * 0.1)
-        self.progress_bar_height = int(display_height * 0.025)
-        self.video_width = display_width - self.panel_width
+    def setup_layout_measurements(self):
+        """Set up layout measurements based on display size"""
+        self.panel_width = int(self.display_width * 0.20)
+        self.panel_height = self.display_height - int(self.display_height * 0.1)
+        self.progress_bar_height = int(self.display_height * 0.025)
+        self.video_width = self.display_width - self.panel_width
         self.video_height = self.panel_height - self.progress_bar_height
         self.progress_bar_width = self.video_width
 
-        # GUI grid Layout
+    def setup_grid_layout(self):
+        """Configure the grid layout"""
         self.columnconfigure(0, minsize=self.video_width, weight=1)
         self.columnconfigure(1, minsize=self.panel_width, weight=1)
         self.rowconfigure(0, minsize=self.video_height, weight=0)
         self.rowconfigure(1, minsize=self.progress_bar_height, weight=0)
 
-        # set background to black
-        self.parent.configure(bg="black")
-        self.configure(bg="black")
-
-        # Video Frame
+    def create_video_frame(self):
+        """Create the video frame"""
         self.video_frame = tk.Frame(self, bg="black", width=self.video_width, height=self.video_height)
         self.video_frame.grid(row=0, column=0, sticky="nw")
         self.video_frame.grid_propagate(False)
 
-        # Initialize in-memory lists for annotations and behaviors
-        self.state_events = []  # Will hold state annotation events
-        self.point_events = []  # Will hold point annotation events
-        self.active_state_behaviors = {}  # Track active state keys
-        self.behaviors = []  # List of all behavior definitions
-        self.state_behaviors = {}  # key -> name for state behaviors
-        self.point_behaviors = {}  # key -> name for point behaviors
-        self.me_groups = {}        # key -> ME group (if any)
-        self.behavior_map = {}     # key -> {Name, Type}
-        self.used_point_behaviors = set() # For highlighting point behaviors
-        self.undo_stack = []  # Stack to hold deleted annotations for undo
+    def initialize_vlc_player(self):
+        """Initialize VLC player with platform-specific settings"""
+        # Configure VLC arguments based on platform
+        vlc_args = ["--quiet", "--no-video-title-show"]
+        
+        if platform.system() == "Darwin":
+            vlc_args.extend([
+                "--vout=macosx",
+                "--hw-decoder=videotoolbox"
+            ])
+        elif platform.system() == "Windows":
+            vlc_args.extend([
+                "--directx-device=default"
+            ])
+        else:  # Linux
+            vlc_args.extend([
+                "--no-xlib"
+            ])
 
-        # Define file paths for annotations
-        self.video_name = os.path.basename(self.video_path).split('.')[0]
-        self.annotations_dir = os.path.join(os.getcwd(), "lasertag", "Annotations")
-        self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
+        # Create VLC instance and player
+        self.instance = vlc.Instance(*vlc_args)
+        if not self.instance:
+            messagebox.showerror("VLC Error", "Failed to initialize VLC instance.")
+            self.destroy()
+            return
 
-        # VLC progress bar font
+        # Create and configure media player
+        self.player = self.instance.media_player_new()
+        media = self.instance.media_new(self.video_path)
+        self.player.set_media(media)
+
+        # Platform-specific video output configuration
+        window_id = self.video_frame.winfo_id()
+        if platform.system() == "Darwin":
+            self.player.set_nsobject(window_id)
+        elif platform.system() == "Windows":
+            self.player.set_hwnd(window_id)
+        else:  # Linux
+            self.player.set_xwindow(window_id)
+
+    def create_ui_components(self):
+        """Create and configure UI components"""
+        # Set fonts
         self.progress_bar_font = ("Helvetica", 13, "bold")
-
-        # Set font for annotation panel
         self.treeview_font = ("Helvetica", 12)
         self.treeview_heading_font = ("Helvetica", 12, "bold")
 
-        # Configure the ttk style
+        # Configure ttk style
         style = ttk.Style()
         style.configure("Treeview", font=self.treeview_font)
         style.configure("Treeview.Heading", font=self.treeview_heading_font)
 
-        # Load Behaviors
-        self.load_behaviors()
-        # Create Annotation Panel 
+        # Create progress bar
+        self.create_progress_bar()
+        # Create annotation panel
         self.create_annotation_panel()
-        # Load existing annotations
-        self.load_annotations()
-        # Now update the annotation treeviews with both the loaded annotations and any new ones
-        self.update_annotations()
-        # Update the behavior treeviews so that both state and point behaviors are shown
-        self.populate_behavior_treeviews()
 
-        # Progress Bar setup
+    def create_progress_bar(self):
+        """Create and configure the progress bar"""
         self.progress_frame = tk.Frame(
             self,
             bg="black",
@@ -130,53 +187,62 @@ class VideoAnnotator(tk.Frame):
         self.progress_bar_canvas.pack()
         self.progress_bar_canvas.bind("<Button-1>", self.on_progress_click)
 
-        # Create VLC instance and player
-        self.instance = vlc.Instance(*vlc_args)
-        if not self.instance:
-            messagebox.showerror("VLC Error", "Failed to initialize VLC instance.")
-            self.destroy()
-            return
-
-        self.player = self.instance.media_player_new()
-        media = self.instance.media_new(video_path)
-        self.player.set_media(media)
-
-        # Link player to window
-        window_id = self.video_frame.winfo_id()
-        if platform.system() == "Darwin":
-            self.player.set_nsobject(window_id)
-        elif platform.system() == "Windows":
-            self.player.set_hwnd(window_id)
-        else:
-            self.player.set_xwindow(window_id)
-
-        # Load session, start playback
+    def load_data_and_start(self):
+        """Load data and start playback"""
+        self.load_behaviors()
+        self.load_annotations()
+        self.update_annotations()
+        self.populate_behavior_treeviews()
         self.initialize_progress_bar()
         self.load_session_state()
         self.auto_save_session_state()
         self.player.play()
 
-        # Key Bindings for Playback & Speed Controls
-        self.parent.bind("<space>", self.toggle_play) # Toggle play/pause
-        self.parent.bind("<Right>", lambda e: self.seek_relative(5000)) # skip 5 sec forward
-        self.parent.bind("<Left>", lambda e: self.seek_relative(-5000)) # skip 5 sec back
-        self.parent.bind("<Shift-Right>", lambda e: self.seek_relative(1000)) # skip 1 sec forward
-        self.parent.bind("<Shift-Left>", lambda e: self.seek_relative(-1000)) # skip 1 sec back
-        self.parent.bind("<d>", lambda e: self.seek_relative(5000)) # skip 5 sec forward
-        self.parent.bind("<a>", lambda e: self.seek_relative(-5000)) # skip 5 sec back
-        self.parent.bind("<D>", lambda e: self.seek_relative(1000)) # skip 1 sec forward
-        self.parent.bind("<A>", lambda e: self.seek_relative(-1000)) # skip 1 sec back
-        self.parent.bind("<w>", lambda e: self.seek_relative(10000)) # skip 10 sec forward
-        self.parent.bind("<s>", lambda e: self.seek_relative(-10000)) # skip 10 sec back
-        self.parent.bind("=", lambda e: self.change_speed(1)) # increase playback speed
-        self.parent.bind("+", lambda e: self.change_speed(1))  # increase playback speed
-        self.parent.bind("-", lambda e: self.change_speed(-1)) # decrease playback speed
-        self.parent.bind("_", lambda e: self.change_speed(-1)) # decrease playback speed
-        self.parent.bind("<Escape>", lambda e: self.on_closing()) # close app with esc key
-        self.parent.protocol("WM_DELETE_WINDOW", self.on_closing) # close app with button
-        self.parent.bind("<Key>", self.on_key_press) # handle key bindings 
-        self.parent.bind("<Delete>", self.delete_annotation_key) # Delete an annotation
-        self.parent.bind("<Control-z>", self.undo_delete) # Undo deleted annotations
+    def setup_key_bindings(self):
+        """Set up all key bindings"""
+
+        small_skip=1000
+        med_skip=5000
+        large_skip=10000
+
+        key_bindings = {
+            # Toggle play/pause
+            "<space>": self.toggle_play,
+
+            # Small skip
+            "<Shift-Right>": lambda e: self.seek_relative(small_skip),
+            "<Shift-Left>": lambda e: self.seek_relative(-small_skip),
+            "<D>": lambda e: self.seek_relative(small_skip),
+            "<A>": lambda e: self.seek_relative(-small_skip),
+
+            # Medium skip
+            "<Right>": lambda e: self.seek_relative(med_skip),
+            "<Left>": lambda e: self.seek_relative(-med_skip),
+            "<d>": lambda e: self.seek_relative(med_skip),
+            "<a>": lambda e: self.seek_relative(-med_skip),
+
+            # Large skip
+            "<w>": lambda e: self.seek_relative(large_skip),
+            "<s>": lambda e: self.seek_relative(-large_skip),
+
+            # Change playback speed
+            "=": lambda e: self.change_speed(1),
+            "+": lambda e: self.change_speed(1),
+            "-": lambda e: self.change_speed(-1),
+            "_": lambda e: self.change_speed(-1),
+
+            # Other bindings
+            "<Escape>": lambda e: self.on_closing(),
+            "<Delete>": self.delete_annotation_key,
+            "<Control-z>": self.undo_delete,
+            "<Key>": self.on_key_press,
+        }
+
+        for key, callback in key_bindings.items():
+            self.parent.bind(key, callback)
+        
+        # Set window close protocol
+        self.parent.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def save_session_state(self):
         """
@@ -354,8 +420,8 @@ class VideoAnnotator(tk.Frame):
 
 
     def load_behaviors(self):
-        print(f"Loading behaviors from: {self.behavior_file}")
-        with open(self.behavior_file, "r", newline="") as csvfile:
+        print(f"Loading behaviors from: {self.behavior_key_file}")
+        with open(self.behavior_key_file, "r", newline="") as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:
                 if not row or len(row) < 3:
