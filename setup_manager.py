@@ -186,7 +186,7 @@ class SetupManager:
         monitors = get_monitors()
         primary = next((m for m in monitors if m.is_primary), monitors[0])
         new_width = int(primary.width * 0.4)   # 40% of monitor width
-        new_height = int(primary.height * 1)   # 80% of monitor height
+        new_height = int(primary.height * 0.6)   # 80% of monitor height
 
         # Set the main window background.
         self.root.configure(bg=bg_color)
@@ -276,15 +276,15 @@ class SetupManager:
 
             # Name Entry
             name_entry = tk.Entry(self.root, textvariable=name_var, font=("Helvetica", 12), width=name_width)
-            name_entry.grid(row=i+2, column=0, sticky="w", padx=(10,5), pady=0)
+            name_entry.grid(row=i+2, column=0, sticky="w", padx=(20,5), pady=(0,0))
 
             # Shortcut Key Entry
             key_entry = tk.Entry(self.root, textvariable=key_var, font=("Helvetica", 12), width=shortcut_width)
-            key_entry.grid(row=i+2, column=1, sticky="w", padx=(10,5), pady=0)
-
+            key_entry.grid(row=i+2, column=1, sticky="w", padx=(10,5), pady=(0,0))
+            
             # Type options in a frame
             type_frame = tk.Frame(self.root, bg=bg_color)
-            type_frame.grid(row=i+2, column=2, sticky="w", padx=5, pady=0)
+            type_frame.grid(row=i+2, column=2, sticky="w", padx=5, pady=(0,0))
             point_radio = tk.Radiobutton(type_frame, text="Point", variable=type_var, value='point',
                                          font=("Helvetica", 12), bg=bg_color)
             state_radio = tk.Radiobutton(type_frame, text="State", variable=type_var, value='state',
@@ -294,7 +294,7 @@ class SetupManager:
 
             # ME Group Entry
             me_group_entry = tk.Entry(self.root, textvariable=me_group_var, font=("Helvetica", 12), width=shortcut_width)
-            me_group_entry.grid(row=i+2, column=3, sticky="w", padx=(10,5), pady=0)
+            me_group_entry.grid(row=i+2, column=3, sticky="w", padx=(10,20), pady=(0,0))
 
             self.behavior_entries.extend([name_entry, key_entry, point_radio, state_radio, me_group_entry])
 
@@ -370,13 +370,13 @@ class SetupManager:
 
             # Name Entry
             name_entry = tk.Entry(self.root, textvariable=name_var, font=("Helvetica", 12))
-            name_entry.grid(row=i+2, column=0, sticky="ew", padx=5, pady=2)
+            name_entry.grid(row=i+2, column=0, sticky="ew", padx=(20,5), pady=(0,0))
             # Shortcut Key Entry
             key_entry = tk.Entry(self.root, textvariable=key_var, font=("Helvetica", 12))
-            key_entry.grid(row=i+2, column=1, sticky="ew", padx=5, pady=2)
+            key_entry.grid(row=i+2, column=1, sticky="ew", padx=(10,5), pady=(0,0))
             # Type options using a frame
             type_frame = tk.Frame(self.root, bg=self.root['bg'])
-            type_frame.grid(row=i+2, column=2, sticky="w", padx=5, pady=2)
+            type_frame.grid(row=i+2, column=2, sticky="w", padx=5, pady=(0,0))
             point_radio = tk.Radiobutton(type_frame, text="Point", variable=type_var, value="point",
                                          font=("Helvetica", 12), bg=self.root['bg'])
             state_radio = tk.Radiobutton(type_frame, text="State", variable=type_var, value="state",
@@ -385,7 +385,7 @@ class SetupManager:
             state_radio.pack(side="left", padx=2)
             # ME Group Entry
             me_group_entry = tk.Entry(self.root, textvariable=me_group_var, font=("Helvetica", 12))
-            me_group_entry.grid(row=i+2, column=3, sticky="ew", padx=5, pady=2)
+            me_group_entry.grid(row=i+2, column=3, sticky="ew", padx=(10,20), pady=(0,0))
 
             self.behavior_entries.extend([name_entry, key_entry, point_radio, state_radio, me_group_entry])
 

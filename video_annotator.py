@@ -57,7 +57,7 @@ class VideoAnnotator(tk.Frame):
         # Get primary monitor information
         monitors = get_monitors()
         primary_monitor = next((m for m in monitors if m.is_primary), monitors[0])
-        
+
         # Set display dimensions
         self.display_width = primary_monitor.width
         self.display_height = primary_monitor.height
@@ -67,12 +67,12 @@ class VideoAnnotator(tk.Frame):
         # Configure window
         self.parent.title(f"LaserTag  {self.video_path}")
         self.parent.geometry(f"{self.display_width}x{self.display_height}+{self.display_x}+{self.display_y}")
-        
+
         # Platform-specific window settings
         if platform.system() == "Windows":
             self.parent.attributes("-topmost", True)
             self.parent.state('zoomed')
-        elif platform.system() == "Darwin":  # macOS
+        elif platform.system() == "Darwin":
             self.parent.attributes("-topmost", True)
             self.parent.state('zoomed')
             # Ensure VLC can find plugins on macOS
@@ -110,7 +110,7 @@ class VideoAnnotator(tk.Frame):
         """Initialize VLC player with platform-specific settings"""
         # Configure VLC arguments based on platform
         vlc_args = ["--quiet", "--no-video-title-show"]
-        
+
         if platform.system() == "Darwin":
             vlc_args.extend([
                 "--vout=macosx",
@@ -240,7 +240,7 @@ class VideoAnnotator(tk.Frame):
 
         for key, callback in key_bindings.items():
             self.parent.bind(key, callback)
-        
+
         # Set window close protocol
         self.parent.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -290,7 +290,7 @@ class VideoAnnotator(tk.Frame):
         Automatically saves the session state and schedules the next save in 10 seconds.
         """
         self.save_session_state()
-        self.after(10000, self.auto_save_session_state)
+        self.after(1000, self.auto_save_session_state)
 
     def create_annotation_panel(self):
         print(f"Annotation Panel Width: {self.panel_width}")
@@ -873,7 +873,7 @@ class VideoAnnotator(tk.Frame):
         """
         Example usage: update the playback speed, and also update the speed_text.
         """
-        speed_steps = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 25, 30]
+        speed_steps = [0.5, 1, 2, 3, 4, 5, 8, 10, 15, 20, 30]
         current_rate = self.player.get_rate()
         try:
             index = speed_steps.index(current_rate)

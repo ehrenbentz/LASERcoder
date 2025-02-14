@@ -17,15 +17,15 @@ class FilePicker(tk.Toplevel):
         self.current_dir = self.initial_dir
 
         # Colors
-        bg_color = "grey"
-        list_bg = "lightgrey"
+        bg_color = "lightgrey"
+        list_bg = "white"
 
         # Size and placement (initial geometry; will be re-centered)
         monitors = get_monitors()
         primary = next((m for m in monitors if m.is_primary), monitors[0])
-        window_width = int(primary.width * 0.4)
+        window_width = int(primary.width * 0.35)
         window_height = int(primary.height * 0.5)
-        x = primary.x + (primary.width - window_width) // 3
+        x = primary.x + (primary.width - window_width) // 2
         y = primary.y + (primary.height - window_height) // 2
         self.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
@@ -34,11 +34,11 @@ class FilePicker(tk.Toplevel):
         self.style.theme_use("clam")
         self.style.configure("TFrame", background=bg_color)
         self.style.configure("TPanedwindow", background=bg_color)
-        large_font = ("Helvetica", 13)  # Adjusted font size
+        large_font = ("Helvetica", 12)  # Adjusted font size
         self.style.configure("TButton", font=large_font, padding=(5,2,5,2))
-        self.style.configure("FileLabel.TLabel", font=("Helvetica", 13, "bold"), background=bg_color)
+        self.style.configure("FileLabel.TLabel", font=("Helvetica", 12, "bold"), background=bg_color)
         # Configure a custom style for the top bar using list_bg:
-        self.style.configure("TopBar.TFrame", background=list_bg)
+        self.style.configure("TopBar.TFrame", background=bg_color)
         self.configure(background=bg_color)
 
         # --- Top area: Up button and current directory Entry ---
@@ -51,7 +51,7 @@ class FilePicker(tk.Toplevel):
         up_btn = ttk.Button(top_dir_frame, text="↑", width=1, style="Custom.TButton", command=self.go_up)
         up_btn.grid(row=0, column=0, padx=(5,5), sticky="ns")
         # Current directory Entry
-        self.current_dir_entry = ttk.Entry(top_dir_frame, font=("Helvetica", 13))
+        self.current_dir_entry = tk.Entry(top_dir_frame, font=("Helvetica", 12), relief="ridge", bd=2, bg="white")
         self.current_dir_entry.grid(row=0, column=1, sticky="ew")
         top_dir_frame.columnconfigure(1, weight=1)
         self.current_dir_entry.insert(0, self.initial_dir)
@@ -66,7 +66,7 @@ class FilePicker(tk.Toplevel):
         paned.add(self.dir_panel, weight=1)
         dir_container = tk.Frame(self.dir_panel, bg=bg_color)
         dir_container.pack(fill="both", expand=True, padx=5, pady=5)
-        self.dir_listbox = tk.Listbox(dir_container, font=("Helvetica", 13), bg=list_bg)
+        self.dir_listbox = tk.Listbox(dir_container, font=("Helvetica", 12), bg=list_bg, bd=2, relief="ridge")
         self.dir_listbox.pack(side="left", fill="both", expand=True)
         dir_scrollbar = ttk.Scrollbar(dir_container, orient="vertical", command=self.dir_listbox.yview)
         dir_scrollbar.pack(side="right", fill="y")
@@ -79,10 +79,10 @@ class FilePicker(tk.Toplevel):
         self.file_frame = ttk.Frame(paned, style="TFrame")
         paned.add(self.file_frame, weight=3)
         file_label = ttk.Label(self.file_frame, text="Video Files:", style="FileLabel.TLabel")
-        file_label.pack(pady=(15, 5), padx=10, anchor="w")
+        file_label.pack(pady=(5, 0), padx=5, anchor="w")
         file_container = tk.Frame(self.file_frame, bg=bg_color)
-        file_container.pack(fill="both", expand=True, padx=5, pady=5)
-        self.file_listbox = tk.Listbox(file_container, font=("Helvetica", 13), bg=list_bg, bd=5, relief="flat")
+        file_container.pack(fill="both", expand=True, padx=5, pady=(0,5))
+        self.file_listbox = tk.Listbox(file_container, font=("Helvetica", 12), bg=list_bg, bd=2, relief="ridge")
         self.file_listbox.pack(side="left", fill="both", expand=True)
         self.file_listbox.bind("<Double-Button-1>", self.select_file)
         file_scrollbar = ttk.Scrollbar(file_container, orient="vertical", command=self.file_listbox.yview)
@@ -164,7 +164,47 @@ class FilePicker(tk.Toplevel):
         if selection:
             file_name = self.file_listbox.get(selection[0])
             self.selected_file = os.path.join(self.current_dir, file_name)
-        self.destroy()
+            self.destroy()
+        else:
+            # Create a popup notification window as Toplevel
+            popup = tk.Toplevel(self)
+            popup.title("Note")
+                
+            # Set fixed dimensions for the popup
+            popup_width = 300
+            popup_height = 150
+                
+            # Use the existing center_window method
+            self.center_window(popup, popup_width, popup_height)
+                
+            # Configure popup style
+            popup.configure(background="lightgrey")
+                
+            # Configure a new style for the popup label
+            self.style.configure("Popup.TLabel", 
+                               background="lightgrey",
+                               font=("Helvetica", 12, "bold"))
+                
+            # Add message with centered text using new style
+            message = ttk.Label(popup, text="You must select a video\nfile to proceed",
+                              style="Popup.TLabel",
+                              wraplength=250,
+                              justify="center",
+                              anchor="center")
+            message.pack(pady=20, fill="x")
+                
+            # Add OK button
+            ok_button = ttk.Button(popup, text="OK", command=popup.destroy)
+            ok_button.pack(pady=5)
+                
+            # Bind Enter key to close dialog
+            popup.bind('<Return>', lambda e: popup.destroy())
+                
+            # Make the popup modal (user must interact with it)
+            popup.transient(self)
+            popup.grab_set()
+            popup.focus_set()
+            self.wait_window(popup)
 
     def center_window(self, win, width, height):
         # Identify the primary monitor
