@@ -6,7 +6,7 @@ import json
 import tkinter as tk
 from tkinter import ttk, messagebox
 from screeninfo import get_monitors
-import vlc
+import mpv
 import csv
 
 class VideoAnnotator(tk.Frame):
@@ -28,7 +28,7 @@ class VideoAnnotator(tk.Frame):
         self.setup_layout_measurements()
         self.setup_grid_layout()
         self.create_video_frame()
-        self.initialize_vlc_player()
+        self.initialize_mpv_player()
         self.create_ui_components()
         self.load_data_and_start()
         self.setup_key_bindings()
@@ -57,7 +57,7 @@ class VideoAnnotator(tk.Frame):
         # Get primary monitor information
         monitors = get_monitors()
         primary_monitor = next((m for m in monitors if m.is_primary), monitors[0])
-
+        
         # Set display dimensions
         self.display_width = primary_monitor.width
         self.display_height = primary_monitor.height
@@ -67,16 +67,12 @@ class VideoAnnotator(tk.Frame):
         # Configure window
         self.parent.title(f"LaserTag  {self.video_path}")
         self.parent.geometry(f"{self.display_width}x{self.display_height}+{self.display_x}+{self.display_y}")
-
+        
         # Platform-specific window settings
         if platform.system() == "Windows":
-            self.parent.attributes("-topmost", True)
             self.parent.state('zoomed')
         elif platform.system() == "Darwin":
-            self.parent.attributes("-topmost", True)
             self.parent.state('zoomed')
-            # Ensure VLC can find plugins on macOS
-            os.environ["VLC_PLUGIN_PATH"] = "/Applications/VLC.app/Contents/MacOS/plugins"
         elif platform.system() == "Linux":
             self.parent.attributes("-zoomed", True)
 
@@ -106,45 +102,17 @@ class VideoAnnotator(tk.Frame):
         self.video_frame.grid(row=0, column=0, sticky="nw")
         self.video_frame.grid_propagate(False)
 
-    def initialize_vlc_player(self):
-        """Initialize VLC player with platform-specific settings"""
-        # Configure VLC arguments based on platform
-        vlc_args = ["--quiet", "--no-video-title-show"]
-
-        if platform.system() == "Darwin":
-            vlc_args.extend([
-                "--vout=macosx",
-                "--hw-decoder=videotoolbox"
-            ])
-        elif platform.system() == "Windows":
-            vlc_args.extend([
-                "--directx-device=default"
-            ])
-        else:  # Linux
-            vlc_args.extend([
-                "--no-xlib"
-            ])
-
-        # Create VLC instance and player
-        self.instance = vlc.Instance(*vlc_args)
-        if not self.instance:
-            messagebox.showerror("VLC Error", "Failed to initialize VLC instance.")
-            self.destroy()
-            return
-
-        # Create and configure media player
-        self.player = self.instance.media_player_new()
-        media = self.instance.media_new(self.video_path)
-        self.player.set_media(media)
-
-        # Platform-specific video output configuration
+    def initialize_mpv_player(self):
+        # Get the window id from the Tkinter video frame.
         window_id = self.video_frame.winfo_id()
-        if platform.system() == "Darwin":
-            self.player.set_nsobject(window_id)
-        elif platform.system() == "Windows":
-            self.player.set_hwnd(window_id)
-        else:  # Linux
-            self.player.set_xwindow(window_id)
+        # Create an MPV player with the window id, hardware decoding, "fast" profile, and set audio sync option.
+        self.player = mpv.MPV(wid=str(window_id),
+                              log_handler=print,
+                              hwdec="auto-safe",
+                              profile="fast",
+                              background_color="000000")
+        # Start playing the video.
+        self.player.play(self.video_path)
 
     def create_ui_components(self):
         """Create and configure UI components"""
@@ -196,7 +164,11 @@ class VideoAnnotator(tk.Frame):
         self.initialize_progress_bar()
         self.load_session_state()
         self.auto_save_session_state()
-        self.player.play()
+
+        # Process all the geometry configurations before showing the window
+        self.parent.update_idletasks()
+        self.parent.deiconify()
+        self.parent.focus_force()
 
     def setup_key_bindings(self):
         """Set up all key bindings"""
@@ -239,24 +211,26 @@ class VideoAnnotator(tk.Frame):
         }
 
         for key, callback in key_bindings.items():
-            self.parent.bind(key, callback)
-
+            self.parent.bind_all(key, callback)
+        
         # Set window close protocol
         self.parent.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def save_session_state(self):
-        """
-        Saves the current video time (in milliseconds) as session state.
-        The file is saved to Resume/[video_file]_session_state.json.
-        """
         resume_dir = os.path.join(os.getcwd(), "lasertag/Resume")
-        # Get the current time in ms from the VLC player
-        current_time = self.player.get_time()
-        session_state = {"timestamp_ms": current_time}
+        current_time = self.player.time_pos or 0  # Now in seconds
+        session_state = {"timestamp_sec": current_time}
         file_path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
         with open(file_path, "w") as f:
             json.dump(session_state, f)
-        print(f"Session state saved at {current_time} ms.")
+        #print(f"Session state saved at {current_time:.2f} sec.")
+
+    def schedule_resume(self, timestamp_sec):
+        if (self.player.duration or 0) > 0:
+            self.player.time_pos = timestamp_sec
+            print(f"Resumed session state at {timestamp_sec:.2f} sec.")
+        else:
+            self.after(200, lambda: self.schedule_resume(timestamp_sec))
 
     def load_session_state(self):
         """
@@ -274,23 +248,12 @@ class VideoAnnotator(tk.Frame):
         else:
             print("No session state found.")
 
-    def schedule_resume(self, timestamp_ms):
-        """
-        Wait until the media is loaded (player.get_length() > 0) then set the video time.
-        """
-        if self.player.get_length() > 0:
-            self.player.set_time(timestamp_ms)
-            print(f"Resumed session state at {timestamp_ms} ms.")
-        else:
-            # Check again after 200ms
-            self.after(200, lambda: self.schedule_resume(timestamp_ms))
-
     def auto_save_session_state(self):
         """
         Automatically saves the session state and schedules the next save in 10 seconds.
         """
         self.save_session_state()
-        self.after(1000, self.auto_save_session_state)
+        self.after(5000, self.auto_save_session_state)
 
     def create_annotation_panel(self):
         print(f"Annotation Panel Width: {self.panel_width}")
@@ -416,8 +379,6 @@ class VideoAnnotator(tk.Frame):
                                    command=self.generate_summary_statistics,
                                    width=16, wraplength=int(self.panel_width * 0.3))
         summary_button.pack(side=tk.LEFT, padx=25, pady=5, anchor="center")
-
-
 
     def load_behaviors(self):
         print(f"Loading behaviors from: {self.behavior_key_file}")
@@ -547,52 +508,39 @@ class VideoAnnotator(tk.Frame):
             self.point_behaviors_tree.item(item_id, tags="")
 
     def on_key_press(self, event):
-        """
-        Process key presses. For state behaviors, delegate to handle_state_behavior;
-        for point behaviors, append a new point annotation.
-        """
         key = event.char.lower()
-        if not key:  # Ignore keys that do not produce a character (e.g., Shift)
+        if not key:
             return
         if key in self.behavior_map:
             behavior_info = self.behavior_map[key]
-            current_time = self.player.get_time() / 1000.0  # Convert ms to seconds
+            current_time = self.player.time_pos or 0  # MPV returns time in seconds
             formatted_time = self.format_time_human_readable(current_time)
-
             if behavior_info["Type"] == "State":
                 self.handle_state_behavior(key, current_time, formatted_time)
-
             elif behavior_info["Type"] == "Point":
-                # Ensure the annotation is only added once
-                if any(event["Name"] == behavior_info["Name"] and event["time"] == formatted_time for event in self.point_events):
-                    return  # Prevent duplicate entries
-
+                # Prevent duplicate annotations
+                if any(evt["Name"] == behavior_info["Name"] and evt["time"] == formatted_time for evt in self.point_events):
+                    return
                 record = {
                     "Video": self.video_name,
                     "Name": behavior_info["Name"],
                     "Type": "Point",
                     "Mutually_Exclusive": "False",
                     "H_Start": formatted_time,
-                    "H_End": "",  
+                    "H_End": "",
                     "Start": f"{current_time:.2f}",
                     "End": "",
                     "Duration": "",
                     "Manual_Edit": "False"
                 }
                 self.append_annotation(record)
-
-                # Add the event to in-memory storage
                 self.point_events.append({
                     "Name": behavior_info["Name"],
                     "time": formatted_time,
                     "Manual_Edit": False
                 })
-
-                # Mark the point behavior as used (for highlighting)
                 self.used_point_behaviors.add(key)
                 self.parent.after(100, lambda: self.used_point_behaviors.discard(key))
-
-                # Update treeviews
                 self.update_annotations()
                 self.populate_behavior_treeviews()
 
@@ -846,12 +794,10 @@ class VideoAnnotator(tk.Frame):
             return int(m) * 60 + float(s.rstrip('s'))
         return float(time_str)
 
-    # ----------------------- VLC Playback Functions -----------------------
+    # ----------------------- Playback Functions -----------------------
     def toggle_play(self, event=None):
-        if self.player.is_playing():
-            self.player.pause()
-        else:
-            self.player.play()
+        # Toggle the pause property: True means paused, False means playing.
+        self.player.pause = not self.player.pause
 
     def refresh_paused_frame(self):
         if not self.player.is_playing():
@@ -864,17 +810,20 @@ class VideoAnnotator(tk.Frame):
             a.player.next_frame()
 
     def seek_relative(self, offset_ms):
-        current_time = self.player.get_time()
-        new_time = max(current_time + offset_ms, 0)
-        self.player.set_time(new_time)
-        self.refresh_paused_frame()
+        # Get current time (in seconds); default to 0 if None.
+        current_sec = self.player.time_pos or 0
+        # Convert offset from ms to seconds.
+        offset_sec = offset_ms / 1000.0
+        new_time = max(current_sec + offset_sec, 0)
+        self.player.time_pos = new_time
+        # Optionally, refresh the frame if paused.
 
     def change_speed(self, delta):
         """
         Example usage: update the playback speed, and also update the speed_text.
         """
-        speed_steps = [0.5, 1, 2, 3, 4, 5, 8, 10, 15, 20, 30]
-        current_rate = self.player.get_rate()
+        speed_steps = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 25]
+        current_rate = self.player.speed
         try:
             index = speed_steps.index(current_rate)
         except ValueError:
@@ -882,7 +831,7 @@ class VideoAnnotator(tk.Frame):
         new_index = max(0, min(len(speed_steps) - 1, index + (1 if delta > 0 else -1)))
         new_rate = speed_steps[new_index]
         if new_rate != current_rate:
-            self.player.set_rate(new_rate)
+            self.player.speed = new_rate
             print(f"New speed: {new_rate:.2f}x")
 
         # Now update the speed_text
@@ -910,7 +859,7 @@ class VideoAnnotator(tk.Frame):
             font=self.progress_bar_font,
             tags="time_text_left"
         )
-        # Create the playback speed text (it will be updated via change_speed()).
+        # Create the playback speed text (which will be updated via change_speed()).
         self.progress_bar_canvas.create_text(
             110, bar_height / 2, anchor="w",
             text="(1.0x)",
@@ -918,13 +867,12 @@ class VideoAnnotator(tk.Frame):
             font=self.progress_bar_font,
             tags="speed_text"
         )
-        # Get total media length.
-        total_ms = self.player.get_length()
-        if total_ms <= 0:
+        # Get total media length from MPV (in seconds).
+        total_sec = self.player.duration or 0
+        if total_sec <= 0:
             # Media not yet loaded; try again in 250ms.
             self.after(250, self.initialize_progress_bar)
             return
-        total_sec = total_ms / 1000.0
         total_time_str = self.format_time_human_readable(total_sec)
         # Create the total-time text (on the right) once and never update it.
         self.progress_bar_canvas.create_text(
@@ -934,39 +882,36 @@ class VideoAnnotator(tk.Frame):
             font=self.progress_bar_font,
             tags="time_text_right"
         )
-        # Start polling to update the current time and progress rectangle (every 500ms).
+        # Start polling to update the current time and progress rectangle every 500ms.
         self.poll_progress_bar()
 
     def poll_progress_bar(self):
         """Update the progress bar and schedule the next update in 500ms."""
         self.update_progress_bar()
-        state = self.player.get_state()
-        if state == vlc.State.Ended:
+        total_sec = self.player.duration or 0
+        current_sec = self.player.time_pos or 0
+        # If near the end of the video (within 0.5 seconds), restart playback.
+        if total_sec > 0 and current_sec >= total_sec - 0.5:
             print("Video ended. Restarting from beginning.")
-            self.player.stop()
-            self.player.set_time(0)
-            self.player.play()
+            self.player.time_pos = 0
+            self.player.play(self.video_path)
         self.after(500, self.poll_progress_bar)
 
     def update_progress_bar(self):
         """Update only the dynamic parts of the progress bar."""
-        total_ms = self.player.get_length()
-        current_ms = self.player.get_time()
-        ratio = (current_ms / total_ms) if total_ms > 0 else 0
+        total_sec = self.player.duration or 0
+        current_sec = self.player.time_pos or 0
+        ratio = (current_sec / total_sec) if total_sec > 0 else 0
         progress = int(ratio * self.progress_bar_width)
-
-        # Update the coordinates of the existing progress rectangle.
+        # Update the coordinates of the progress rectangle.
         self.progress_bar_canvas.coords(
             self.progress_rect,
             0, 0, progress, self.progress_bar_height
         )
-
         # Update the current time text (left).
-        current_sec = current_ms / 1000.0
         current_time_str = self.format_time_human_readable(current_sec)
         self.progress_bar_canvas.itemconfig("time_text_left", text=current_time_str)
-
-        # Ensure that the text items remain on top.
+        # Ensure the text items remain on top.
         self.progress_bar_canvas.tag_raise("time_text_left")
         self.progress_bar_canvas.tag_raise("time_text_right")
         self.progress_bar_canvas.tag_raise("speed_text")
@@ -974,10 +919,11 @@ class VideoAnnotator(tk.Frame):
     def on_progress_click(self, event):
         click_x = event.x
         ratio = click_x / self.progress_bar_width
-        total_ms = self.player.get_length()
-        if total_ms > 0:
-            target_ms = int(ratio * total_ms)
-            self.player.set_time(target_ms)
+        total_sec = self.player.duration or 0
+        if total_sec > 0:
+            # Calculate the target time in seconds and update MPV's time_pos.
+            target_sec = ratio * total_sec
+            self.player.time_pos = target_sec
 
     def on_closing(self):
         self.player.stop()

@@ -186,7 +186,7 @@ class SetupManager:
         monitors = get_monitors()
         primary = next((m for m in monitors if m.is_primary), monitors[0])
         new_width = int(primary.width * 0.4)   # 40% of monitor width
-        new_height = int(primary.height * 0.6)   # 80% of monitor height
+        new_height = int(primary.height)   # 80% of monitor height
 
         # Set the main window background.
         self.root.configure(bg=bg_color)
@@ -233,7 +233,8 @@ class SetupManager:
         )
         self.behavior_key_menu.config(font=("Helvetica", 13), bg=bg_color)
         self.behavior_key_menu.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
-        self.behavior_key_file_var.trace('w', self.behavior_key_file_var_changed)
+        self.behavior_key_file_var.trace_add('write', self.behavior_key_file_var_changed)
+
 
         new_behavior_key_button = tk.Button(
             behavior_key_frame, text="New Behavior Key File", 
