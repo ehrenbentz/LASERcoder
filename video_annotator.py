@@ -4,22 +4,35 @@ import os
 import platform
 import json
 import tkinter as tk
+import time
 from tkinter import ttk, messagebox
 from screeninfo import get_monitors
 import mpv
 import csv
 
 class VideoAnnotator(tk.Frame):
-    def __init__(self, parent, video_path, session_state_file, behavior_key_file):
-        # Initialize the parent Frame first
+    def __init__(self, parent, video_path, session_state_file, behavior_key_file, output_dir):
+        # Track states
+        self.dialog_open = False  # Track if any dialog is open
+        self.pressed_keys = set()
+
+        # Initialize the parent Frame
         super().__init__(parent)
         self.parent = parent
+        self.floating_windows = []  # List to track all floating windows
+        # Pack the main frame into the parent window
+        self.pack(fill=tk.BOTH, expand=True)
+
+        # Bind floating windows to parent
+        self.parent.bind("<Unmap>", self.update_floating_windows_visibility)
+        self.parent.bind("<Map>", self.update_floating_windows_visibility)
+        self.parent.bind("<FocusIn>", self.update_floating_windows_visibility)
+
+        # Initialize variables from other modules
         self.video_path = video_path
         self.session_state_file = session_state_file
         self.behavior_key_file = behavior_key_file
-
-        # Pack the main frame into the parent window
-        self.pack(fill=tk.BOTH, expand=True)
+        self.output_dir = output_dir
 
         # Initialize in order
         self.initialize_data_structures()
@@ -28,6 +41,7 @@ class VideoAnnotator(tk.Frame):
         self.setup_layout_measurements()
         self.setup_grid_layout()
         self.create_video_frame()
+        self.create_controls_toggle_buttons()
         self.initialize_mpv_player()
         self.create_ui_components()
         self.load_data_and_start()
@@ -47,9 +61,10 @@ class VideoAnnotator(tk.Frame):
         self.undo_stack = []  # Stack for undo functionality
 
     def setup_file_paths(self):
-        """Set up all necessary file paths"""
+        """Set up all necessary file paths based on the chosen output directory"""
         self.video_name = os.path.basename(self.video_path).split('.')[0]
-        self.annotations_dir = os.path.join(os.getcwd(), "lasertag", "Annotations")
+        # Use the provided output_dir instead of os.getcwd()
+        self.annotations_dir = os.path.join(self.output_dir, "Annotations")
         self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
 
     def configure_display(self):
@@ -117,14 +132,14 @@ class VideoAnnotator(tk.Frame):
     def create_ui_components(self):
         """Create and configure UI components"""
         # Set fonts
-        self.progress_bar_font = ("Helvetica", 13, "bold")
+        self.progress_bar_font = ("Helvetica", 12, "bold")
         self.treeview_font = ("Helvetica", 12)
-        self.treeview_heading_font = ("Helvetica", 12, "bold")
+        self.treeview_heading_font = ("Helvetica", 10, "bold")
 
         # Configure ttk style
         style = ttk.Style()
         style.configure("Treeview", font=self.treeview_font)
-        style.configure("Treeview.Heading", font=self.treeview_heading_font)
+        style.configure("Treeview.Heading", font=self.treeview_heading_font, padding=(0, 0))
 
         # Create progress bar
         self.create_progress_bar()
@@ -155,6 +170,269 @@ class VideoAnnotator(tk.Frame):
         self.progress_bar_canvas.pack()
         self.progress_bar_canvas.bind("<Button-1>", self.on_progress_click)
 
+    def create_controls_toggle_buttons(self):
+        """Create two Toplevel windows with control buttons that float over the video."""
+        # Create window for behavior toggle (upper left)
+        self.behavior_toggle_window = tk.Toplevel(self.parent)
+        self.behavior_toggle_window.overrideredirect(True)
+        self.behavior_toggle_window.configure(bg='magenta')  # Use magenta as transparent color
+        self.behavior_toggle_window.attributes('-transparentcolor', 'magenta')
+        
+        # Create window for controls (lower left)
+        self.controls_window = tk.Toplevel(self.parent)
+        self.controls_window.overrideredirect(True)
+        self.controls_window.configure(bg='magenta')  # Use magenta as transparent color
+        self.controls_window.attributes('-transparentcolor', 'magenta')
+        
+        # Create behavior toggle button
+        self.behavior_toggle_button = tk.Button(
+            self.behavior_toggle_window,
+            text="☰",
+            font=("Helvetica", 14),
+            command=self.toggle_behavior_buttons,
+            bg='lightgrey',  # Light background for buttons
+            activebackground='grey'  # Darker when clicked
+        )
+        self.behavior_toggle_button.pack()
+        
+        # Create controls button
+        self.controls_button = tk.Button(
+            self.controls_window,
+            text="⚙",
+            font=("Helvetica", 14),
+            command=self.toggle_floating_controls,
+            bg='lightgrey',  # Light background for buttons
+            activebackground='grey'  # Darker when clicked
+        )
+        self.controls_button.pack()
+        
+        self.update_idletasks()
+        
+        # Position the buttons
+        video_x = self.video_frame.winfo_rootx()
+        video_y = self.video_frame.winfo_rooty()
+        margin = 10  # Distance from video edge
+        
+        # Position behavior toggle (upper left)
+        self.behavior_toggle_window.geometry(f"+{video_x + margin}+{video_y + margin}")
+        
+        # Position controls button (lower left)
+        self.controls_window.geometry(f"+{video_x + margin}+{video_y + self.video_height - 30}")
+
+    def update_floating_windows_visibility(self, event):
+        """Update visibility of all floating windows"""
+        windows = []
+        if hasattr(self, "behavior_toggle_window"):
+            windows.append(self.behavior_toggle_window)
+        if hasattr(self, "controls_window"):
+            windows.append(self.controls_window)
+        if (hasattr(self, "floating_controls_window") and 
+            self.floating_controls_window is not None and 
+            self.floating_controls_window.winfo_exists()):
+            windows.append(self.floating_controls_window)
+        if (hasattr(self, "behavior_buttons_window") and 
+            self.behavior_buttons_window is not None and 
+            self.behavior_buttons_window.winfo_exists()):
+            windows.append(self.behavior_buttons_window)
+            
+        if self.parent.state() == "iconic":
+            for w in windows:
+                w.withdraw()
+        else:
+            for w in windows:
+                w.deiconify()
+
+    def toggle_floating_controls(self):
+        """Toggle a Toplevel floating control panel over the video."""
+        if (hasattr(self, 'floating_controls_window') and 
+            self.floating_controls_window is not None and 
+            self.floating_controls_window.winfo_exists()):
+            self.floating_controls_window.destroy()
+            self.floating_controls_window = None
+        else:
+            self.floating_controls_window = tk.Toplevel(self.parent)
+            self.floating_controls_window.overrideredirect(True)
+            # Set up a transparent gap if desired (using, e.g., black if not used by controls)
+            self.floating_controls_window.attributes("-transparentcolor", "black")
+            
+            fc = tk.Frame(self.floating_controls_window, bg="black")
+            fc.pack()
+            
+            btn_opts = {
+                "font": ("Helvetica", 12),
+                "width": 4,
+                "height": 2,
+                "fg": "grey10",  # Dark grey text
+                "bd": 2,
+                "relief": "raised"
+            }
+            
+            tk.Button(fc, text="❮❮", command=lambda: self.seek_relative(-10000), **btn_opts).pack(side=tk.LEFT, padx=15)
+            tk.Button(fc, text="❮", command=lambda: self.seek_relative(-1000), **btn_opts).pack(side=tk.LEFT, padx=15)
+            tk.Button(fc, text="⏪", command=lambda: self.change_speed(-1), **btn_opts).pack(side=tk.LEFT, padx=15)
+            self.play_pause_btn = tk.Button(fc, text="■", command=self.toggle_play_pause, **btn_opts)
+            self.play_pause_btn.pack(side=tk.LEFT, padx=10)
+            tk.Button(fc, text="⏩", command=lambda: self.change_speed(1), **btn_opts).pack(side=tk.LEFT, padx=15)
+            tk.Button(fc, text="❯", command=lambda: self.seek_relative(1000), **btn_opts).pack(side=tk.LEFT, padx=15)
+            tk.Button(fc, text="❯❯", command=lambda: self.seek_relative(10000), **btn_opts).pack(side=tk.LEFT, padx=15)
+            
+            self.update_idletasks()
+            # Position the floating controls centered along the bottom of the video frame
+            video_x = self.video_frame.winfo_rootx()
+            video_y = self.video_frame.winfo_rooty()
+            fc_width = fc.winfo_reqwidth()
+            fc_height = fc.winfo_reqheight()
+            new_x = video_x + (self.video_width - fc_width) // 2
+            new_y = video_y + self.video_height - fc_height
+            self.floating_controls_window.geometry(f"+{new_x}+{new_y}")
+
+    def toggle_play_pause(self):
+        """Toggle play/pause and update the play/pause button icon."""
+        self.toggle_play()
+        self.update_play_pause_icon()
+
+    def update_play_pause_icon(self):
+        """Update the icon on the play/pause button."""
+        if self.player.pause:
+            self.play_pause_btn.config(text="▶")
+        else:
+            self.play_pause_btn.config(text="■")
+
+    def create_behavior_buttons(self):
+        """Create a Toplevel window with floating buttons at the left side of the video window.
+           Organize buttons in two distinct rows - Point behaviors on top row, State behaviors on bottom row.
+           Only show behavior Names, with distinct colors for each behavior type.
+        """
+        self.behavior_buttons_window = tk.Toplevel(self.parent)
+        self.behavior_buttons_window.overrideredirect(True)
+        transparent_color = "magenta"
+        self.behavior_buttons_window.configure(bg=transparent_color)
+        self.behavior_buttons_window.attributes("-transparentcolor", transparent_color)
+        
+        # Main container
+        container = tk.Frame(self.behavior_buttons_window, bg=transparent_color)
+        container.pack(anchor=tk.W)  # Anchor to west (left)
+        
+        # Create separate frames for Point and State behaviors
+        point_frame = tk.Frame(container, bg=transparent_color)
+        point_frame.pack(fill=tk.X, pady=(5, 2))
+        
+        state_frame = tk.Frame(container, bg=transparent_color)
+        state_frame.pack(fill=tk.X, pady=(2, 5))
+        
+        # Base button options
+        base_btn_opts = {
+            "font": ("Helvetica", 12),
+            "width": 12,
+            "height": 1,
+            "bd": 1,
+            "relief": "raised"
+        }
+        
+        # Updated options for each behavior type
+        point_btn_opts = {
+            **base_btn_opts,
+            "bg": "lightgrey",      # Light grey for Point behaviors
+            "fg": "black",
+            "activebackground": "grey"
+        }
+        
+        state_btn_opts = {
+            **base_btn_opts,
+            "bg": "darkgrey",       # Dark grey for State behaviors
+            "fg": "black",
+            "activebackground": "grey"
+        }
+        
+        # Sort behaviors by type
+        point_behaviors = []
+        state_behaviors = []
+        
+        for behavior in self.behaviors:
+            name, key, btype, _ = behavior
+            if not name:  # Skip behaviors with no name
+                continue
+            if btype.lower() == "point":
+                point_behaviors.append((name, key))
+            else:
+                state_behaviors.append((name, key))
+        
+        # Create Point behavior buttons (top row)
+        for name, key in point_behaviors:
+            b = tk.Button(point_frame, 
+                          text=name,
+                          command=lambda k=key: self.add_annotation_for_behavior(k),
+                          **point_btn_opts)
+            b.pack(side=tk.LEFT, padx=2)
+        
+        # Create State behavior buttons (bottom row)
+        for name, key in state_behaviors:
+            b = tk.Button(state_frame,
+                          text=name,
+                          command=lambda k=key: self.add_annotation_for_behavior(k),
+                          **state_btn_opts)
+            b.pack(side=tk.LEFT, padx=2)
+        
+        self.update_idletasks()
+        
+        # Position the window shifted to the right of the toggle button to avoid overlap.
+        video_x = self.video_frame.winfo_rootx()
+        video_y = self.video_frame.winfo_rooty()
+        margin = 10  # Original margin from the video frame edge
+        
+        # Determine the width of the toggle button (if available) to offset the behavior buttons window.
+        toggle_width = self.behavior_toggle_button.winfo_width() if hasattr(self, 'behavior_toggle_button') else 0
+        new_x = video_x + margin + toggle_width + 10  # Additional 10-pixel offset from the toggle button
+        new_y = video_y + margin  # 10 pixels from the top edge
+        self.behavior_buttons_window.geometry(f"+{new_x}+{new_y}")
+        self.floating_windows.append(self.behavior_buttons_window)
+
+    def toggle_behavior_buttons(self):
+        """Toggle the behavior buttons window on and off."""
+        if (hasattr(self, "behavior_buttons_window") and 
+            self.behavior_buttons_window is not None and 
+            self.behavior_buttons_window.winfo_exists()):
+            self.behavior_buttons_window.destroy()
+            self.behavior_buttons_window = None
+        else:
+            self.create_behavior_buttons()
+
+    def add_annotation_for_behavior(self, key):
+        """Simulate a key-press for the given behavior key to add an annotation."""
+        key = key.lower()
+        if key in self.behavior_map:
+            behavior_info = self.behavior_map[key]
+            current_time = self.player.time_pos or 0
+            formatted_time = self.format_time_human_readable(current_time)
+            if behavior_info["Type"] == "State":
+                self.handle_state_behavior(key, current_time, formatted_time)
+            elif behavior_info["Type"] == "Point":
+                # Prevent duplicate annotations
+                if any(evt["Name"] == behavior_info["Name"] and evt["time"] == formatted_time for evt in self.point_events):
+                    return
+                record = {
+                    "Video": self.video_name,
+                    "Name": behavior_info["Name"],
+                    "Type": "Point",
+                    "Mutually_Exclusive": "False",
+                    "H_Start": formatted_time,
+                    "H_End": "",
+                    "Start": f"{current_time:.2f}",
+                    "End": "",
+                    "Duration": "",
+                    "Manual_Edit": "False"
+                }
+                self.append_annotation(record)
+                self.point_events.append({
+                    "Name": behavior_info["Name"],
+                    "time": formatted_time,
+                    "Manual_Edit": False
+                })
+                self.used_point_behaviors.add(key)
+                self.parent.after(100, lambda: self.used_point_behaviors.discard(key))
+                self.update_annotations()
+                self.populate_behavior_treeviews()
+
     def load_data_and_start(self):
         """Load data and start playback"""
         self.load_behaviors()
@@ -170,60 +448,97 @@ class VideoAnnotator(tk.Frame):
         self.parent.deiconify()
         self.parent.focus_force()
 
+
     def setup_key_bindings(self):
-        """Set up all key bindings"""
+        """Set up all key bindings with dialog blocking"""
+        def create_blocked_handler(handler):
+            """Create a handler that only executes if no dialog is open"""
+            def blocked_handler(event):
+                if not self.dialog_open:
+                    return handler(event)
+            return blocked_handler
 
-        small_skip=1000
-        med_skip=5000
-        large_skip=10000
+        small_skip = 1000
+        med_skip = 5000
+        large_skip = 10000
 
+        # Define all the key bindings with blocking handlers
         key_bindings = {
             # Toggle play/pause
-            "<space>": self.toggle_play,
+            "<space>": create_blocked_handler(self.toggle_play),
 
             # Small skip
-            "<Shift-Right>": lambda e: self.seek_relative(small_skip),
-            "<Shift-Left>": lambda e: self.seek_relative(-small_skip),
-            "<D>": lambda e: self.seek_relative(small_skip),
-            "<A>": lambda e: self.seek_relative(-small_skip),
+            "<Shift-Right>": create_blocked_handler(lambda e: self.seek_relative(small_skip)),
+            "<Shift-Left>": create_blocked_handler(lambda e: self.seek_relative(-small_skip)),
+            "<D>": create_blocked_handler(lambda e: self.seek_relative(small_skip)),
+            "<A>": create_blocked_handler(lambda e: self.seek_relative(-small_skip)),
 
             # Medium skip
-            "<Right>": lambda e: self.seek_relative(med_skip),
-            "<Left>": lambda e: self.seek_relative(-med_skip),
-            "<d>": lambda e: self.seek_relative(med_skip),
-            "<a>": lambda e: self.seek_relative(-med_skip),
+            "<Right>": create_blocked_handler(lambda e: self.seek_relative(med_skip)),
+            "<Left>": create_blocked_handler(lambda e: self.seek_relative(-med_skip)),
+            "<d>": create_blocked_handler(lambda e: self.seek_relative(med_skip)),
+            "<a>": create_blocked_handler(lambda e: self.seek_relative(-med_skip)),
 
             # Large skip
-            "<w>": lambda e: self.seek_relative(large_skip),
-            "<s>": lambda e: self.seek_relative(-large_skip),
+            "<w>": create_blocked_handler(lambda e: self.seek_relative(large_skip)),
+            "<s>": create_blocked_handler(lambda e: self.seek_relative(-large_skip)),
 
             # Change playback speed
-            "=": lambda e: self.change_speed(1),
-            "+": lambda e: self.change_speed(1),
-            "-": lambda e: self.change_speed(-1),
-            "_": lambda e: self.change_speed(-1),
+            "=": create_blocked_handler(lambda e: self.change_speed(1)),
+            "+": create_blocked_handler(lambda e: self.change_speed(1)),
+            "-": create_blocked_handler(lambda e: self.change_speed(-1)),
+            "_": create_blocked_handler(lambda e: self.change_speed(-1)),
 
             # Other bindings
-            "<Escape>": lambda e: self.on_closing(),
-            "<Delete>": self.delete_annotation_key,
-            "<Control-z>": self.undo_delete,
-            "<Key>": self.on_key_press,
+            "<Escape>": lambda e: self.on_closing(),  # Escape should always work
+            "<Delete>": create_blocked_handler(self.delete_annotation_key),
+            "<Control-z>": create_blocked_handler(self.undo_delete),
+            "<Key>": self.on_key_press  # This one is already handled in on_key_press
         }
 
+        # Bind all the key combinations
         for key, callback in key_bindings.items():
             self.parent.bind_all(key, callback)
+        
+        # Add key release binding separately (not part of the dictionary)
+        self.parent.bind_all("<KeyRelease>", self.on_key_release)
         
         # Set window close protocol
         self.parent.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+    def on_key_release(self, event):
+        """Handle key release events by removing the key from pressed_keys"""
+        key = event.char.lower()
+        self.pressed_keys.discard(key)
+
     def save_session_state(self):
-        resume_dir = os.path.join(os.getcwd(), "lasertag/Resume")
-        current_time = self.player.time_pos or 0  # Now in seconds
-        session_state = {"timestamp_sec": current_time}
-        file_path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
-        with open(file_path, "w") as f:
-            json.dump(session_state, f)
-        #print(f"Session state saved at {current_time:.2f} sec.")
+        """Save the current video position to the session state file."""
+        try:
+            # Get current position before doing anything else
+            current_time = self.player.time_pos
+            if current_time is None:
+                print("Warning: Could not get current time position")
+                return
+                
+            # Ensure we have a valid timestamp
+            current_time = float(current_time)
+            if current_time <= 0:
+                print("Warning: Invalid timestamp value:", current_time)
+                return
+                
+            resume_dir = os.path.join(self.output_dir, "Resume")
+            file_path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
+            
+            # Create session state data
+            session_state = {"timestamp_sec": current_time}
+            
+            # Save to file
+            with open(file_path, "w") as f:
+                json.dump(session_state, f)
+            print(f"Successfully saved session state: {current_time:.3f} seconds")
+            
+        except Exception as e:
+            print(f"Error saving session state: {e}")
 
     def schedule_resume(self, timestamp_sec):
         if (self.player.duration or 0) > 0:
@@ -233,152 +548,162 @@ class VideoAnnotator(tk.Frame):
             self.after(200, lambda: self.schedule_resume(timestamp_sec))
 
     def load_session_state(self):
-        """
-        Loads the session state if available and schedules the video to resume from
-        the saved timestamp.
-        """
-        resume_dir = os.path.join(os.getcwd(), "lasertag", "Resume")
+        resume_dir = os.path.join(self.output_dir, "Resume")
         file_path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
         if os.path.exists(file_path):
             with open(file_path, "r") as f:
                 session_state = json.load(f)
-            timestamp_ms = session_state.get("timestamp_ms", 0)
-            # Instead of setting the time immediately, call a helper that waits for the media to be ready.
-            self.schedule_resume(timestamp_ms)
+                # Support both old (ms) and new (sec) format
+                if 'timestamp_ms' in session_state:
+                    timestamp_sec = session_state.get("timestamp_ms", 0) / 1000.0
+                else:
+                    timestamp_sec = session_state.get("timestamp_sec", 0)
+                self.schedule_resume(timestamp_sec)
         else:
             print("No session state found.")
 
     def auto_save_session_state(self):
-        """
-        Automatically saves the session state and schedules the next save in 10 seconds.
-        """
         self.save_session_state()
         self.after(5000, self.auto_save_session_state)
+        # Print the current player time (or 0 if not available)
+        current_time = self.player.time_pos or 0
+        print(f"Saved Session State: {current_time}")
 
     def create_annotation_panel(self):
-        print(f"Annotation Panel Width: {self.panel_width}")
+            print(f"Annotation Panel Width: {self.panel_width}")
 
-        # Annotation Panel Frame (Right)
-        self.annotation_border_frame = tk.Frame(self, bg="grey", bd=2, relief="solid", height=self.video_height)
-        self.annotation_border_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=3, pady=0)
-        self.annotation_frame = tk.Frame(self.annotation_border_frame, bg="gray",
-                                         width=self.panel_width, height=self.video_height)
-        self.annotation_frame.pack(fill="both", expand=True, padx=3, pady=0)
+            # Calculate the available height for the annotation panel
+            available_height = self.panel_height - self.progress_bar_height
+            # Calculate equal height for each pane
+            pane_height = (available_height - 40) // 4  # Subtract some padding space
 
-        # ------------------- Behavior Treeviews -------------------
-        # State Behaviors
-        state_frame = tk.Frame(self.annotation_frame, bg="gray")
-        state_frame.pack(fill="x", pady=(0, 5))
-        state_label = tk.Label(state_frame, text="State Behaviors", bg="gray", fg="white",
-                               font=("Helvetica", 14, "bold"))
-        state_label.pack(anchor="w")
+            # Annotation Panel Frame (Right)
+            self.annotation_border_frame = tk.Frame(self, bg="grey", bd=2, relief="solid", height=available_height)
+            self.annotation_border_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=3, pady=0)
+            self.annotation_frame = tk.Frame(self.annotation_border_frame, bg="gray",
+                                           width=self.panel_width, height=available_height)
+            self.annotation_frame.pack(fill="both", expand=True, padx=3, pady=0)
 
-        # Create Treeview and scrollbar
-        self.state_behaviors_tree = ttk.Treeview(state_frame, columns=("Name", "Key", "ME Group"),
-                                                 show="headings", height=5)
-        self.state_behaviors_tree.heading("Name", text="Name")
-        self.state_behaviors_tree.heading("Key", text="Key")
-        self.state_behaviors_tree.heading("ME Group", text="ME Group")
-        self.state_behaviors_tree.column("Name", width=int(self.panel_width * 0.5))
-        self.state_behaviors_tree.column("Key", width=int(self.panel_width * 0.15))
-        self.state_behaviors_tree.column("ME Group", width=int(self.panel_width * 0.35))
+            # ------------------- State Behaviors Pane -------------------
+            state_frame = tk.Frame(self.annotation_frame, bg="gray", height=pane_height)
+            state_frame.pack(fill="x", pady=(0, 5))
+            state_frame.pack_propagate(False)  # Prevent frame from shrinking
+            
+            state_label = tk.Label(state_frame, text="State Behaviors", bg="gray", fg="white",
+                                 font=("Helvetica", 14, "bold"))
+            state_label.pack(anchor="w")
 
-        # Scrollbar for state behaviors
-        state_scrollbar = ttk.Scrollbar(state_frame, orient="vertical",
-                                        command=self.state_behaviors_tree.yview)
-        self.state_behaviors_tree.configure(yscrollcommand=state_scrollbar.set)
-        state_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.state_behaviors_tree.pack(side=tk.LEFT, fill="both", expand=True)
+            # Create Treeview and scrollbar with fixed height
+            self.state_behaviors_tree = ttk.Treeview(state_frame, columns=("Name", "Key", "ME Group"),
+                                                   show="headings", height=6)  # Adjusted height
+            self.state_behaviors_tree.heading("Name", text="Name")
+            self.state_behaviors_tree.heading("Key", text="Key")
+            self.state_behaviors_tree.heading("ME Group", text="ME Group")
+            self.state_behaviors_tree.column("Name", width=int(self.panel_width * 0.5))
+            self.state_behaviors_tree.column("Key", width=int(self.panel_width * 0.15), anchor="center")
+            self.state_behaviors_tree.column("ME Group", width=int(self.panel_width * 0.25), anchor="center")
 
-        # Point Behaviors
-        point_frame = tk.Frame(self.annotation_frame, bg="gray")
-        point_frame.pack(fill="x", pady=(0, 5))
-        point_label = tk.Label(point_frame, text="Point Behaviors", bg="gray", fg="white",
-                               font=("Helvetica", 14, "bold"))
-        point_label.pack(anchor="w")
+            state_scrollbar = ttk.Scrollbar(state_frame, orient="vertical",
+                                          command=self.state_behaviors_tree.yview)
+            self.state_behaviors_tree.configure(yscrollcommand=state_scrollbar.set)
+            state_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self.state_behaviors_tree.pack(side=tk.LEFT, fill="both", expand=True)
 
-        self.point_behaviors_tree = ttk.Treeview(point_frame, columns=("Name", "Key"),
-                                                 show="headings", height=5)
-        self.point_behaviors_tree.heading("Name", text="Name")
-        self.point_behaviors_tree.heading("Key", text="Key")
-        self.point_behaviors_tree.column("Name", width=int(self.panel_width * 0.75))
-        self.point_behaviors_tree.column("Key", width=int(self.panel_width * 0.25))
+            # ------------------- Point Behaviors Pane -------------------
+            point_frame = tk.Frame(self.annotation_frame, bg="gray", height=pane_height)
+            point_frame.pack(fill="x", pady=(0, 5))
+            point_frame.pack_propagate(False)  # Prevent frame from shrinking
 
-        # Scrollbar for point behaviors
-        point_scrollbar = ttk.Scrollbar(point_frame, orient="vertical",
-                                        command=self.point_behaviors_tree.yview)
-        self.point_behaviors_tree.configure(yscrollcommand=point_scrollbar.set)
-        point_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.point_behaviors_tree.pack(side=tk.LEFT, fill="both", expand=True)
+            point_label = tk.Label(point_frame, text="Point Behaviors", bg="gray", fg="white",
+                                 font=("Helvetica", 14, "bold"))
+            point_label.pack(anchor="w")
 
-        # ------------------- Annotations Treeviews -------------------
-        # State Annotations
-        state_anno_frame = tk.Frame(self.annotation_frame, bg="gray")
-        state_anno_frame.pack(fill="both", expand=True, pady=(0, 5))
-        state_anno_label_frame = tk.Frame(state_anno_frame, bg="gray")
-        state_anno_label_frame.pack(fill="x")
-        tk.Label(state_anno_label_frame, text="State Annotations", bg="gray", fg="white",
-                 font=("Helvetica", 14, "bold")).pack(side=tk.LEFT)
-        tk.Button(state_anno_label_frame, text="Sort", command=self.sort_state_annotations)\
-           .pack(side=tk.RIGHT, padx=10, pady=5)
+            self.point_behaviors_tree = ttk.Treeview(point_frame, columns=("Name", "Key"),
+                                                   show="headings", height=6)  # Adjusted height
+            self.point_behaviors_tree.heading("Name", text="Name")
+            self.point_behaviors_tree.heading("Key", text="Key")
+            self.point_behaviors_tree.column("Name", width=int(self.panel_width * 0.5))
+            self.point_behaviors_tree.column("Key", width=int(self.panel_width * 0.25), anchor="center")
 
-        self.state_annotations_tree = ttk.Treeview(state_anno_frame,columns=("Name", "Start", "End"),show="headings")
-        self.state_annotations_tree.heading("Name", text="Name")
-        self.state_annotations_tree.heading("Start", text="Start")
-        self.state_annotations_tree.heading("End", text="End")
-        self.state_annotations_tree.column("Name", width=int(self.panel_width * 0.33))
-        self.state_annotations_tree.column("Start", width=int(self.panel_width * 0.33))
-        self.state_annotations_tree.column("End", width=int(self.panel_width * 0.33))
-        
-        # Bind right-click to open menus
-        self.state_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
-        
-        # Scrollbar for state annotations
-        state_anno_scrollbar = ttk.Scrollbar(state_anno_frame, orient="vertical",
-                                             command=self.state_annotations_tree.yview)
-        self.state_annotations_tree.configure(yscrollcommand=state_anno_scrollbar.set)
-        state_anno_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.state_annotations_tree.pack(side=tk.LEFT, fill="both", expand=True)
+            point_scrollbar = ttk.Scrollbar(point_frame, orient="vertical",
+                                          command=self.point_behaviors_tree.yview)
+            self.point_behaviors_tree.configure(yscrollcommand=point_scrollbar.set)
+            point_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self.point_behaviors_tree.pack(side=tk.LEFT, fill="both", expand=True)
 
-        # Point Annotations
-        point_anno_frame = tk.Frame(self.annotation_frame, bg="gray")
-        point_anno_frame.pack(fill="both", expand=True, pady=(0, 5))
-        point_anno_label_frame = tk.Frame(point_anno_frame, bg="gray")
-        point_anno_label_frame.pack(fill="x")
-        tk.Label(point_anno_label_frame, text="Point Annotations", bg="gray", fg="white",
-                 font=("Helvetica", 14, "bold")).pack(side=tk.LEFT)
-        tk.Button(point_anno_label_frame, text="Sort", command=self.sort_point_annotations)\
-           .pack(side=tk.RIGHT, padx=10, pady=5)
+            # ------------------- State Annotations Pane -------------------
+            state_anno_frame = tk.Frame(self.annotation_frame, bg="gray", height=pane_height)
+            state_anno_frame.pack(fill="x", pady=(0, 5))
+            state_anno_frame.pack_propagate(False)  # Prevent frame from shrinking
 
-        self.point_annotations_tree = ttk.Treeview(point_anno_frame,
-                                                   columns=("Name", "Time"),
-                                                   show="headings")
-        self.point_annotations_tree.heading("Name", text="Name")
-        self.point_annotations_tree.heading("Time", text="Time")
-        self.point_annotations_tree.column("Name", width=int(self.panel_width * 0.3))
-        self.point_annotations_tree.column("Time", width=int(self.panel_width * 0.7))
+            state_anno_label_frame = tk.Frame(state_anno_frame, bg="gray")
+            state_anno_label_frame.pack(fill="x")
+            tk.Label(state_anno_label_frame, text="State Annotations", bg="gray", fg="white",
+                    font=("Helvetica", 14, "bold")).pack(side=tk.LEFT)
+            tk.Button(state_anno_label_frame, text="Sort", 
+                     font=("Helvetica", 12), command=self.sort_state_annotations).pack(side=tk.RIGHT, padx=10, pady=0)
 
-        # Bind right-click to open menus
-        self.point_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
+            self.state_annotations_tree = ttk.Treeview(state_anno_frame, 
+                                                     columns=("Name", "Start", "End"),
+                                                     show="headings",
+                                                     height=6)  # Adjusted height
+            self.state_annotations_tree.heading("Name", text="Name")
+            self.state_annotations_tree.heading("Start", text="Start")
+            self.state_annotations_tree.heading("End", text="End")
+            self.state_annotations_tree.column("Name", width=int(self.panel_width * 0.33))
+            self.state_annotations_tree.column("Start", width=int(self.panel_width * 0.25))
+            self.state_annotations_tree.column("End", width=int(self.panel_width * 0.25))
+            
+            self.state_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
+            
+            state_anno_scrollbar = ttk.Scrollbar(state_anno_frame, orient="vertical",
+                                               command=self.state_annotations_tree.yview)
+            self.state_annotations_tree.configure(yscrollcommand=state_anno_scrollbar.set)
+            state_anno_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self.state_annotations_tree.pack(side=tk.LEFT, fill="both", expand=True)
 
-        # Scrollbar for point annotations
-        point_anno_scrollbar = ttk.Scrollbar(point_anno_frame, orient="vertical",
-                                             command=self.point_annotations_tree.yview)
-        self.point_annotations_tree.configure(yscrollcommand=point_anno_scrollbar.set)
-        point_anno_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.point_annotations_tree.pack(side=tk.LEFT, fill="both", expand=True)
+            # ------------------- Point Annotations Pane -------------------
+            point_anno_frame = tk.Frame(self.annotation_frame, bg="gray", height=pane_height)
+            point_anno_frame.pack(fill="x", pady=(0, 5))
+            point_anno_frame.pack_propagate(False)  # Prevent frame from shrinking
 
-        # ------------------- Bottom Buttons -------------------
-        buttons_frame = tk.Frame(self.annotation_frame, bg="gray")
-        buttons_frame.pack(fill="x", pady=5)
-        visualize_button = tk.Button(buttons_frame, text="Visualize\nAnnotations",
-                                     command=self.visualize_annotations,
-                                     width=16, wraplength=int(self.panel_width * 0.3))
-        visualize_button.pack(side=tk.LEFT, padx=10, pady=5)
-        summary_button = tk.Button(buttons_frame, text="Summary\nStatistics",
-                                   command=self.generate_summary_statistics,
-                                   width=16, wraplength=int(self.panel_width * 0.3))
-        summary_button.pack(side=tk.LEFT, padx=25, pady=5, anchor="center")
+            point_anno_label_frame = tk.Frame(point_anno_frame, bg="gray")
+            point_anno_label_frame.pack(fill="x")
+            tk.Label(point_anno_label_frame, text="Point Annotations", bg="gray", fg="white",
+                    font=("Helvetica", 14, "bold")).pack(side=tk.LEFT)
+            tk.Button(point_anno_label_frame, text="Sort", 
+                     font=("Helvetica", 12), command=self.sort_point_annotations).pack(side=tk.RIGHT, padx=10, pady=0)
+
+            self.point_annotations_tree = ttk.Treeview(point_anno_frame,
+                                                     columns=("Name", "Time"),
+                                                     show="headings",
+                                                     height=6)  # Adjusted height
+            self.point_annotations_tree.heading("Name", text="Name")
+            self.point_annotations_tree.heading("Time", text="Time")
+            self.point_annotations_tree.column("Name", width=int(self.panel_width * 0.33))
+            self.point_annotations_tree.column("Time", width=int(self.panel_width * 0.5), anchor="center")
+
+            self.point_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
+
+            point_anno_scrollbar = ttk.Scrollbar(point_anno_frame, orient="vertical",
+                                               command=self.point_annotations_tree.yview)
+            self.point_annotations_tree.configure(yscrollcommand=point_anno_scrollbar.set)
+            point_anno_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self.point_annotations_tree.pack(side=tk.LEFT, fill="both", expand=True)
+
+            # ------------------- Bottom Buttons -------------------
+            buttons_frame = tk.Frame(self.annotation_frame, bg="gray")
+            buttons_frame.pack(fill="x", pady=5)
+            
+            visualize_button = tk.Button(buttons_frame, text="Visualize\nAnnotations",
+                                       command=self.visualize_annotations,
+                                       width=16, font=("Helvetica", 12), wraplength=int(self.panel_width * 0.3))
+            visualize_button.pack(side=tk.LEFT, padx=10, pady=5)
+
+            summary_button = tk.Button(buttons_frame, text="Summary\nStatistics",
+                                     command=self.generate_summary_statistics,
+                                     width=16, font=("Helvetica", 12), wraplength=int(self.panel_width * 0.3))
+            summary_button.pack(side=tk.LEFT, padx=25, pady=5, anchor="center")
 
     def load_behaviors(self):
         print(f"Loading behaviors from: {self.behavior_key_file}")
@@ -508,12 +833,24 @@ class VideoAnnotator(tk.Frame):
             self.point_behaviors_tree.item(item_id, tags="")
 
     def on_key_press(self, event):
+        # Block key presses if a dialog is open
+        if self.dialog_open:
+            return
+            
         key = event.char.lower()
         if not key:
             return
+            
+        # If key is already pressed, ignore this press
+        if key in self.pressed_keys:
+            return
+            
+        # Add key to pressed keys set
+        self.pressed_keys.add(key)
+            
         if key in self.behavior_map:
             behavior_info = self.behavior_map[key]
-            current_time = self.player.time_pos or 0  # MPV returns time in seconds
+            current_time = self.player.time_pos or 0
             formatted_time = self.format_time_human_readable(current_time)
             if behavior_info["Type"] == "State":
                 self.handle_state_behavior(key, current_time, formatted_time)
@@ -737,6 +1074,7 @@ class VideoAnnotator(tk.Frame):
 
         self.save_sorted_annotations()
         self.update_annotations()
+        self.dialog_open = False
         dialog.destroy()
 
 
@@ -778,6 +1116,7 @@ class VideoAnnotator(tk.Frame):
 
         self.save_sorted_annotations()
         self.update_annotations()
+        self.dialog_open = False
         dialog.destroy()
 
 
@@ -893,9 +1232,18 @@ class VideoAnnotator(tk.Frame):
         # If near the end of the video (within 0.5 seconds), restart playback.
         if total_sec > 0 and current_sec >= total_sec - 0.5:
             print("Video ended. Restarting from beginning.")
-            self.player.time_pos = 0
-            self.player.play(self.video_path)
+            # Reload the video file, replacing the current one
+            self.player.command("loadfile", self.video_path, "replace")
+            # Ensure playback is resumed
+            self.player.pause = False
         self.after(500, self.poll_progress_bar)
+
+        if total_sec > 0 and current_sec >= total_sec - 0.5:
+            print("Video ended. Restarting from beginning.")
+            # Reload the video file, replacing the current one
+            self.player.command("loadfile", self.video_path, "replace")
+            # Ensure playback is resumed
+            self.player.pause = False
 
     def update_progress_bar(self):
         """Update only the dynamic parts of the progress bar."""
@@ -926,10 +1274,43 @@ class VideoAnnotator(tk.Frame):
             self.player.time_pos = target_sec
 
     def on_closing(self):
-        self.player.stop()
-        self.parent.destroy()
+        """Handle application closing and ensure floating windows are destroyed."""
+        try:
+            # List of attribute names for floating windows to destroy
+            floating_attrs = [
+                'floating_controls_window',
+                'behavior_buttons_window',
+                'behavior_toggle_window',
+                'controls_window',
+                'edit_dialog'
+            ]
+            for attr in floating_attrs:
+                if hasattr(self, attr):
+                    win = getattr(self, attr)
+                    if win is not None and win.winfo_exists():
+                        win.destroy()
+            
+            # Additionally, destroy any windows tracked in self.floating_windows
+            if hasattr(self, 'floating_windows'):
+                for win in self.floating_windows:
+                    if win is not None and win.winfo_exists():
+                        win.destroy()
+                self.floating_windows.clear()
+
+            # Save session state and stop the player
+            if hasattr(self, 'player') and self.player:
+                self.save_session_state()
+                self.player.pause = True
+                self.player.stop()
+
+            # Finally, destroy the main window
+            self.parent.destroy()
+        except Exception as e:
+            print(f"Error during closing: {e}")
+            self.parent.destroy()
 
     def visualize_annotations(self):
+        self.dialog_open = True
         dialog = tk.Toplevel(self.parent)
         dialog.transient(self.parent)     # Make dialog dependent on the main window
         dialog.grab_set()                 # Prevent interaction with the main window
@@ -942,8 +1323,10 @@ class VideoAnnotator(tk.Frame):
 
         tk.Label(dialog, text="Annotations visualization is\ncurrently under development.").pack(pady=20)
         tk.Button(dialog, text="OK", command=dialog.destroy).pack(pady=5)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: self.on_visualization_close(dialog))
 
     def generate_summary_statistics(self):
+        self.dialog_open = True
         dialog = tk.Toplevel(self.parent)
         dialog.transient(self.parent)
         dialog.grab_set()
@@ -956,7 +1339,17 @@ class VideoAnnotator(tk.Frame):
 
         tk.Label(dialog, text="Generating summary statistics is\ncurrently under development").pack(pady=20)
         tk.Button(dialog, text="OK", command=dialog.destroy).pack(pady=5)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: self.on_summary_close(dialog))
 
+    def on_visualization_close(self, dialog):
+        """Handle visualization dialog closing"""
+        self.dialog_open = False
+        dialog.destroy()
+
+    def on_summary_close(self, dialog):
+        """Handle summary dialog closing"""
+        self.dialog_open = False
+        dialog.destroy()
 
     def center_window(self, win, width, height):
         # Identify the primary monitor
@@ -971,6 +1364,7 @@ class VideoAnnotator(tk.Frame):
 
     # --- Annotation Menu and Editing Methods ---
     def show_annotation_menu(self, event):
+        self.dialog_open = True
         # Determine which treeview was clicked
         widget = event.widget
         self.selected_treeview = widget
@@ -995,6 +1389,13 @@ class VideoAnnotator(tk.Frame):
         self.annotation_menu.add_command(label="Skip to Annotation", command=self.skip_to_annotation)
         self.annotation_menu.add_command(label="Delete", command=self.delete_annotation)
         self.annotation_menu.tk_popup(event.x_root, event.y_root)
+        self.annotation_menu.bind('<Unmap>', lambda e: self.on_menu_close())
+
+    def on_menu_close(self):
+        """Handle menu closing"""
+        self.dialog_open = False
+        if hasattr(self, 'annotation_menu'):
+            self.annotation_menu.destroy()
 
     def edit_annotation(self):
         if not hasattr(self, 'selected_treeview') or not self.selected_item:
@@ -1007,6 +1408,7 @@ class VideoAnnotator(tk.Frame):
     def edit_state_annotation(self):
         if self.selected_index is None:
             return
+        self.dialog_open = True
 
         selected_annotation = self.state_events[self.selected_index]
         if selected_annotation['end_time'] is None:
@@ -1064,6 +1466,7 @@ class VideoAnnotator(tk.Frame):
 
         if self.selected_index is None:
             return
+        self.dialog_open = True
 
         selected_annotation = self.point_events[self.selected_index]
         print(f"Editing point annotation: {selected_annotation}")
@@ -1126,26 +1529,26 @@ class VideoAnnotator(tk.Frame):
         return latest_annotation
 
     def on_edit_dialog_close(self):
+        """Update on_edit_dialog_close to reset dialog state"""
+        self.dialog_open = False
         if hasattr(self, 'edit_dialog') and self.edit_dialog is not None:
             self.edit_dialog.destroy()
             self.edit_dialog = None
-            # Optionally save session state here:
-            # self.save_session_state()
 
     def skip_to_annotation(self):
         if not hasattr(self, 'selected_treeview') or not self.selected_item:
             return
 
         values = self.selected_treeview.item(self.selected_item, 'values')
-        # Assume column 1 holds the human-readable start time
+        # Assume column 1 holds the human-readable start time.
         start_time_str = values[1]
         start_time = self.parse_time(start_time_str)
         if start_time is not None:
-            # VLC uses milliseconds; convert seconds to ms
-            self.player.set_time(int(start_time * 1000))
-            self.refresh_paused_frame()
+            # mpv uses seconds for the time_pos property.
+            self.player.time_pos = start_time
             self.update_progress_bar()
-            self.player.pause()
+            # Pause the player by setting pause to True.
+            self.player.pause = True
 
     def delete_annotation(self):
         # Try to get the selection from each treeview
