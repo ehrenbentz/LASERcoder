@@ -109,6 +109,7 @@ class SetupManager:
                 'End',
                 'Duration',
                 'Manual_Edit'
+                'Notes'
             ])
         print(f"Created new annotations file: {self.annotations_file}")
 

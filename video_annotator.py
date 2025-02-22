@@ -420,18 +420,96 @@ class VideoAnnotator(tk.Frame):
                     "Start": f"{current_time:.2f}",
                     "End": "",
                     "Duration": "",
-                    "Manual_Edit": "False"
+                    "Manual_Edit": "False",
+                    "Notes": ""  # Initialize empty Notes
                 }
                 self.append_annotation(record)
                 self.point_events.append({
                     "Name": behavior_info["Name"],
                     "time": formatted_time,
-                    "Manual_Edit": False
+                    "Manual_Edit": False,
+                    "Notes": ""  # Initialize empty Notes
                 })
                 self.used_point_behaviors.add(key)
                 self.parent.after(100, lambda: self.used_point_behaviors.discard(key))
                 self.update_annotations()
                 self.populate_behavior_treeviews()
+
+    def add_note_to_annotation(self):
+        """Show dialog to add a note to the selected annotation."""
+        if not hasattr(self, 'selected_treeview') or not self.selected_item:
+            return
+            
+        # Determine whether we're dealing with state or point annotation
+        if self.selected_treeview == self.state_annotations_tree:
+            annotation = self.state_events[self.selected_index]
+        else:
+            annotation = self.point_events[self.selected_index]
+            
+        # Create a dialog for entering notes
+        self.dialog_open = True
+        
+        # Create the dialog window
+        if hasattr(self, 'note_dialog') and self.note_dialog is not None:
+            self.note_dialog.destroy()
+            
+        self.note_dialog = tk.Toplevel(self.parent)
+        self.note_dialog.transient(self.parent)
+        self.note_dialog.grab_set()
+        self.note_dialog.focus_force()
+        self.note_dialog.attributes('-topmost', True)
+        self.note_dialog.protocol("WM_DELETE_WINDOW", self.on_note_dialog_close)
+        self.note_dialog.title("Add Note")
+        self.center_window(self.note_dialog, width=400, height=300)
+        
+        # Create a frame for the note content
+        note_frame = tk.Frame(self.note_dialog)
+        note_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Show annotation info
+        info_text = f"Adding note to: {annotation['Name']}"
+        if self.selected_treeview == self.state_annotations_tree:
+            info_text += f" ({self.format_time_human_readable(annotation['start_time'])})"
+        else:
+            info_text += f" ({annotation['time']})"
+        tk.Label(note_frame, text=info_text).pack(anchor=tk.W, pady=(0, 10))
+        
+        # Show existing note if any
+        existing_note = annotation.get('Notes', "")
+        # Convert dots back to newlines for display (if they were previously saved)
+        if " . " in existing_note:
+            existing_note = existing_note.replace(" . ", "\n")
+        
+        tk.Label(note_frame, text="Note:").pack(anchor=tk.W)
+        
+        # Create a text widget for the note
+        self.note_text = tk.Text(note_frame, height=8, width=45)
+        self.note_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        self.note_text.insert(tk.END, existing_note)
+        
+        # Add scrollbar to the text widget
+        scrollbar = tk.Scrollbar(self.note_text)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.note_text.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.note_text.yview)
+        
+        # Add buttons
+        button_frame = tk.Frame(self.note_dialog)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        save_button = tk.Button(
+            button_frame, 
+            text="Save", 
+            command=lambda: self.save_note_to_annotation(annotation)
+        )
+        save_button.pack(side=tk.RIGHT, padx=5)
+        
+        cancel_button = tk.Button(
+            button_frame,
+            text="Cancel",
+            command=self.on_note_dialog_close
+        )
+        cancel_button.pack(side=tk.RIGHT, padx=5)
 
     def load_data_and_start(self):
         """Load data and start playback"""
@@ -743,6 +821,8 @@ class VideoAnnotator(tk.Frame):
             for row in reader:
                 annotation_type = row.get("Type", "").strip().lower()
                 name = row.get("Name", "").strip()
+                # Get Notes value (defaulting to empty string if not present)
+                notes = row.get("Notes", "")
 
                 if annotation_type == "state":
                     # Handle missing or 'NA' values safely
@@ -757,7 +837,8 @@ class VideoAnnotator(tk.Frame):
                         'start_time': start_time,
                         'end_time': end_time,
                         'Type': 'State',
-                        'Mutually_Exclusive': row.get("Mutually_Exclusive", "False")
+                        'Mutually_Exclusive': row.get("Mutually_Exclusive", "False"),
+                        'Notes': notes  # Include Notes
                     })
 
                 elif annotation_type == "point":
@@ -765,7 +846,8 @@ class VideoAnnotator(tk.Frame):
                     self.point_events.append({
                         'Name': name,
                         'time': h_start,
-                        'Manual_Edit': row.get("Manual_Edit", "False")
+                        'Manual_Edit': row.get("Manual_Edit", "False"),
+                        'Notes': notes  # Include Notes
                     })
 
 
@@ -868,13 +950,15 @@ class VideoAnnotator(tk.Frame):
                     "Start": f"{current_time:.2f}",
                     "End": "",
                     "Duration": "",
-                    "Manual_Edit": "False"
+                    "Manual_Edit": "False",
+                    'Notes': ""
                 }
                 self.append_annotation(record)
                 self.point_events.append({
                     "Name": behavior_info["Name"],
                     "time": formatted_time,
-                    "Manual_Edit": False
+                    "Manual_Edit": False,
+                    'Notes': ""
                 })
                 self.used_point_behaviors.add(key)
                 self.parent.after(100, lambda: self.used_point_behaviors.discard(key))
@@ -910,7 +994,8 @@ class VideoAnnotator(tk.Frame):
                 "Start": machine_readable_start_time,
                 "End": machine_readable_end_time,
                 "Duration": machine_readable_duration,
-                "Manual_Edit": "False"
+                "Manual_Edit": "False",
+                "Notes": ""  # Initialize empty Notes
             }
             self.append_annotation(record)
             for event in self.state_events:
@@ -927,7 +1012,8 @@ class VideoAnnotator(tk.Frame):
                 'start_time': frame_timestamp,
                 'end_time': None,
                 'Type': 'State',
-                'Mutually_Exclusive': 'True' if me_group else 'False'
+                'Mutually_Exclusive': 'True' if me_group else 'False',
+                'Notes': ""  # Initialize empty Notes
             })
             self.update_annotations()
             self.populate_behavior_treeviews()
@@ -956,7 +1042,8 @@ class VideoAnnotator(tk.Frame):
                     "Start": machine_readable_start_time,
                     "End": machine_readable_end_time,
                     "Duration": machine_readable_duration,
-                    "Manual_Edit": "False"
+                    "Manual_Edit": "False",
+                    "Notes": ""  # Initialize empty Notes
                 }
                 self.append_annotation(record)
                 for event in self.state_events:
@@ -975,13 +1062,22 @@ class VideoAnnotator(tk.Frame):
         Reads existing rows, appends the new record,
         writes to a temporary file, then replaces the original.
         """
-        headers = ['Video','Name','Type','Mutually_Exclusive','H_Start','H_End','Start','End','Duration','Manual_Edit']
+        # Updated headers to include Notes
+        headers = ['Video','Name','Type','Mutually_Exclusive','H_Start','H_End','Start','End','Duration','Manual_Edit','Notes']
         rows = []
         if os.path.exists(self.annotations_file):
             with open(self.annotations_file, 'r', newline="") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
+                    # Ensure each row has a Notes field, even if it's empty
+                    if 'Notes' not in row:
+                        row['Notes'] = ""
                     rows.append(row)
+        
+        # Ensure the new annotation record has a Notes field, defaulting to empty
+        if 'Notes' not in annotation_record:
+            annotation_record['Notes'] = ""
+            
         rows.append(annotation_record)
         temp_file = self.annotations_file + ".tmp"
         with open(temp_file, 'w', newline="") as f:
@@ -1003,8 +1099,9 @@ class VideoAnnotator(tk.Frame):
 
     def save_sorted_annotations(self):
         with open(self.annotations_file, 'w', newline='') as file:
+            # Updated header row to include Notes
             writer = csv.writer(file)
-            writer.writerow(['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End', 'Start', 'End', 'Duration', 'Manual_Edit'])
+            writer.writerow(['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End', 'Start', 'End', 'Duration', 'Manual_Edit', 'Notes'])
             for event in self.state_events:
                 start_time = self.format_time_machine_readable(event['start_time'])
                 end_time = self.format_time_machine_readable(event['end_time']) if event['end_time'] is not None else 'NA'
@@ -1012,6 +1109,8 @@ class VideoAnnotator(tk.Frame):
                 H_start = self.format_time_human_readable(event['start_time'])
                 H_end = self.format_time_human_readable(event['end_time']) if event['end_time'] is not None else 'NA'
                 manual_edit = 'True' if event.get('Manual_Edit') else 'False'
+                # Include notes if it exists, otherwise use empty string
+                notes = event.get('Notes', "")
                 writer.writerow([
                     self.video_name,
                     event['Name'],
@@ -1022,11 +1121,14 @@ class VideoAnnotator(tk.Frame):
                     start_time,
                     end_time,
                     duration,
-                    manual_edit
+                    manual_edit,
+                    notes
                 ])
             for event in self.point_events:
                 time_machine = self.format_time_machine_readable(self.parse_time(event['time']))
                 manual_edit = 'True' if event.get('Manual_Edit') else 'False'
+                # Include notes if it exists, otherwise use empty string
+                notes = event.get('Notes', "")
                 writer.writerow([
                     self.video_name,
                     event['Name'],
@@ -1037,7 +1139,8 @@ class VideoAnnotator(tk.Frame):
                     time_machine,
                     'NA',
                     'NA',
-                    manual_edit
+                    manual_edit,
+                    notes
                 ])
 
     def save_point_annotation(self, new_entries, dialog, selected_annotation, old_start_time):
@@ -1112,6 +1215,7 @@ class VideoAnnotator(tk.Frame):
                 annotation['start_time'] = new_start_time
                 annotation['end_time'] = new_end_time
                 annotation['Manual_Edit'] = True
+                annotation['Notes'] = new_Note
                 break
 
         self.save_sorted_annotations()
@@ -1362,9 +1466,14 @@ class VideoAnnotator(tk.Frame):
         win.geometry(f"{width}x{height}+{x}+{y}")
         win.update_idletasks()
 
-    # --- Annotation Menu and Editing Methods ---
+    # Annotation Menu and Editing Methods
     def show_annotation_menu(self, event):
         self.dialog_open = True
+        
+        # Pause the video when opening the menu
+        if hasattr(self, 'player') and self.player:
+            self.player.pause = True
+        
         # Determine which treeview was clicked
         widget = event.widget
         self.selected_treeview = widget
@@ -1386,10 +1495,183 @@ class VideoAnnotator(tk.Frame):
         # Create a popup menu (using self.parent instead of self.root)
         self.annotation_menu = tk.Menu(self.parent, tearoff=0)
         self.annotation_menu.add_command(label="Edit", command=self.edit_annotation)
+        self.annotation_menu.add_command(label="Add Note", command=self.add_note_to_annotation)
+        self.annotation_menu.add_command(label="View Details", command=self.view_annotation_details)  # New option
         self.annotation_menu.add_command(label="Skip to Annotation", command=self.skip_to_annotation)
         self.annotation_menu.add_command(label="Delete", command=self.delete_annotation)
         self.annotation_menu.tk_popup(event.x_root, event.y_root)
         self.annotation_menu.bind('<Unmap>', lambda e: self.on_menu_close())
+
+    def view_annotation_details(self):
+        """Show a dialog with all details of the selected annotation."""
+        if not hasattr(self, 'selected_treeview') or not self.selected_item:
+            return
+            
+        # Determine whether we're dealing with state or point annotation
+        if self.selected_treeview == self.state_annotations_tree:
+            annotation = self.state_events[self.selected_index]
+            annotation_type = "State"
+        else:
+            annotation = self.point_events[self.selected_index]
+            annotation_type = "Point"
+            
+        # Create a dialog for showing details
+        self.dialog_open = True
+        
+        # Create the dialog window
+        if hasattr(self, 'details_dialog') and self.details_dialog is not None:
+            self.details_dialog.destroy()
+            
+        self.details_dialog = tk.Toplevel(self.parent)
+        self.details_dialog.transient(self.parent)
+        self.details_dialog.grab_set()
+        self.details_dialog.focus_force()
+        self.details_dialog.attributes('-topmost', True)
+        self.details_dialog.protocol("WM_DELETE_WINDOW", self.on_details_dialog_close)
+        self.details_dialog.title(f"Annotation Details - {annotation['Name']}")
+        self.center_window(self.details_dialog, width=500, height=400)
+        
+        # Create main frame with padding
+        main_frame = tk.Frame(self.details_dialog, padx=15, pady=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a frame for details in the top section
+        details_frame = tk.Frame(main_frame)
+        details_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Configure grid for details
+        details_frame.columnconfigure(0, weight=1)
+        details_frame.columnconfigure(1, weight=2)
+        
+        # Common details for all annotation types
+        details = [
+            ("Name:", annotation['Name']),
+            ("Type:", annotation_type),
+            ("Video:", self.video_name)
+        ]
+        
+        # Add type-specific details
+        if annotation_type == "State":
+            start_time = self.format_time_human_readable(annotation['start_time'])
+            end_time = self.format_time_human_readable(annotation['end_time']) if annotation['end_time'] is not None else "NA"
+            
+            # Calculate duration
+            if annotation['end_time'] is not None and annotation['start_time'] is not None:
+                duration = annotation['end_time'] - annotation['start_time']
+                duration_str = self.format_time_human_readable(duration)
+            else:
+                duration_str = "NA"
+                
+            additional_details = [
+                ("Start Time:", start_time),
+                ("End Time:", end_time),
+                ("Duration:", duration_str),
+                ("Mutually Exclusive:", annotation.get('Mutually_Exclusive', 'False'))
+            ]
+            details.extend(additional_details)
+        else:  # Point annotation
+            details.append(("Time:", annotation['time']))
+        
+        # Add manual edit status if available
+        if 'Manual_Edit' in annotation:
+            details.append(("Manually Edited:", str(annotation['Manual_Edit'])))
+        
+        # Display all details in a grid
+        for row, (label, value) in enumerate(details):
+            tk.Label(details_frame, text=label, anchor="w", font=("Helvetica", 10, "bold")).grid(
+                row=row, column=0, sticky="w", pady=2)
+            tk.Label(details_frame, text=value, anchor="w").grid(
+                row=row, column=1, sticky="w", pady=2)
+        
+        # Separator
+        separator = ttk.Separator(main_frame, orient='horizontal')
+        separator.pack(fill=tk.X, pady=10)
+        
+        # Notes section
+        tk.Label(main_frame, text="Notes:", anchor="w", font=("Helvetica", 10, "bold")).pack(anchor=tk.W)
+        
+        # Get existing note and convert dots back to newlines for display
+        existing_note = annotation.get('Notes', "")
+        if " . " in existing_note:
+            existing_note = existing_note.replace(" . ", "\n")
+        
+        # Create a text widget for the note (read-only in details view)
+        notes_frame = tk.Frame(main_frame)
+        notes_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        self.details_note_text = tk.Text(notes_frame, height=6, width=50)
+        self.details_note_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.details_note_text.insert(tk.END, existing_note)
+        
+        # Make read-only but allow selection for copying
+        self.details_note_text.config(state=tk.DISABLED)
+        
+        # Add scrollbar
+        notes_scrollbar = tk.Scrollbar(notes_frame)
+        notes_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.details_note_text.config(yscrollcommand=notes_scrollbar.set)
+        notes_scrollbar.config(command=self.details_note_text.yview)
+        
+        # Add buttons at the bottom
+        button_frame = tk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        # Add Edit Note button
+        edit_note_button = tk.Button(
+            button_frame,
+            text="Edit Note",
+            command=lambda: self.edit_note_from_details(annotation)
+        )
+        edit_note_button.pack(side=tk.LEFT)
+        
+        # Add Close button
+        close_button = tk.Button(
+            button_frame,
+            text="Close",
+            command=self.on_details_dialog_close
+        )
+        close_button.pack(side=tk.RIGHT)
+
+    def edit_note_from_details(self, annotation):
+        """Switch from details view to note editing."""
+        # Close the details dialog
+        self.on_details_dialog_close()
+        # Open the note editing dialog
+        self.add_note_to_annotation()
+
+    def save_note_to_annotation(self, annotation):
+        """Save the entered note to the annotation."""
+        if not hasattr(self, 'note_text'):
+            return
+            
+        # Get the note text from the text widget
+        note = self.note_text.get("1.0", tk.END).strip()
+        
+        # Replace newline/return characters with dots for CSV compatibility
+        note = note.replace("\n", " . ").replace("\r", " . ")
+        
+        # Update the annotation in memory
+        annotation['Notes'] = note
+        
+        # Save to file
+        self.save_sorted_annotations()
+        
+        # Close the dialog
+        self.on_note_dialog_close()
+        
+    def on_note_dialog_close(self):
+        """Handle note dialog closing."""
+        self.dialog_open = False
+        if hasattr(self, 'note_dialog') and self.note_dialog is not None:
+            self.note_dialog.destroy()
+            self.note_dialog = None
+
+    def on_details_dialog_close(self):
+        """Handle details dialog closing."""
+        self.dialog_open = False
+        if hasattr(self, 'details_dialog') and self.details_dialog is not None:
+            self.details_dialog.destroy()
+            self.details_dialog = None
 
     def on_menu_close(self):
         """Handle menu closing"""
