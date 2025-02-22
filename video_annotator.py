@@ -217,7 +217,7 @@ class VideoAnnotator(tk.Frame):
         self.behavior_toggle_window.geometry(f"+{video_x + margin}+{video_y + margin}")
         
         # Position controls button (lower left)
-        self.controls_window.geometry(f"+{video_x + margin}+{video_y + self.video_height - 30}")
+        self.controls_window.geometry(f"+{video_x + margin}+{video_y + self.video_height - 40}")
 
     def update_floating_windows_visibility(self, event):
         """Update visibility of all floating windows"""
@@ -1468,8 +1468,6 @@ class VideoAnnotator(tk.Frame):
 
     # Annotation Menu and Editing Methods
     def show_annotation_menu(self, event):
-        self.dialog_open = True
-        
         # Pause the video when opening the menu
         if hasattr(self, 'player') and self.player:
             self.player.pause = True
@@ -1500,8 +1498,7 @@ class VideoAnnotator(tk.Frame):
         self.annotation_menu.add_command(label="Skip to Annotation", command=self.skip_to_annotation)
         self.annotation_menu.add_command(label="Delete", command=self.delete_annotation)
         self.annotation_menu.tk_popup(event.x_root, event.y_root)
-        self.annotation_menu.bind('<Unmap>', lambda e: self.on_menu_close())
-
+    
     def view_annotation_details(self):
         """Show a dialog with all details of the selected annotation."""
         if not hasattr(self, 'selected_treeview') or not self.selected_item:
@@ -1658,26 +1655,33 @@ class VideoAnnotator(tk.Frame):
         
         # Close the dialog
         self.on_note_dialog_close()
-        
+
+    def on_menu_close(self):
+        """Handle menu closing"""
+        # Do NOT set self.dialog_open = False here
+        if hasattr(self, 'annotation_menu'):
+            self.annotation_menu.destroy()
+
+    def on_edit_dialog_close(self):
+        """Update on_edit_dialog_close to reset dialog state"""
+        self.dialog_open = False
+        if hasattr(self, 'edit_dialog') and self.edit_dialog is not None:
+            self.edit_dialog.destroy()
+            self.edit_dialog = None
+
     def on_note_dialog_close(self):
         """Handle note dialog closing."""
         self.dialog_open = False
         if hasattr(self, 'note_dialog') and self.note_dialog is not None:
             self.note_dialog.destroy()
             self.note_dialog = None
-
+            
     def on_details_dialog_close(self):
         """Handle details dialog closing."""
         self.dialog_open = False
         if hasattr(self, 'details_dialog') and self.details_dialog is not None:
             self.details_dialog.destroy()
             self.details_dialog = None
-
-    def on_menu_close(self):
-        """Handle menu closing"""
-        self.dialog_open = False
-        if hasattr(self, 'annotation_menu'):
-            self.annotation_menu.destroy()
 
     def edit_annotation(self):
         if not hasattr(self, 'selected_treeview') or not self.selected_item:
@@ -1809,13 +1813,6 @@ class VideoAnnotator(tk.Frame):
                     print(f"Found matching point row: {latest_annotation}")
                     break
         return latest_annotation
-
-    def on_edit_dialog_close(self):
-        """Update on_edit_dialog_close to reset dialog state"""
-        self.dialog_open = False
-        if hasattr(self, 'edit_dialog') and self.edit_dialog is not None:
-            self.edit_dialog.destroy()
-            self.edit_dialog = None
 
     def skip_to_annotation(self):
         if not hasattr(self, 'selected_treeview') or not self.selected_item:
