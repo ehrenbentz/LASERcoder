@@ -1,292 +1,324 @@
+# files_manager.py
+
 import os
-import platform
-import tkinter as tk
-from tkinter import ttk, messagebox
-from screeninfo import get_monitors
 from pathlib import Path
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QLineEdit, QListWidget, QFrame,
+    QMessageBox, QSplitter, QWidget, QInputDialog, QApplication)
+from PyQt6.QtCore import Qt, QSize, QRect
+from PyQt6.QtGui import QFont
 
-class NewDirectoryDialog(tk.Toplevel):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.title("Create Directory")
-        self.result = None
-        
-        # Set size and position
-        width = 300
-        height = 150
-        self.geometry(f"{width}x{height}")
-        self.center_window(width, height)
-        
-        # Configure style
-        self.configure(background="lightgrey")
-        
-        # Add label
-        label = ttk.Label(self, text="Enter new directory name:", 
-                         font=("Helvetica", 12),
-                         background="lightgrey")
-        label.pack(pady=(20,10))
-        
-        # Add entry
-        self.entry = tk.Entry(self, font=("Helvetica", 12), width=30)
-        self.entry.pack(pady=(0,20))
-        self.entry.focus_set()
-        
-        # Add buttons frame
-        btn_frame = ttk.Frame(self)
-        btn_frame.pack(fill="x", padx=20)
-        
-        # Add buttons
-        ok_btn = ttk.Button(btn_frame, text="OK", command=self.ok_clicked)
-        ok_btn.pack(side="left", expand=True, padx=5)
-        
-        cancel_btn = ttk.Button(btn_frame, text="Cancel", command=self.cancel_clicked)
-        cancel_btn.pack(side="right", expand=True, padx=5)
-        
-        # Bind enter and escape
-        self.bind("<Return>", lambda e: self.ok_clicked())
-        self.bind("<Escape>", lambda e: self.cancel_clicked())
-        
-        # Make modal
-        self.transient(parent)
-        self.grab_set()
-        
-    def ok_clicked(self):
-        self.result = self.entry.get()
-        self.destroy()
-        
-    def cancel_clicked(self):
-        self.destroy()
-        
-    def center_window(self, width, height):
-        monitors = get_monitors()
-        primary = next((m for m in monitors if m.is_primary), monitors[0])
-        x = primary.x + (primary.width // 2) - (width // 2)
-        y = primary.y + (primary.height // 2) - (height // 2)
-        self.geometry(f"+{x}+{y}")
-
-class FilesManager(tk.Toplevel):
-    def __init__(self, parent, initial_output_dir=str(Path.home()), 
+class FilesManager(QDialog):
+    """Dialog for selecting output directory and video file."""
+    
+    def __init__(self, parent=None, initial_output_dir=str(Path.home()), 
                  initial_video_dir=str(Path.home()),
                  file_types=(".mp4", ".avi", ".mov", ".mts", ".mkv")):
         super().__init__(parent)
-        self.title("LaserTAG - Select Output Directory and Video File")
-
-        # Platform-specific window settings
-        if platform.system() == "Windows":
-            self.state('zoomed')
-        elif platform.system() == "Darwin":
-            self.state('zoomed')
-        elif platform.system() == "Linux":
-            self.attributes("-zoomed", True)
-
+        
         self.file_types = file_types
         self.selected_video_file = None
-        self.output_dir = initial_output_dir  # Initialize with home directory
-        self.parent = parent
-
+        
         self.initial_output_dir = os.path.abspath(initial_output_dir)
         self.initial_video_dir = os.path.abspath(initial_video_dir)
         self.current_output_dir = self.initial_output_dir
         self.current_video_dir = self.initial_video_dir
+        
+        # Set initial output directory selected by default
+        self.output_dir = self.initial_output_dir
+        
+        # Configure display settings
+        self.configure_display()
+        
+        # Set window properties
+        self.setWindowTitle("LaserTAG - Select Output Directory and Video File")
+        
+        # Maximize parent but not this dialog
+        if self.parent():
+            self.parent().showMaximized()
+        
+        # Setup UI components
+        self.setup_ui()
+        
+        # Set size and center this dialog
+        dialog_width = int(self.display_width * 0.8)
+        dialog_height = int(self.display_height * 0.8)
+        self.center_window(dialog_width, dialog_height)
+        
+    def configure_display(self):
+        """Configure display settings and window properties"""
+        self.app = QApplication.instance() or QApplication([])
+        # Get the primary screen
+        self.screen = self.app.primaryScreen()
+        self.scaling_factor = self.screen.devicePixelRatio()
+        
+        # Get geometry from the primary screen (returns a QRect)
+        geom = self.screen.geometry()
+        self.display_width = geom.width()
+        self.display_height = geom.height()
+        self.display_x = geom.x()
+        self.display_y = geom.y()
 
-        # Styling
-        self.setup_styles()
+    def setup_ui(self):
+        """Set up the user interface."""
+        main_layout = QHBoxLayout(self)
+        
+        # Create splitter for resizable panels
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(splitter)
+        
+        # Left panel: Output Directory Selector
+        output_panel = QFrame()
+        output_layout = QVBoxLayout(output_panel)
+        self.setup_output_panel(output_layout)
+        splitter.addWidget(output_panel)
+        
+        # Right panel: Video File Selector
+        video_panel = QFrame()
+        video_layout = QVBoxLayout(video_panel)
+        self.setup_video_panel(video_layout)
+        splitter.addWidget(video_panel)
+        
+        # Main splitter - divide into 1/3 for output and 2/3 for video
+        width = int(self.display_width * 0.6)  # Total dialog width
+        splitter.setSizes([int(width/3), int(2*width/3)])
 
-        # Create a PanedWindow with two panels
-        paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL, style="TPanedwindow")
-        paned.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Left panel: Output Directory Selector (1/3 width)
-        self.output_dir_panel = ttk.Frame(paned, style="TFrame")
-        paned.add(self.output_dir_panel)
-
-        # Right panel: Video File Selector (2/3 width)
-        self.video_file_panel = ttk.Frame(paned, style="TFrame")
-        paned.add(self.video_file_panel)
-
-        # Force the initial position of the sash
-        def set_sash_position(event=None):
-            width = paned.winfo_width()
-            paned.sashpos(0, (width * 2) // 5)
-            
-        paned.bind('<Map>', set_sash_position)
-        self.create_output_dir_ui()
-        self.create_video_file_ui()
-
-    def setup_styles(self):
-        bg_color = "lightgrey"
-        self.style = ttk.Style(self)
-        self.style.theme_use("clam")
-        self.style.configure("TFrame", background=bg_color)
-        self.style.configure("TPanedwindow", background=bg_color)
-        self.style.configure("TopBar.TFrame", background=bg_color)
-        large_font = ("Helvetica", 12)
-        self.style.configure("TButton", font=large_font, padding=(5,2,5,2))
-        self.style.configure("Custom.TButton", padding=(2, 0))
-        self.style.configure("Label.TLabel", font=("Helvetica", 12, "bold"), background=bg_color)
-        self.configure(background=bg_color)
-
-    def create_output_dir_ui(self):
+    def setup_video_panel(self, layout):
+        """Set up the video file selection panel."""
         # Label
-        label = ttk.Label(self.output_dir_panel, text="Select Output Directory:", style="Label.TLabel")
-        label.pack(pady=(5,0), padx=5, anchor="w")
-
-        # Directory navigation frame
-        nav_frame = ttk.Frame(self.output_dir_panel, style="TopBar.TFrame")
-        nav_frame.pack(fill="x", padx=5, pady=(0,5))
+        layout.addWidget(QLabel("Select Video File:"))
+        
+        # Navigation frame
+        nav_frame = QFrame()
+        nav_layout = QHBoxLayout(nav_frame)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
         
         # Up button
-        up_btn = ttk.Button(nav_frame, text="↑", width=3, style="Custom.TButton", 
-                           command=lambda: self.go_up('output'))
-        up_btn.pack(side="left", padx=(0,5))
+        up_btn = QPushButton("↑")
+        up_btn.setFixedWidth(30)
+        up_btn.clicked.connect(lambda: self.go_up('video'))
+        nav_layout.addWidget(up_btn)
         
-        # Entry to show current output directory
-        self.output_dir_entry = tk.Entry(nav_frame, font=("Helvetica", 12), 
-                                       bg="white", bd=2, relief="ridge")
-        self.output_dir_entry.pack(fill="x", expand=True)
-        self.output_dir_entry.insert(0, self.initial_output_dir)
-        self.output_dir_entry.bind("<Return>", self.on_output_dir_update)
-
-        # Listbox to show subdirectories
-        self.output_dir_listbox = tk.Listbox(self.output_dir_panel, 
-                                           font=("Helvetica", 12), 
-                                           bg="white", bd=2, relief="ridge")
-        self.output_dir_listbox.pack(fill="both", expand=True, padx=5, pady=5)
-        self.output_dir_listbox.bind("<Double-Button-1>", self.on_output_dir_double_click)
+        # Directory entry
+        self.video_dir_entry = QLineEdit(self.initial_video_dir)
+        self.video_dir_entry.returnPressed.connect(self.on_video_dir_update)
+        nav_layout.addWidget(self.video_dir_entry)
         
-        # Bottom frame for buttons and label
-        bottom_frame = ttk.Frame(self.output_dir_panel, style="TFrame")
-        bottom_frame.pack(fill="x", padx=5, pady=(0,5))
+        layout.addWidget(nav_frame)
+        
+        # Create a sub-splitter for directories and files
+        sub_splitter = QSplitter(Qt.Orientation.Horizontal)
+        layout.addWidget(sub_splitter)
+        
+        # Left sub-panel: Directories
+        dir_panel = QFrame()
+        dir_layout = QVBoxLayout(dir_panel)
+        dir_layout.setContentsMargins(5, 5, 5, 5)
+        
+        dir_layout.addWidget(QLabel("Directories:"))
+        self.video_dir_listbox = QListWidget()
+        self.video_dir_listbox.itemDoubleClicked.connect(self.on_video_dir_double_click)
+        dir_layout.addWidget(self.video_dir_listbox)
+        
+        sub_splitter.addWidget(dir_panel)
+        
+        # Right sub-panel: Video files
+        file_panel = QFrame()
+        file_layout = QVBoxLayout(file_panel)
+        file_layout.setContentsMargins(5, 5, 5, 5)
+        
+        file_layout.addWidget(QLabel("Video Files:"))
+        self.video_file_listbox = QListWidget()
+        self.video_file_listbox.itemDoubleClicked.connect(self.select_video_file)
+        file_layout.addWidget(self.video_file_listbox)
+        
+        sub_splitter.addWidget(file_panel)
+        
+        # Set equal sizes for the sub-splitter
+        sub_splitter.setSizes([int(sub_splitter.width()/2), int(sub_splitter.width()/2)])
 
-        # Selected directory label
-        self.dir_selected = tk.StringVar(value=f"Selected Output Directory: {self.initial_output_dir}")
-        self.dir_selected_label = ttk.Label(bottom_frame, 
-                                          textvariable=self.dir_selected,
-                                          font=("Helvetica", 13))
-        self.dir_selected_label.pack(fill="x", pady=(0,5))
+        select_video_btn = QPushButton("Select Video")
+        select_video_btn.setFixedSize(150, 30)  # Set desired width and height
 
+        # Create a horizontal layout to center the button
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(select_video_btn)
+        btn_layout.addStretch()
+
+        layout.addLayout(btn_layout)
+        
+        # Populate initial lists
+        self.populate_video_dir_list(self.initial_video_dir)
+        self.populate_file_list(self.initial_video_dir)
+
+    def setup_output_panel(self, layout):
+        """Set up the output directory selection panel."""
+        # Label
+        layout.addWidget(QLabel("Select Output Directory:"))
+        
+        # Navigation frame
+        nav_frame = QFrame()
+        nav_layout = QHBoxLayout(nav_frame)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Up button
+        up_btn = QPushButton("↑")
+        up_btn.setFixedWidth(30)
+        up_btn.clicked.connect(lambda: self.go_up('output'))
+        nav_layout.addWidget(up_btn)
+        
+        # Directory entry
+        self.output_dir_entry = QLineEdit(self.initial_output_dir)
+        self.output_dir_entry.returnPressed.connect(self.on_output_dir_update)
+        nav_layout.addWidget(self.output_dir_entry)
+        
+        layout.addWidget(nav_frame)
+        
+        # Directory list
+        self.output_dir_listbox = QListWidget()
+        self.output_dir_listbox.itemDoubleClicked.connect(self.on_output_dir_double_click)
+        layout.addWidget(self.output_dir_listbox)
+        
+        # Selected directory label - initialized with the default output directory
+        self.dir_selected_label = QLabel(f"Selected Output Directory: {self.output_dir}")
+        layout.addWidget(self.dir_selected_label)
+        
         # Button frame
-        button_frame = ttk.Frame(bottom_frame, style="TFrame")
-        button_frame.pack(fill="x")
+        btn_frame = QFrame()
+        btn_layout = QHBoxLayout(btn_frame)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
         
         # Create Directory button
-        create_dir_btn = ttk.Button(button_frame, text="Create Directory", 
-                                  command=self.create_directory)
-        create_dir_btn.pack(side="left", padx=2)
+        create_dir_btn = QPushButton("Create Directory")
+        create_dir_btn.clicked.connect(self.create_directory)
+        btn_layout.addWidget(create_dir_btn)
         
         # Select Directory button
-        select_dir_btn = ttk.Button(button_frame, text="Select Directory", 
-                                  command=self.select_directory)
-        select_dir_btn.pack(side="left", padx=2)
+        select_dir_btn = QPushButton("Select Directory")
+        select_dir_btn.clicked.connect(self.select_directory)
+        btn_layout.addWidget(select_dir_btn)
         
+        layout.addWidget(btn_frame)
+        
+        # Populate initial directory list
         self.populate_dir_list(self.initial_output_dir)
 
-    def create_video_file_ui(self):
+    def setup_video_panel(self, layout):
+        """Set up the video file selection panel."""
         # Label
-        label = ttk.Label(self.video_file_panel, text="Select Video File:", style="Label.TLabel")
-        label.pack(pady=(5,0), padx=5, anchor="w")
-
-        # Directory navigation frame
-        nav_frame = ttk.Frame(self.video_file_panel, style="TopBar.TFrame")
-        nav_frame.pack(fill="x", padx=5, pady=(0,5))
+        layout.addWidget(QLabel("Select Video File:"))
+        
+        # Navigation frame
+        nav_frame = QFrame()
+        nav_layout = QHBoxLayout(nav_frame)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
         
         # Up button
-        up_btn = ttk.Button(nav_frame, text="↑", width=3, style="Custom.TButton", 
-                           command=lambda: self.go_up('video'))
-        up_btn.pack(side="left", padx=(0,5))
+        up_btn = QPushButton("↑")
+        up_btn.setFixedWidth(30)
+        up_btn.clicked.connect(lambda: self.go_up('video'))
+        nav_layout.addWidget(up_btn)
         
-        # Entry to show current video directory
-        self.video_dir_entry = tk.Entry(nav_frame, font=("Helvetica", 12), 
-                                      bg="white", bd=2, relief="ridge")
-        self.video_dir_entry.pack(fill="x", expand=True)
-        self.video_dir_entry.insert(0, self.initial_video_dir)
-        self.video_dir_entry.bind("<Return>", self.on_video_dir_update)
-
-        # Create a frame for both listboxes
-        lists_frame = ttk.Frame(self.video_file_panel, style="TFrame")
-        lists_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        # Directory entry
+        self.video_dir_entry = QLineEdit(self.initial_video_dir)
+        self.video_dir_entry.returnPressed.connect(self.on_video_dir_update)
+        nav_layout.addWidget(self.video_dir_entry)
         
-        # Left side: Directories
-        dir_frame = ttk.Frame(lists_frame, style="TFrame")
-        dir_frame.pack(side="left", fill="both", expand=True)
+        layout.addWidget(nav_frame)
         
-        dir_label = ttk.Label(dir_frame, text="Directories:", style="Label.TLabel")
-        dir_label.pack(anchor="w")
+        # Lists frame
+        lists_frame = QFrame()
+        lists_layout = QHBoxLayout(lists_frame)
+        lists_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.video_dir_listbox = tk.Listbox(dir_frame, font=("Helvetica", 12),
-                                          bg="white", bd=2, relief="ridge")
-        self.video_dir_listbox.pack(fill="both", expand=True, padx=(0,2))
-        self.video_dir_listbox.bind("<Double-Button-1>", self.on_video_dir_double_click)
-
-        # Right side: Video files
-        file_frame = ttk.Frame(lists_frame, style="TFrame")
-        file_frame.pack(side="right", fill="both", expand=True)
+        # Directories list
+        dir_frame = QFrame()
+        dir_layout = QVBoxLayout(dir_frame)
+        dir_layout.setContentsMargins(0, 0, 0, 0)
         
-        file_label = ttk.Label(file_frame, text="Video Files:", style="Label.TLabel")
-        file_label.pack(anchor="w")
+        dir_layout.addWidget(QLabel("Directories:"))
+        self.video_dir_listbox = QListWidget()
+        self.video_dir_listbox.itemDoubleClicked.connect(self.on_video_dir_double_click)
+        dir_layout.addWidget(self.video_dir_listbox)
         
-        self.video_file_listbox = tk.Listbox(file_frame, font=("Helvetica", 12),
-                                           bg="white", bd=2, relief="ridge")
-        self.video_file_listbox.pack(fill="both", expand=True, padx=(2,0))
-        self.video_file_listbox.bind("<Double-Button-1>", self.select_video_file)
-
+        lists_layout.addWidget(dir_frame)
+        
+        # Files list
+        file_frame = QFrame()
+        file_layout = QVBoxLayout(file_frame)
+        file_layout.setContentsMargins(0, 0, 0, 0)
+        
+        file_layout.addWidget(QLabel("Video Files:"))
+        self.video_file_listbox = QListWidget()
+        self.video_file_listbox.itemDoubleClicked.connect(self.select_video_file)
+        file_layout.addWidget(self.video_file_listbox)
+        
+        lists_layout.addWidget(file_frame)
+        
+        layout.addWidget(lists_frame)
+        
         # Select Video button
-        select_video_btn = ttk.Button(self.video_file_panel, text="Select Video", 
-                                    command=self.select_video_file)
-        select_video_btn.pack(side="right", padx=5, pady=(0,5))
-
+        select_video_btn = QPushButton("Select Video")
+        select_video_btn.clicked.connect(self.select_video_file)
+        layout.addWidget(select_video_btn)
+        
+        # Populate initial lists
         self.populate_video_dir_list(self.initial_video_dir)
         self.populate_file_list(self.initial_video_dir)
 
     def go_up(self, panel_type):
+        """Navigate up one directory level."""
         if panel_type == 'output':
             parent_dir = os.path.dirname(self.current_output_dir)
             if os.path.exists(parent_dir):
                 self.current_output_dir = parent_dir
-                self.output_dir_entry.delete(0, tk.END)
-                self.output_dir_entry.insert(0, parent_dir)
+                self.output_dir_entry.setText(parent_dir)
                 self.populate_dir_list(parent_dir)
-                # Clear selected directory if changed
                 if parent_dir != self.output_dir:
                     self.output_dir = None
-                    self.dir_selected.set("Selected Output Directory: None")
+                    self.dir_selected_label.setText("Selected Output Directory: None")
         else:  # video panel
             parent_dir = os.path.dirname(self.current_video_dir)
             if os.path.exists(parent_dir):
                 self.current_video_dir = parent_dir
-                self.video_dir_entry.delete(0, tk.END)
-                self.video_dir_entry.insert(0, parent_dir)
+                self.video_dir_entry.setText(parent_dir)
                 self.populate_video_dir_list(parent_dir)
                 self.populate_file_list(parent_dir)
 
     def create_directory(self):
-        dialog = NewDirectoryDialog(self)
-        self.wait_window(dialog)
+        """Show dialog to create a new directory."""
+        dir_name, ok = QInputDialog.getText(
+            self,
+            "Create Directory",
+            "Enter new directory name:",
+            QLineEdit.EchoMode.Normal
+        )
         
-        if dialog.result:
-            new_dir_path = os.path.join(self.current_output_dir, dialog.result)
+        if ok and dir_name:
+            new_dir_path = os.path.join(self.current_output_dir, dir_name)
             try:
                 os.makedirs(new_dir_path, exist_ok=True)
                 self.current_output_dir = new_dir_path
-                self.output_dir_entry.delete(0, tk.END)
-                self.output_dir_entry.insert(0, new_dir_path)
+                self.output_dir_entry.setText(new_dir_path)
                 self.populate_dir_list(new_dir_path)
-                # Clear selected directory when new directory is created
-                self.output_dir = None
-                self.dir_selected.set("Selected Output Directory: None")
+                self.output_dir = new_dir_path  # Automatically select the newly created directory
+                self.dir_selected_label.setText(f"Selected Output Directory: {self.output_dir}")
             except Exception as e:
-                messagebox.showerror("Error", f"Could not create directory: {str(e)}")
+                QMessageBox.critical(self, "Error", f"Could not create directory: {str(e)}")
+                # Center the error dialog
+                self.center_window(QMessageBox.findChild(self, "qt_msgbox_label"))
 
     def select_directory(self):
-        selection = self.output_dir_listbox.curselection()
-        if selection:
+        """Select the current or highlighted directory as output directory."""
+        current_item = self.output_dir_listbox.currentItem()
+        if current_item:
             # If a directory is highlighted, enter and select it
-            dir_name = self.output_dir_listbox.get(selection[0])
+            dir_name = current_item.text()
             new_dir = os.path.join(self.current_output_dir, dir_name)
             if os.path.isdir(new_dir):
                 self.current_output_dir = new_dir
-                self.output_dir_entry.delete(0, tk.END)
-                self.output_dir_entry.insert(0, new_dir)
+                self.output_dir_entry.setText(new_dir)
                 self.populate_dir_list(new_dir)
                 self.output_dir = new_dir
         else:
@@ -294,122 +326,150 @@ class FilesManager(tk.Toplevel):
             self.output_dir = self.current_output_dir
             
         # Update the selected directory label
-        self.dir_selected.set(f"Selected Output Directory: {self.output_dir}")
+        self.dir_selected_label.setText(f"Selected Output Directory: {self.output_dir}")
 
-    def on_output_dir_update(self, event):
-        new_dir = self.output_dir_entry.get().strip()
+    def on_output_dir_update(self):
+        """Handle output directory entry updates."""
+        new_dir = self.output_dir_entry.text().strip()
         if os.path.isdir(new_dir):
             self.current_output_dir = new_dir
             self.populate_dir_list(new_dir)
+            # Keep the selected directory status
             if new_dir != self.output_dir:
-                self.output_dir = None
-                self.dir_selected.set("Selected Output Directory: None")
-        else:
-            print("Not a valid directory.")
+                self.output_dir = new_dir
+                self.dir_selected_label.setText(f"Selected Output Directory: {self.output_dir}")
 
-    def on_video_dir_update(self, event):
-        new_dir = self.video_dir_entry.get().strip()
+    def on_video_dir_update(self):
+        """Handle video directory entry updates."""
+        new_dir = self.video_dir_entry.text().strip()
         if os.path.isdir(new_dir):
             self.current_video_dir = new_dir
             self.populate_video_dir_list(new_dir)
             self.populate_file_list(new_dir)
-        else:
-            print("Not a valid directory.")
 
-    def on_output_dir_double_click(self, event):
-        selection = self.output_dir_listbox.curselection()
-        if selection:
-            dir_name = self.output_dir_listbox.get(selection[0])
-            new_dir = os.path.join(self.current_output_dir, dir_name)
-            if os.path.isdir(new_dir):
-                self.current_output_dir = new_dir
-                self.output_dir_entry.delete(0, tk.END)
-                self.output_dir_entry.insert(0, new_dir)
-                self.populate_dir_list(new_dir)
-                if new_dir != self.output_dir:
-                    self.output_dir = None
-                    self.dir_selected.set("Selected Output Directory: None")
+    def on_output_dir_double_click(self, item):
+        """Handle double-click on output directory list item."""
+        dir_name = item.text()
+        new_dir = os.path.join(self.current_output_dir, dir_name)
+        if os.path.isdir(new_dir):
+            self.current_output_dir = new_dir
+            self.output_dir_entry.setText(new_dir)
+            self.populate_dir_list(new_dir)
+            # Update selected directory
+            self.output_dir = new_dir
+            self.dir_selected_label.setText(f"Selected Output Directory: {self.output_dir}")
 
-    def on_video_dir_double_click(self, event):
-        selection = self.video_dir_listbox.curselection()
-        if selection:
-            dir_name = self.video_dir_listbox.get(selection[0])
-            new_dir = os.path.join(self.current_video_dir, dir_name)
-            if os.path.isdir(new_dir):
-                self.current_video_dir = new_dir
-                self.video_dir_entry.delete(0, tk.END)
-                self.video_dir_entry.insert(0, new_dir)
-                self.populate_video_dir_list(new_dir)
-                self.populate_file_list(new_dir)
+    def on_video_dir_double_click(self, item):
+        """Handle double-click on video directory list item."""
+        dir_name = item.text()
+        new_dir = os.path.join(self.current_video_dir, dir_name)
+        if os.path.isdir(new_dir):
+            self.current_video_dir = new_dir
+            self.video_dir_entry.setText(new_dir)
+            self.populate_video_dir_list(new_dir)
+            self.populate_file_list(new_dir)
 
     def populate_dir_list(self, directory):
-        self.output_dir_listbox.delete(0, tk.END)
+        """Populate the output directory list."""
+        self.output_dir_listbox.clear()
         try:
             dirs = [d for d in os.listdir(directory) 
                    if os.path.isdir(os.path.join(directory, d)) and not d.startswith('.')]
             dirs.sort()
+            self.output_dir_listbox.addItems(dirs)
         except Exception:
-            dirs = []
-        for d in dirs:
-            self.output_dir_listbox.insert(tk.END, d)
+            pass
 
     def populate_video_dir_list(self, directory):
-        self.video_dir_listbox.delete(0, tk.END)
+        """Populate the video directory list."""
+        self.video_dir_listbox.clear()
         try:
             dirs = [d for d in os.listdir(directory) 
                    if os.path.isdir(os.path.join(directory, d)) and not d.startswith('.')]
             dirs.sort()
+            self.video_dir_listbox.addItems(dirs)
         except Exception:
-            dirs = []
-        for d in dirs:
-            self.video_dir_listbox.insert(tk.END, d)
+            pass
 
     def populate_file_list(self, directory):
-        self.video_file_listbox.delete(0, tk.END)
+        """Populate the video file list."""
+        self.video_file_listbox.clear()
         try:
             items = os.listdir(directory)
+            video_files = [f for f in items 
+                          if os.path.isfile(os.path.join(directory, f)) 
+                          and f.lower().endswith(tuple(ext.lower() for ext in self.file_types))]
+            self.video_file_listbox.addItems(sorted(video_files))
         except Exception:
-            return
-        video_files = [f for f in items 
-                      if os.path.isfile(os.path.join(directory, f)) 
-                      and f.lower().endswith(tuple(ext.lower() for ext in self.file_types))]
-        for f in sorted(video_files):
-            self.video_file_listbox.insert(tk.END, f)
+            pass
 
-    def select_video_file(self, event=None):
-        selection = self.video_file_listbox.curselection()
-        if selection:
+    def select_video_file(self, item=None):
+        """Handle video file selection."""
+        current_item = self.video_file_listbox.currentItem()
+        if current_item:
             if not self.output_dir:
-                messagebox.showwarning("Warning", 
-                                     "Please select an output directory first using the 'Select Directory' button.")
+                msg = QMessageBox.warning(
+                    self, 
+                    "Warning", 
+                    "Please select an output directory first using the 'Select Directory' button."
+                )
+                # Center the warning dialog
+                self.center_window(msg)
                 return
                 
-            file_name = self.video_file_listbox.get(selection[0])
+            file_name = current_item.text()
             self.selected_video_file = os.path.join(self.current_video_dir, file_name)
-            self.destroy()
+            
+            # Simply close the dialog with acceptance
+            self.done(QDialog.DialogCode.Accepted)
         else:
-            popup = tk.Toplevel(self)
-            popup.title("Note")
-            popup_width = 300
-            popup_height = 150
-            self.center_window(popup, popup_width, popup_height)
-            popup.configure(background="lightgrey")
-            message = ttk.Label(popup, text="You must select a video file to proceed", 
-                              style="Label.TLabel", wraplength=250, justify="center", 
-                              anchor="center")
-            message.pack(pady=20, fill="x")
-            ok_button = ttk.Button(popup, text="OK", command=popup.destroy)
-            ok_button.pack(pady=5)
-            popup.bind('<Return>', lambda e: popup.destroy())
-            popup.transient(self)
-            popup.grab_set()
-            popup.focus_set()
-            self.wait_window(popup)
+            msg = QMessageBox.information(
+                self, 
+                "Note", 
+                "You must select a video file to proceed"
+            )
+            # Center the information dialog
+            self.center_window(msg)
 
-    def center_window(self, win, width, height):
-        monitors = get_monitors()
-        primary = next((m for m in monitors if m.is_primary), monitors[0])
-        x = primary.x + (primary.width // 2) - (width // 2)
-        y = primary.y + (primary.height // 2) - (height // 2)
-        win.geometry(f"{width}x{height}+{x}+{y}")
-        win.update_idletasks()
+    def center_window(self, width, height):
+        """Center the window on the primary screen using Qt6's native functions."""
+        # Calculate the center position
+        x = self.display_x + (self.display_width - width) // 2
+        y = self.display_y + (self.display_height - height) // 2
+        
+        # Set the geometry
+        self.setGeometry(x, y, width, height)
+        
+        # Set a minimum size to prevent the window from being resized too small
+        self.setMinimumSize(int(width * 0.8), int(height * 0.8))
+        
+        # Set preferred size
+        self.resize(width, height)
+        
+        # Make sure the window is not maximized
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMaximized)
+
+    def resizeEvent(self, event):
+        """Handle window resize events."""
+        super().resizeEvent(event)
+        # Ensure lists maintain proper size ratio
+        if hasattr(self, 'video_dir_listbox') and hasattr(self, 'video_file_listbox'):
+            width = self.video_file_listbox.parentWidget().width()
+            self.video_dir_listbox.parentWidget().setMinimumWidth(width)
+            self.video_file_listbox.parentWidget().setMinimumWidth(width)
+
+    def keyPressEvent(self, event):
+        """Handle key press events."""
+        if event.key() == Qt.Key.Key_Return:
+            # Handle Enter key for video selection
+            if self.video_file_listbox.hasFocus():
+                self.select_video_file()
+            # Handle Enter key for directory navigation
+            elif self.output_dir_listbox.hasFocus():
+                self.select_directory()
+        elif event.key() == Qt.Key.Key_Escape:
+            # Simply close with rejection
+            self.done(QDialog.DialogCode.Rejected)
+        else:
+            # Pass other key events to parent
+            super().keyPressEvent(event)

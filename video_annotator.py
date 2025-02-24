@@ -1,51 +1,49 @@
 # video_annotator.py
 
 import os
-import platform
 import json
-import tkinter as tk
-import time
-from tkinter import ttk, messagebox
-from screeninfo import get_monitors
-import mpv
 import csv
+import mpv
+from PyQt6.QtWidgets import (QFrame, QWidget, QVBoxLayout,
+    QHBoxLayout, QLabel, QPushButton, QTreeWidget, QTreeWidgetItem,
+    QScrollBar, QMenu, QDialog, QLineEdit, QTextEdit, QMessageBox,
+    QAbstractItemView, QFormLayout, QGroupBox, QDialogButtonBox,
+    QGridLayout, QApplication, QStackedLayout)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QEvent, QRect
+from PyQt6.QtGui import QColor, QPainter, QAction, QScreen
 
-class VideoAnnotator(tk.Frame):
+class VideoAnnotator(QFrame):
+    """Main video annotator class using PyQt6"""
+    
     def __init__(self, parent, video_path, session_state_file, behavior_key_file, output_dir):
-        # Track states
-        self.dialog_open = False  # Track if any dialog is open
-        self.pressed_keys = set()
-
-        # Initialize the parent Frame
         super().__init__(parent)
+        
+        # Track states
+        self.dialog_open = False
+        self.pressed_keys = set()
+        
+        # Store parameters
         self.parent = parent
-        self.floating_windows = []  # List to track all floating windows
-        # Pack the main frame into the parent window
-        self.pack(fill=tk.BOTH, expand=True)
-
-        # Bind floating windows to parent
-        self.parent.bind("<Unmap>", self.update_floating_windows_visibility)
-        self.parent.bind("<Map>", self.update_floating_windows_visibility)
-        self.parent.bind("<FocusIn>", self.update_floating_windows_visibility)
-
-        # Initialize variables from other modules
         self.video_path = video_path
         self.session_state_file = session_state_file
         self.behavior_key_file = behavior_key_file
         self.output_dir = output_dir
-
-        # Initialize in order
+        self.floating_windows = []
+        
+        # Initialize core components
         self.initialize_data_structures()
         self.setup_file_paths()
         self.configure_display()
         self.setup_layout_measurements()
-        self.setup_grid_layout()
+        self.setup_layout()
         self.create_video_frame()
         self.create_controls_toggle_buttons()
         self.initialize_mpv_player()
         self.create_ui_components()
         self.load_data_and_start()
         self.setup_key_bindings()
+
+        self.app.installEventFilter(self)
 
     def initialize_data_structures(self):
         """Initialize all data structures for annotations and behaviors"""
@@ -63,286 +61,558 @@ class VideoAnnotator(tk.Frame):
     def setup_file_paths(self):
         """Set up all necessary file paths based on the chosen output directory"""
         self.video_name = os.path.basename(self.video_path).split('.')[0]
-        # Use the provided output_dir instead of os.getcwd()
         self.annotations_dir = os.path.join(self.output_dir, "Annotations")
         self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
 
     def configure_display(self):
         """Configure display settings and window properties"""
-        # Get primary monitor information
-        monitors = get_monitors()
-        primary_monitor = next((m for m in monitors if m.is_primary), monitors[0])
+        self.app = QApplication.instance() or QApplication([])
+        # Get the primary screen
+        self.screen = self.app.primaryScreen()
+        self.scaling_factor = self.screen.devicePixelRatio()
         
-        # Set display dimensions
-        self.display_width = primary_monitor.width
-        self.display_height = primary_monitor.height
-        self.display_x = primary_monitor.x
-        self.display_y = primary_monitor.y
-
+        # Get geometry from the primary screen (returns a QRect)
+        geom = self.screen.geometry()
+        self.display_width = geom.width()
+        self.display_height = geom.height()
+        self.display_x = geom.x()
+        self.display_y = geom.y()
+        
         # Configure window
-        self.parent.title(f"LaserTag  {self.video_path}")
-        self.parent.geometry(f"{self.display_width}x{self.display_height}+{self.display_x}+{self.display_y}")
+        self.parent.setWindowTitle(f"LaserTag  {self.video_path}")
+        self.parent.showMaximized()
         
-        # Platform-specific window settings
-        if platform.system() == "Windows":
-            self.parent.state('zoomed')
-        elif platform.system() == "Darwin":
-            self.parent.state('zoomed')
-        elif platform.system() == "Linux":
-            self.parent.attributes("-zoomed", True)
-
         # Set background color
-        self.parent.configure(bg="black")
-        self.configure(bg="black")
+        self.setStyleSheet("background-color: black;")
+
+    def center_window(self, window, width, height):
+        """Center a window on the primary monitor"""
+        # Get screen center position
+        screen_center = self.screen.geometry().center()
+        
+        # Set window size
+        window.resize(width, height)
+        
+        # Calculate center position
+        x = screen_center.x() - (width // 2)
+        y = screen_center.y() - (height // 2)
+        
+        # Set window position
+        window.move(x, y)
 
     def setup_layout_measurements(self):
-        """Set up layout measurements based on display size"""
-        self.panel_width = int(self.display_width * 0.20)
-        self.panel_height = self.display_height - int(self.display_height * 0.1)
+        self.panel_width = int(self.display_width * 0.2)
+        self.panel_height = int(self.display_height) - int(self.display_height * 0.1)
         self.progress_bar_height = int(self.display_height * 0.025)
-        self.video_width = self.display_width - self.panel_width
-        self.video_height = self.panel_height - self.progress_bar_height
-        self.progress_bar_width = self.video_width
+        self.video_width = int(self.display_width) - int(self.panel_width)
+        self.video_height = int(self.panel_height)  
+        self.progress_bar_width = int(self.video_width)
 
-    def setup_grid_layout(self):
-        """Configure the grid layout"""
-        self.columnconfigure(0, minsize=self.video_width, weight=1)
-        self.columnconfigure(1, minsize=self.panel_width, weight=1)
-        self.rowconfigure(0, minsize=self.video_height, weight=0)
-        self.rowconfigure(1, minsize=self.progress_bar_height, weight=0)
+        print(f"Monitor height: {self.display_height}")
+        print(f"Monitor width: {self.display_width}")
+        print(f"Panel Height: {self.panel_height}")
+        print(f"Panel Width: {self.panel_width}")
+        print(f"Progress Bar Height: {self.progress_bar_height}")
+        print(f"Progress Bar Width: {self.progress_bar_width}")
+        print(f"Video Height: {self.video_height}")
+        print(f"Video Width: {self.video_width}")
+
+    def setup_layout(self):
+        """Configure the main layout"""
+        # Create main horizontal layout
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setSpacing(0)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Create left side container for video and progress bar
+        self.left_container = QWidget()
+        self.left_layout = QVBoxLayout(self.left_container)
+        self.left_layout.setSpacing(0)
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Add left container to main layout
+        self.main_layout.addWidget(self.left_container)
+
+        # Create right side container for annotation panel
+        self.right_container = QWidget()
+        self.right_container.setFixedWidth(self.panel_width)
+        self.right_layout = QVBoxLayout(self.right_container)
+        self.right_layout.setSpacing(3)
+        self.right_layout.setContentsMargins(3, 0, 3, 0)
+
+        # Add right container to main layout
+        self.main_layout.addWidget(self.right_container)
 
     def create_video_frame(self):
-        """Create the video frame"""
-        self.video_frame = tk.Frame(self, bg="black", width=self.video_width, height=self.video_height)
-        self.video_frame.grid(row=0, column=0, sticky="nw")
-        self.video_frame.grid_propagate(False)
+        self.video_frame = QFrame()
+        self.video_frame.setStyleSheet("background-color: black;")
+        self.video_frame.setFixedSize(self.video_width, self.video_height)
+        self.left_layout.addWidget(self.video_frame)
 
     def initialize_mpv_player(self):
-        # Get the window id from the Tkinter video frame.
-        window_id = self.video_frame.winfo_id()
-        # Create an MPV player with the window id, hardware decoding, "fast" profile, and set audio sync option.
+        """Initialize the MPV player"""
+        # Get the window id from the video frame
+        window_id = int(self.video_frame.winId())
+        
+        # Create an MPV player with the window id
         self.player = mpv.MPV(wid=str(window_id),
-                              log_handler=print,
-                              hwdec="auto-safe",
-                              profile="fast",
-                              background_color="000000")
-        # Start playing the video.
+                             log_handler=print,
+                             hwdec="auto-safe",
+                             profile="fast",
+                             background_color="000000")
+        
+        # Start playing the video
         self.player.play(self.video_path)
 
     def create_ui_components(self):
-        """Create and configure UI components"""
-        # Set fonts
-        self.progress_bar_font = ("Helvetica", 12, "bold")
-        self.treeview_font = ("Helvetica", 12)
-        self.treeview_heading_font = ("Helvetica", 10, "bold")
-
-        # Configure ttk style
-        style = ttk.Style()
-        style.configure("Treeview", font=self.treeview_font)
-        style.configure("Treeview.Heading", font=self.treeview_heading_font, padding=(0, 0))
-
+        """Create and configure UI components"""        
         # Create progress bar
         self.create_progress_bar()
         # Create annotation panel
         self.create_annotation_panel()
 
-    def create_progress_bar(self):
-        """Create and configure the progress bar"""
-        self.progress_frame = tk.Frame(
-            self,
-            bg="black",
-            width=self.progress_bar_width,
-            height=self.progress_bar_height,
-            bd=0,
-            highlightthickness=0,
-        )
-        self.progress_frame.grid(row=1, column=0, sticky="nw")
-        self.progress_frame.grid_propagate(False)
+    def update_floating_windows_visibility(self):
+        """Update visibility of all floating windows"""
+        windows = [
+            self.behavior_toggle_window,
+            self.controls_window
+        ]
+        
+        if hasattr(self, "floating_controls_window") and self.floating_controls_window:
+            windows.append(self.floating_controls_window)
+        if hasattr(self, "behavior_buttons_window") and self.behavior_buttons_window:
+            windows.append(self.behavior_buttons_window)
+        
+        # Check if main window is minimized
+        is_minimized = self.parent.isMinimized()
+        
+        for window in windows:
+            if window and not window.isDestroyed():
+                if is_minimized:
+                    window.hide()
+                else:
+                    window.show()
 
-        self.progress_bar_canvas = tk.Canvas(
-            self.progress_frame,
-            bg="black",
-            width=self.progress_bar_width,
-            height=self.progress_bar_height,
-            bd=0,
-            highlightthickness=0,
-        )
-        self.progress_bar_canvas.pack()
-        self.progress_bar_canvas.bind("<Button-1>", self.on_progress_click)
+    def create_progress_bar(self):
+        """Create a custom progress bar with time labels"""
+        # Create a frame to hold the progress bar
+        self.progress_frame = QFrame()
+        self.progress_frame.setStyleSheet("background-color: black;")
+        self.progress_frame.setFixedSize(self.progress_bar_width, self.progress_bar_height)
+        
+        # Create a single layout for the frame
+        frame_layout = QVBoxLayout(self.progress_frame)
+        frame_layout.setContentsMargins(0, 0, 0, 0)
+        frame_layout.setSpacing(0)
+        
+        # Create a custom widget that handles both progress display and text
+        class ProgressBarWithText(QWidget):
+            def __init__(self, parent=None, annotator=None):
+                super().__init__(parent)
+                self.progress = 0.0
+                self.left_text = "0m0.00s"
+                self.center_text = "(1.0x)"
+                self.right_text = "Total Time"
+                self.annotator = annotator  # Store reference to VideoAnnotator
+                self.setMouseTracking(True)
+            
+            def paintEvent(self, event):
+                painter = QPainter(self)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                
+                # Draw background
+                painter.fillRect(0, 0, self.width(), self.height(), QColor(40, 40, 40))
+                
+                # Draw progress fill
+                if self.progress > 0:
+                    progress_width = int(self.width() * self.progress)
+                    painter.fillRect(0, 0, progress_width, self.height(), QColor(0, 0, 255))
+                
+                # Draw text
+                painter.setPen(QColor(255, 255, 255))  # White text
+                font = painter.font()
+                font.setBold(True)
+                painter.setFont(font)
+                
+                # Calculate text positions
+                text_y = self.height() // 2 + 5  # Vertically center text
+                
+                # Left text (current time)
+                painter.drawText(10, text_y, self.left_text)
+                
+                # Center text (speed)
+                center_x = (self.width() - painter.fontMetrics().horizontalAdvance(self.center_text)) // 2
+                painter.drawText(center_x, text_y, self.center_text)
+                
+                # Right text (total time)
+                right_x = self.width() - painter.fontMetrics().horizontalAdvance(self.right_text) - 10
+                painter.drawText(right_x, text_y, self.right_text)
+        
+            def mousePressEvent(self, event):
+                if event.button() == Qt.MouseButton.LeftButton and self.annotator:
+                    ratio = event.position().x() / self.width()
+                    ratio = max(0.0, min(1.0, ratio))
+                    # Call the VideoAnnotator's method directly
+                    self.annotator.on_progress_click(ratio)
+        
+        # Create the custom progress bar with a reference to self (VideoAnnotator)
+        self.progress_bar = ProgressBarWithText(self.progress_frame, annotator=self)
+        self.progress_bar.setFixedSize(self.progress_bar_width, self.progress_bar_height)
+        
+        # Add update methods to the VideoAnnotator class
+        def update_left_text(self, text):
+            self.progress_bar.left_text = text
+            self.progress_bar.update()
+        
+        def update_center_text(self, text):
+            self.progress_bar.center_text = text
+            self.progress_bar.update()
+        
+        def update_right_text(self, text):
+            self.progress_bar.right_text = text
+            self.progress_bar.update()
+        
+        # Add the progress_update method directly to the progress_bar object
+        def set_progress(self, value):
+            self.progress = max(0.0, min(1.0, value))
+            self.update()
+        
+        # Attach methods
+        import types
+        self.update_left_text = types.MethodType(update_left_text, self)
+        self.update_center_text = types.MethodType(update_center_text, self)
+        self.update_right_text = types.MethodType(update_right_text, self)
+        self.progress_bar.setProgress = types.MethodType(set_progress, self.progress_bar)
+        
+        # Add to layout
+        frame_layout.addWidget(self.progress_bar)
+        self.left_layout.addWidget(self.progress_frame)
+
+    def update_progress(self):
+        """Update progress bar and labels"""
+        total_sec = self.player.duration or 0
+        current_sec = self.player.time_pos or 0
+
+        if total_sec > 0:
+            ratio = current_sec / total_sec
+            # Directly update progress bar with the current ratio
+            self.progress_bar.setProgress(ratio)
+            
+            # Update current time label
+            current_time_str = self.format_time_human_readable(current_sec)
+            self.update_left_text(current_time_str)
+            
+            # Update playback speed label
+            current_speed = self.player.speed
+            self.update_center_text(f"({current_speed:.1f}x)")
+            
+            # Make sure the total time is also displayed
+            total_time_str = self.format_time_human_readable(total_sec)
+            self.update_right_text(total_time_str)
+
+    def poll_progress_bar(self):
+        """Update progress bar periodically and handle video end properly"""
+        # Update the progress bar
+        self.update_progress()
+        
+        try:
+            total_sec = self.player.duration or 0
+            current_sec = self.player.time_pos
+            
+            # Handle case where time_pos returns None or 0 at high speeds
+            if current_sec is None:
+                print("Warning: Could not get current time position, using last known position")
+                # Schedule next update and return without further processing
+                QTimer.singleShot(200, self.poll_progress_bar)
+                return
+                
+            # At high speeds, MPV might return 0.0 when at end of file
+            # Check if we're at end of file using player property
+            eof_reached = self.player.eof_reached if hasattr(self.player, 'eof_reached') else False
+            at_end = (total_sec > 0 and current_sec >= total_sec - 0.5) or eof_reached
+            
+            if at_end:
+                print(f"Video reached end. Position: {current_sec}/{total_sec}, EOF: {eof_reached}")
+                
+                # Force pause regardless of the specific condition
+                self.player.pause = True
+                
+                try:
+                    # Try to position to just before the end for a clean frame
+                    last_frame_pos = max(0, total_sec - 0.5)
+                    self.player.time_pos = last_frame_pos
+                    print(f"Set position to last frame at {last_frame_pos}")
+                    
+                    # Force a progress update to show the correct position
+                    self.update_progress()
+                except Exception as e:
+                    print(f"Error setting last frame position: {e}")
+                    
+                    # If positioning fails, try restarting the video as a fallback
+                    try:
+                        print("Reloading video as fallback")
+                        # We're using loadfile with replace to maintain the player instance
+                        self.player.command("loadfile", self.video_path, "replace")
+                        self.player.pause = True  # Ensure it's paused
+                    except Exception as reload_error:
+                        print(f"Error reloading video: {reload_error}")
+        except Exception as e:
+            print(f"Error in progress bar update: {e}")
+        
+        # Schedule next update
+        QTimer.singleShot(200, self.poll_progress_bar)
+
+    def initialize_progress_bar(self):
+        """Initialize the progress bar"""
+        total_sec = self.player.duration or 0
+        if total_sec <= 0:
+            # Media not yet loaded; try again in 250ms
+            QTimer.singleShot(250, self.initialize_progress_bar)
+            return
+        
+        # Set initial values
+        self.update_left_text("0m0.00s")
+        self.update_center_text("(1.0x)")
+        
+        # Set total time
+        total_time_str = self.format_time_human_readable(total_sec)
+        self.update_right_text(total_time_str)
+        
+        # Start progress polling
+        self.poll_progress_bar()
+
+    def on_progress_click(self, ratio):
+        """Handle progress bar clicks with end-of-video handling"""
+        total_sec = self.player.duration or 0
+        if total_sec > 0:
+            target_sec = ratio * total_sec
+            
+            # Check if clicking near/at the end of the video
+            if target_sec >= total_sec - 0.1:
+                # Set to just before the end and pause
+                self.player.time_pos = total_sec - 0.5
+                self.player.pause = True
+            else:
+                self.player.time_pos = target_sec
+            
+            # Update progress immediately
+            self.update_progress()
 
     def create_controls_toggle_buttons(self):
-        """Create two Toplevel windows with control buttons that float over the video."""
-        # Create window for behavior toggle (upper left)
-        self.behavior_toggle_window = tk.Toplevel(self.parent)
-        self.behavior_toggle_window.overrideredirect(True)
-        self.behavior_toggle_window.configure(bg='magenta')  # Use magenta as transparent color
-        self.behavior_toggle_window.attributes('-transparentcolor', 'magenta')
-        
-        # Create window for controls (lower left)
-        self.controls_window = tk.Toplevel(self.parent)
-        self.controls_window.overrideredirect(True)
-        self.controls_window.configure(bg='magenta')  # Use magenta as transparent color
-        self.controls_window.attributes('-transparentcolor', 'magenta')
+        """Create floating control buttons"""
+        # Create behavior toggle window
+        self.behavior_toggle_window = QWidget(self.parent)
+        self.behavior_toggle_window.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        self.behavior_toggle_window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
         # Create behavior toggle button
-        self.behavior_toggle_button = tk.Button(
-            self.behavior_toggle_window,
-            text="☰",
-            font=("Helvetica", 14),
-            command=self.toggle_behavior_buttons,
-            bg='lightgrey',  # Light background for buttons
-            activebackground='grey'  # Darker when clicked
-        )
-        self.behavior_toggle_button.pack()
+        self.behavior_toggle_button = QPushButton("☰", self.behavior_toggle_window)
+        self.behavior_toggle_button.setFixedSize(30, 30)
+        self.behavior_toggle_button.setStyleSheet("""
+            QPushButton {
+                background-color: lightgrey;
+                border: 1px solid grey;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: grey;
+            }
+        """)
+        self.behavior_toggle_button.clicked.connect(self.toggle_behavior_buttons)
+        
+        # Create controls window
+        self.controls_window = QWidget(self.parent)
+        self.controls_window.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        self.controls_window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
         # Create controls button
-        self.controls_button = tk.Button(
-            self.controls_window,
-            text="⚙",
-            font=("Helvetica", 14),
-            command=self.toggle_floating_controls,
-            bg='lightgrey',  # Light background for buttons
-            activebackground='grey'  # Darker when clicked
-        )
-        self.controls_button.pack()
+        self.controls_button = QPushButton("⚙", self.controls_window)
+        self.controls_button.setFixedSize(30, 30)
+        self.controls_button.setStyleSheet("""
+            QPushButton {
+                background-color: lightgrey;
+                border: 1px solid grey;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: grey;
+            }
+        """)
+        self.controls_button.clicked.connect(self.toggle_floating_controls)
         
-        self.update_idletasks()
+        # Position the windows
+        video_pos = self.video_frame.mapToGlobal(QPoint(0, 0))
+        margin = 10
+        self.behavior_toggle_window.move(video_pos.x() + margin, video_pos.y() + margin)
+        self.controls_window.move(video_pos.x() + margin, 
+                                video_pos.y() + self.video_height - 40)
         
-        # Position the buttons
-        video_x = self.video_frame.winfo_rootx()
-        video_y = self.video_frame.winfo_rooty()
-        margin = 10  # Distance from video edge
+        # Show the windows
+        self.behavior_toggle_window.show()
+        self.controls_window.show()
         
-        # Position behavior toggle (upper left)
-        self.behavior_toggle_window.geometry(f"+{video_x + margin}+{video_y + margin}")
-        
-        # Position controls button (lower left)
-        self.controls_window.geometry(f"+{video_x + margin}+{video_y + self.video_height - 40}")
-
-    def update_floating_windows_visibility(self, event):
-        """Update visibility of all floating windows"""
-        windows = []
-        if hasattr(self, "behavior_toggle_window"):
-            windows.append(self.behavior_toggle_window)
-        if hasattr(self, "controls_window"):
-            windows.append(self.controls_window)
-        if (hasattr(self, "floating_controls_window") and 
-            self.floating_controls_window is not None and 
-            self.floating_controls_window.winfo_exists()):
-            windows.append(self.floating_controls_window)
-        if (hasattr(self, "behavior_buttons_window") and 
-            self.behavior_buttons_window is not None and 
-            self.behavior_buttons_window.winfo_exists()):
-            windows.append(self.behavior_buttons_window)
-            
-        if self.parent.state() == "iconic":
-            for w in windows:
-                w.withdraw()
-        else:
-            for w in windows:
-                w.deiconify()
+        # Add to floating windows list
+        self.floating_windows.extend([self.behavior_toggle_window, self.controls_window])
 
     def toggle_floating_controls(self):
-        """Toggle a Toplevel floating control panel over the video."""
-        if (hasattr(self, 'floating_controls_window') and 
-            self.floating_controls_window is not None and 
-            self.floating_controls_window.winfo_exists()):
-            self.floating_controls_window.destroy()
+        """Toggle the floating controls panel"""
+        if hasattr(self, 'floating_controls_window') and self.floating_controls_window:
+            self.floating_controls_window.deleteLater()
             self.floating_controls_window = None
         else:
-            self.floating_controls_window = tk.Toplevel(self.parent)
-            self.floating_controls_window.overrideredirect(True)
-            # Set up a transparent gap if desired (using, e.g., black if not used by controls)
-            self.floating_controls_window.attributes("-transparentcolor", "black")
-            
-            fc = tk.Frame(self.floating_controls_window, bg="black")
-            fc.pack()
-            
-            btn_opts = {
-                "font": ("Helvetica", 12),
-                "width": 4,
-                "height": 2,
-                "fg": "grey10",  # Dark grey text
-                "bd": 2,
-                "relief": "raised"
+            self.create_floating_controls()
+
+    def create_floating_controls(self):
+        """Create the floating controls panel"""
+        # Create floating window
+        self.floating_controls_window = QWidget(self.parent)
+        self.floating_controls_window.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.floating_controls_window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        
+        # Create main layout
+        layout = QHBoxLayout(self.floating_controls_window)
+        layout.setSpacing(15)
+        layout.setContentsMargins(15, 0, 15, 0)
+        
+        # Define button style
+        button_style = """
+            QPushButton {
+                background-color: lightgrey;
+                color: #202020;
+                border: 2px solid grey;
+                border-radius: 5px;
+                font-size: 12px;
+                min-width: 40px;
+                min-height: 40px;
             }
-            
-            tk.Button(fc, text="❮❮", command=lambda: self.seek_relative(-10000), **btn_opts).pack(side=tk.LEFT, padx=15)
-            tk.Button(fc, text="❮", command=lambda: self.seek_relative(-1000), **btn_opts).pack(side=tk.LEFT, padx=15)
-            tk.Button(fc, text="⏪", command=lambda: self.change_speed(-1), **btn_opts).pack(side=tk.LEFT, padx=15)
-            self.play_pause_btn = tk.Button(fc, text="■", command=self.toggle_play_pause, **btn_opts)
-            self.play_pause_btn.pack(side=tk.LEFT, padx=10)
-            tk.Button(fc, text="⏩", command=lambda: self.change_speed(1), **btn_opts).pack(side=tk.LEFT, padx=15)
-            tk.Button(fc, text="❯", command=lambda: self.seek_relative(1000), **btn_opts).pack(side=tk.LEFT, padx=15)
-            tk.Button(fc, text="❯❯", command=lambda: self.seek_relative(10000), **btn_opts).pack(side=tk.LEFT, padx=15)
-            
-            self.update_idletasks()
-            # Position the floating controls centered along the bottom of the video frame
-            video_x = self.video_frame.winfo_rootx()
-            video_y = self.video_frame.winfo_rooty()
-            fc_width = fc.winfo_reqwidth()
-            fc_height = fc.winfo_reqheight()
-            new_x = video_x + (self.video_width - fc_width) // 2
-            new_y = video_y + self.video_height - fc_height
-            self.floating_controls_window.geometry(f"+{new_x}+{new_y}")
+            QPushButton:hover {
+                background-color: grey;
+                color: white;
+            }
+            QPushButton:pressed {
+                background-color: #404040;
+                color: white;
+            }
+        """
+        
+        # Create control buttons with appropriate symbols and callbacks
+        buttons = [
+            ("❮❮", lambda: self.seek_relative(-10000)),
+            ("❮", lambda: self.seek_relative(-1000)),
+            ("⏪", lambda: self.change_speed(-1)),
+            ("■", self.toggle_play_pause),
+            ("⏩", lambda: self.change_speed(1)),
+            ("❯", lambda: self.seek_relative(1000)),
+            ("❯❯", lambda: self.seek_relative(10000))
+        ]
+        
+        for text, callback in buttons:
+            btn = QPushButton(text)
+            btn.setStyleSheet(button_style)
+            btn.clicked.connect(callback)
+            if text == "■":
+                self.play_pause_btn = btn
+            layout.addWidget(btn)
+        
+        # Position the window
+        video_pos = self.video_frame.mapToGlobal(QPoint(0, 0))
+        self.floating_controls_window.adjustSize()
+        window_width = self.floating_controls_window.width()
+        x = video_pos.x() + (self.video_width - window_width) // 2
+        y = video_pos.y() + self.video_height - self.floating_controls_window.height() - 10
+        self.floating_controls_window.move(x, y)
+        
+        # Show the window and add to floating windows list
+        self.floating_controls_window.show()
+        self.floating_windows.append(self.floating_controls_window)
 
     def toggle_play_pause(self):
-        """Toggle play/pause and update the play/pause button icon."""
-        self.toggle_play()
+        """Toggle play/pause state and update button icon"""
+        self.player.pause = not self.player.pause
         self.update_play_pause_icon()
 
     def update_play_pause_icon(self):
-        """Update the icon on the play/pause button."""
-        if self.player.pause:
-            self.play_pause_btn.config(text="▶")
+        """Update the play/pause button icon based on current state"""
+        if hasattr(self, 'play_pause_btn'):
+            self.play_pause_btn.setText("▶" if self.player.pause else "■")
+
+    def toggle_behavior_buttons(self):
+        """Toggle the behavior buttons panel"""
+        if hasattr(self, "behavior_buttons_window") and self.behavior_buttons_window:
+            self.behavior_buttons_window.deleteLater()
+            self.behavior_buttons_window = None
         else:
-            self.play_pause_btn.config(text="■")
+            self.create_behavior_buttons()
 
     def create_behavior_buttons(self):
-        """Create a Toplevel window with floating buttons at the left side of the video window.
-           Organize buttons in two distinct rows - Point behaviors on top row, State behaviors on bottom row.
-           Only show behavior Names, with distinct colors for each behavior type.
+        """Create the floating behavior buttons panel"""
+        # Create main window
+        self.behavior_buttons_window = QWidget(self.parent)
+        self.behavior_buttons_window.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.behavior_buttons_window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        
+        # Create main layout
+        layout = QVBoxLayout(self.behavior_buttons_window)
+        layout.setSpacing(2)
+        layout.setContentsMargins(0, 5, 0, 5)
+        
+        # Create frames for point and state behaviors
+        point_frame = QWidget()
+        point_layout = QHBoxLayout(point_frame)
+        point_layout.setSpacing(2)
+        point_layout.setContentsMargins(0, 0, 0, 0)
+        
+        state_frame = QWidget()
+        state_layout = QHBoxLayout(state_frame)
+        state_layout.setSpacing(2)
+        state_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Button styles
+        point_style = """
+            QPushButton {
+                background-color: lightgrey;
+                color: black;
+                border: 1px solid grey;
+                border-radius: 3px;
+                padding: 5px;
+                min-width: 100px;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background-color: grey;
+                color: white;
+            }
+            QPushButton:pressed {
+                background-color: #404040;
+                color: white;
+            }
         """
-        self.behavior_buttons_window = tk.Toplevel(self.parent)
-        self.behavior_buttons_window.overrideredirect(True)
-        transparent_color = "magenta"
-        self.behavior_buttons_window.configure(bg=transparent_color)
-        self.behavior_buttons_window.attributes("-transparentcolor", transparent_color)
         
-        # Main container
-        container = tk.Frame(self.behavior_buttons_window, bg=transparent_color)
-        container.pack(anchor=tk.W)  # Anchor to west (left)
-        
-        # Create separate frames for Point and State behaviors
-        point_frame = tk.Frame(container, bg=transparent_color)
-        point_frame.pack(fill=tk.X, pady=(5, 2))
-        
-        state_frame = tk.Frame(container, bg=transparent_color)
-        state_frame.pack(fill=tk.X, pady=(2, 5))
-        
-        # Base button options
-        base_btn_opts = {
-            "font": ("Helvetica", 12),
-            "width": 12,
-            "height": 1,
-            "bd": 1,
-            "relief": "raised"
-        }
-        
-        # Updated options for each behavior type
-        point_btn_opts = {
-            **base_btn_opts,
-            "bg": "lightgrey",      # Light grey for Point behaviors
-            "fg": "black",
-            "activebackground": "grey"
-        }
-        
-        state_btn_opts = {
-            **base_btn_opts,
-            "bg": "darkgrey",       # Dark grey for State behaviors
-            "fg": "black",
-            "activebackground": "grey"
-        }
+        state_style = """
+            QPushButton {
+                background-color: darkgrey;
+                color: black;
+                border: 1px solid grey;
+                border-radius: 3px;
+                padding: 5px;
+                min-width: 100px;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background-color: grey;
+                color: white;
+            }
+            QPushButton:pressed {
+                background-color: #404040;
+                color: white;
+            }
+        """
         
         # Sort behaviors by type
         point_behaviors = []
@@ -350,66 +620,64 @@ class VideoAnnotator(tk.Frame):
         
         for behavior in self.behaviors:
             name, key, btype, _ = behavior
-            if not name:  # Skip behaviors with no name
+            if not name:
                 continue
             if btype.lower() == "point":
                 point_behaviors.append((name, key))
             else:
                 state_behaviors.append((name, key))
         
-        # Create Point behavior buttons (top row)
+        # Create point behavior buttons
         for name, key in point_behaviors:
-            b = tk.Button(point_frame, 
-                          text=name,
-                          command=lambda k=key: self.add_annotation_for_behavior(k),
-                          **point_btn_opts)
-            b.pack(side=tk.LEFT, padx=2)
+            btn = QPushButton(name)
+            btn.setStyleSheet(point_style)
+            # Use lambda with default argument to capture the correct key value
+            btn.clicked.connect(lambda checked, k=key: self.add_annotation_for_behavior(k))
+            point_layout.addWidget(btn)
         
-        # Create State behavior buttons (bottom row)
+        # Create state behavior buttons
         for name, key in state_behaviors:
-            b = tk.Button(state_frame,
-                          text=name,
-                          command=lambda k=key: self.add_annotation_for_behavior(k),
-                          **state_btn_opts)
-            b.pack(side=tk.LEFT, padx=2)
+            btn = QPushButton(name)
+            btn.setStyleSheet(state_style)
+            # Use lambda with default argument to capture the correct key value
+            btn.clicked.connect(lambda checked, k=key: self.add_annotation_for_behavior(k))
+            state_layout.addWidget(btn)
         
-        self.update_idletasks()
+        # Add frames to main layout
+        layout.addWidget(point_frame)
+        layout.addWidget(state_frame)
         
-        # Position the window shifted to the right of the toggle button to avoid overlap.
-        video_x = self.video_frame.winfo_rootx()
-        video_y = self.video_frame.winfo_rooty()
-        margin = 10  # Original margin from the video frame edge
+        # Position the window relative to the toggle button
+        video_pos = self.video_frame.mapToGlobal(QPoint(0, 0))
+        margin = 10
+        toggle_width = self.behavior_toggle_button.width()
+        x = video_pos.x() + margin + toggle_width + 10
+        y = video_pos.y() + margin
         
-        # Determine the width of the toggle button (if available) to offset the behavior buttons window.
-        toggle_width = self.behavior_toggle_button.winfo_width() if hasattr(self, 'behavior_toggle_button') else 0
-        new_x = video_x + margin + toggle_width + 10  # Additional 10-pixel offset from the toggle button
-        new_y = video_y + margin  # 10 pixels from the top edge
-        self.behavior_buttons_window.geometry(f"+{new_x}+{new_y}")
+        # Show window and set position
+        self.behavior_buttons_window.show()
+        self.behavior_buttons_window.move(x, y)
+        
+        # Add to floating windows list
         self.floating_windows.append(self.behavior_buttons_window)
 
-    def toggle_behavior_buttons(self):
-        """Toggle the behavior buttons window on and off."""
-        if (hasattr(self, "behavior_buttons_window") and 
-            self.behavior_buttons_window is not None and 
-            self.behavior_buttons_window.winfo_exists()):
-            self.behavior_buttons_window.destroy()
-            self.behavior_buttons_window = None
-        else:
-            self.create_behavior_buttons()
-
     def add_annotation_for_behavior(self, key):
-        """Simulate a key-press for the given behavior key to add an annotation."""
+        """Add an annotation for the given behavior key"""
         key = key.lower()
         if key in self.behavior_map:
             behavior_info = self.behavior_map[key]
             current_time = self.player.time_pos or 0
             formatted_time = self.format_time_human_readable(current_time)
+            
             if behavior_info["Type"] == "State":
                 self.handle_state_behavior(key, current_time, formatted_time)
             elif behavior_info["Type"] == "Point":
-                # Prevent duplicate annotations
-                if any(evt["Name"] == behavior_info["Name"] and evt["time"] == formatted_time for evt in self.point_events):
+                # Check for duplicate annotations
+                if any(evt["Name"] == behavior_info["Name"] and evt["time"] == formatted_time 
+                      for evt in self.point_events):
                     return
+                
+                # Create annotation record
                 record = {
                     "Video": self.video_name,
                     "Name": behavior_info["Name"],
@@ -421,17 +689,23 @@ class VideoAnnotator(tk.Frame):
                     "End": "",
                     "Duration": "",
                     "Manual_Edit": "False",
-                    "Notes": ""  # Initialize empty Notes
+                    "Notes": ""
                 }
+                
+                # Add annotation to records
                 self.append_annotation(record)
                 self.point_events.append({
                     "Name": behavior_info["Name"],
                     "time": formatted_time,
                     "Manual_Edit": False,
-                    "Notes": ""  # Initialize empty Notes
+                    "Notes": ""
                 })
+                
+                # Handle highlighting
                 self.used_point_behaviors.add(key)
-                self.parent.after(100, lambda: self.used_point_behaviors.discard(key))
+                QTimer.singleShot(100, lambda: self.used_point_behaviors.discard(key))
+                
+                # Update UI
                 self.update_annotations()
                 self.populate_behavior_treeviews()
 
@@ -451,20 +725,16 @@ class VideoAnnotator(tk.Frame):
         
         # Create the dialog window
         if hasattr(self, 'note_dialog') and self.note_dialog is not None:
-            self.note_dialog.destroy()
-            
-        self.note_dialog = tk.Toplevel(self.parent)
-        self.note_dialog.transient(self.parent)
-        self.note_dialog.grab_set()
-        self.note_dialog.focus_force()
-        self.note_dialog.attributes('-topmost', True)
-        self.note_dialog.protocol("WM_DELETE_WINDOW", self.on_note_dialog_close)
-        self.note_dialog.title("Add Note")
-        self.center_window(self.note_dialog, width=400, height=300)
+            self.note_dialog.deleteLater()
+                
+        self.note_dialog = QDialog(self.parent)
+        self.note_dialog.setWindowFlags(self.note_dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        self.note_dialog.setWindowTitle("Add Note")
+        self.note_dialog.setModal(True)
+        self.center_window(self.note_dialog, 400, 300)
         
-        # Create a frame for the note content
-        note_frame = tk.Frame(self.note_dialog)
-        note_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Layout for the dialog
+        layout = QVBoxLayout(self.note_dialog)
         
         # Show annotation info
         info_text = f"Adding note to: {annotation['Name']}"
@@ -472,7 +742,8 @@ class VideoAnnotator(tk.Frame):
             info_text += f" ({self.format_time_human_readable(annotation['start_time'])})"
         else:
             info_text += f" ({annotation['time']})"
-        tk.Label(note_frame, text=info_text).pack(anchor=tk.W, pady=(0, 10))
+        info_label = QLabel(info_text)
+        layout.addWidget(info_label)
         
         # Show existing note if any
         existing_note = annotation.get('Notes', "")
@@ -480,39 +751,39 @@ class VideoAnnotator(tk.Frame):
         if " . " in existing_note:
             existing_note = existing_note.replace(" . ", "\n")
         
-        tk.Label(note_frame, text="Note:").pack(anchor=tk.W)
+        note_label = QLabel("Note:")
+        layout.addWidget(note_label)
         
         # Create a text widget for the note
-        self.note_text = tk.Text(note_frame, height=8, width=45)
-        self.note_text.pack(fill=tk.BOTH, expand=True, pady=5)
-        self.note_text.insert(tk.END, existing_note)
-        
-        # Add scrollbar to the text widget
-        scrollbar = tk.Scrollbar(self.note_text)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.note_text.config(yscrollcommand=scrollbar.set)
-        scrollbar.config(command=self.note_text.yview)
+        self.note_text = QTextEdit()
+        self.note_text.setMinimumHeight(150)
+        self.note_text.setText(existing_note)
+        layout.addWidget(self.note_text)
         
         # Add buttons
-        button_frame = tk.Frame(self.note_dialog)
-        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        button_frame = QWidget()
+        button_layout = QHBoxLayout(button_frame)
         
-        save_button = tk.Button(
-            button_frame, 
-            text="Save", 
-            command=lambda: self.save_note_to_annotation(annotation)
-        )
-        save_button.pack(side=tk.RIGHT, padx=5)
+        save_button = QPushButton("Save")
+        save_button.clicked.connect(lambda: self.save_note_to_annotation(annotation))
         
-        cancel_button = tk.Button(
-            button_frame,
-            text="Cancel",
-            command=self.on_note_dialog_close
-        )
-        cancel_button.pack(side=tk.RIGHT, padx=5)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.on_note_dialog_close)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(save_button)
+        button_layout.addWidget(cancel_button)
+        layout.addWidget(button_frame)
+        
+        # Handle dialog closing
+        self.note_dialog.finished.connect(self.on_note_dialog_close)
+        
+        # Show dialog
+        self.note_dialog.exec()
 
     def load_data_and_start(self):
         """Load data and start playback"""
+        # Load behaviors and annotations
         self.load_behaviors()
         self.load_annotations()
         self.update_annotations()
@@ -521,68 +792,173 @@ class VideoAnnotator(tk.Frame):
         self.load_session_state()
         self.auto_save_session_state()
 
-        # Process all the geometry configurations before showing the window
-        self.parent.update_idletasks()
-        self.parent.deiconify()
-        self.parent.focus_force()
+        # Process all geometry configurations before showing the window
+        self.parent.update()
+        self.parent.show()
+        self.parent.activateWindow()
+        self.parent.raise_()
 
+    def handle_behavior_key_press(self, key):
+        """Handle behavior key press"""
+        behavior_info = self.behavior_map[key]
+        current_time = self.player.time_pos or 0
+        formatted_time = self.format_time_human_readable(current_time)
+        
+        if behavior_info["Type"] == "State":
+            self.handle_state_behavior(key, current_time, formatted_time)
+        elif behavior_info["Type"] == "Point":
+            # Check for duplicates
+            if any(evt["Name"] == behavior_info["Name"] and evt["time"] == formatted_time 
+                   for evt in self.point_events):
+                return
+                
+            # Create point annotation
+            record = {
+                "Video": self.video_name,
+                "Name": behavior_info["Name"],
+                "Type": "Point",
+                "Mutually_Exclusive": "False",
+                "H_Start": formatted_time,
+                "H_End": "",
+                "Start": f"{current_time:.2f}",
+                "End": "",
+                "Duration": "",
+                "Manual_Edit": "False",
+                "Notes": ""
+            }
+            
+            # Add to records
+            self.append_annotation(record)
+            self.point_events.append({
+                "Name": behavior_info["Name"],
+                "time": formatted_time,
+                "Manual_Edit": False,
+                "Notes": ""
+            })
+            
+            # Handle highlighting
+            self.used_point_behaviors.add(key)
+            QTimer.singleShot(100, lambda: self.used_point_behaviors.discard(key))
+            
+            # Update UI
+            self.update_annotations()
+            self.populate_behavior_treeviews()
 
     def setup_key_bindings(self):
         """Set up all key bindings with dialog blocking"""
+        # Install event filter on parent window to catch key events
+        self.parent.installEventFilter(self)
+        
+        # Define key handler decorator
         def create_blocked_handler(handler):
             """Create a handler that only executes if no dialog is open"""
-            def blocked_handler(event):
+            def blocked_handler(*args, **kwargs):
                 if not self.dialog_open:
-                    return handler(event)
+                    return handler(*args, **kwargs)
             return blocked_handler
 
-        small_skip = 1000
-        med_skip = 5000
-        large_skip = 10000
-
-        # Define all the key bindings with blocking handlers
-        key_bindings = {
+        # Store key bindings for reference - use the same functions as the buttons
+        self.key_bindings = {
             # Toggle play/pause
-            "<space>": create_blocked_handler(self.toggle_play),
+            Qt.Key.Key_Space: create_blocked_handler(self.toggle_play_pause),
 
-            # Small skip
-            "<Shift-Right>": create_blocked_handler(lambda e: self.seek_relative(small_skip)),
-            "<Shift-Left>": create_blocked_handler(lambda e: self.seek_relative(-small_skip)),
-            "<D>": create_blocked_handler(lambda e: self.seek_relative(small_skip)),
-            "<A>": create_blocked_handler(lambda e: self.seek_relative(-small_skip)),
+            # Small skip forward/backward
+            Qt.Key.Key_Right | Qt.KeyboardModifier.ShiftModifier: create_blocked_handler(lambda: self.seek_relative(1000)),
+            Qt.Key.Key_Left | Qt.KeyboardModifier.ShiftModifier: create_blocked_handler(lambda: self.seek_relative(-1000)),
+            Qt.Key.Key_D | Qt.KeyboardModifier.ShiftModifier: create_blocked_handler(lambda: self.seek_relative(1000)),
+            Qt.Key.Key_A | Qt.KeyboardModifier.ShiftModifier: create_blocked_handler(lambda: self.seek_relative(-1000)),
 
             # Medium skip
-            "<Right>": create_blocked_handler(lambda e: self.seek_relative(med_skip)),
-            "<Left>": create_blocked_handler(lambda e: self.seek_relative(-med_skip)),
-            "<d>": create_blocked_handler(lambda e: self.seek_relative(med_skip)),
-            "<a>": create_blocked_handler(lambda e: self.seek_relative(-med_skip)),
+            Qt.Key.Key_Right: create_blocked_handler(lambda: self.seek_relative(5000)),
+            Qt.Key.Key_Left: create_blocked_handler(lambda: self.seek_relative(-5000)),
+            Qt.Key.Key_D: create_blocked_handler(lambda: self.seek_relative(5000)),
+            Qt.Key.Key_A: create_blocked_handler(lambda: self.seek_relative(-5000)),
 
             # Large skip
-            "<w>": create_blocked_handler(lambda e: self.seek_relative(large_skip)),
-            "<s>": create_blocked_handler(lambda e: self.seek_relative(-large_skip)),
+            Qt.Key.Key_W: create_blocked_handler(lambda: self.seek_relative(10000)),
+            Qt.Key.Key_S: create_blocked_handler(lambda: self.seek_relative(-10000)),
 
-            # Change playback speed
-            "=": create_blocked_handler(lambda e: self.change_speed(1)),
-            "+": create_blocked_handler(lambda e: self.change_speed(1)),
-            "-": create_blocked_handler(lambda e: self.change_speed(-1)),
-            "_": create_blocked_handler(lambda e: self.change_speed(-1)),
+            # Speed control - use the same function as the speed buttons
+            Qt.Key.Key_Equal: create_blocked_handler(lambda: self.change_speed(1)),
+            Qt.Key.Key_Plus: create_blocked_handler(lambda: self.change_speed(1)),
+            Qt.Key.Key_Minus: create_blocked_handler(lambda: self.change_speed(-1)),
+            Qt.Key.Key_Underscore: create_blocked_handler(lambda: self.change_speed(-1)),
 
-            # Other bindings
-            "<Escape>": lambda e: self.on_closing(),  # Escape should always work
-            "<Delete>": create_blocked_handler(self.delete_annotation_key),
-            "<Control-z>": create_blocked_handler(self.undo_delete),
-            "<Key>": self.on_key_press  # This one is already handled in on_key_press
+            # Reset speed to 1x with Backspace
+            Qt.Key.Key_Backspace: create_blocked_handler(self.reset_speed),
+
+            # Other controls
+            Qt.Key.Key_Escape: self.return_to_file_selection,  # Modified to use new method instead of on_closing
+            Qt.Key.Key_Delete: create_blocked_handler(self.delete_annotation),
         }
 
-        # Bind all the key combinations
-        for key, callback in key_bindings.items():
-            self.parent.bind_all(key, callback)
+        # Add Control+Z for undo
+        self.key_bindings[Qt.Key.Key_Z | Qt.KeyboardModifier.ControlModifier] = create_blocked_handler(self.undo_delete)
+
+    def eventFilter(self, obj, event):
+        """Handle key events"""
+        if event.type() == QEvent.Type.KeyPress:
+            # Handle special keys defined in key_bindings
+            key = event.key()
+            modifiers = event.modifiers()
+            combined_key = key | modifiers.value
+
+            # Escape key should work even if no dialog is open
+            if key == Qt.Key.Key_Escape and not self.dialog_open:
+                self.return_to_file_selection()
+                return True  # Event handled
+                
+            # Only process if no dialog is open
+            if not self.dialog_open:
+                # Check if this is a special key combination
+                if combined_key in self.key_bindings:
+                    self.key_bindings[combined_key]()
+                    return True  # Event handled
+
+        elif event.type() == QEvent.Type.KeyRelease:
+            char = event.text().lower()
+            if char:
+                self.pressed_keys.discard(char)
+                return True  # Event handled
+
+        # Pass other events to the parent class
+        return super().eventFilter(obj, event)
+
+    def handle_point_behavior(self, key, current_time, formatted_time):
+        """Handle point behavior key press"""
+        behavior_info = self.behavior_map[key]
         
-        # Add key release binding separately (not part of the dictionary)
-        self.parent.bind_all("<KeyRelease>", self.on_key_release)
+        # Create point annotation record
+        record = {
+            "Video": self.video_name,
+            "Name": behavior_info["Name"],
+            "Type": "Point",
+            "Mutually_Exclusive": "False",
+            "H_Start": formatted_time,
+            "H_End": "",
+            "Start": f"{current_time:.2f}",
+            "End": "",
+            "Duration": "",
+            "Manual_Edit": "False",
+            "Notes": ""
+        }
         
-        # Set window close protocol
-        self.parent.protocol("WM_DELETE_WINDOW", self.on_closing)
+        # Add to records
+        self.append_annotation(record)
+        self.point_events.append({
+            "Name": behavior_info["Name"],
+            "time": formatted_time,
+            "Manual_Edit": False,
+            "Notes": ""
+        })
+        
+        # Handle highlighting
+        self.used_point_behaviors.add(key)
+        QTimer.singleShot(100, lambda: self.used_point_behaviors.discard(key))
+        
+        # Update UI
+        self.update_annotations()
+        self.populate_behavior_treeviews()
 
     def on_key_release(self, event):
         """Handle key release events by removing the key from pressed_keys"""
@@ -619,11 +995,13 @@ class VideoAnnotator(tk.Frame):
             print(f"Error saving session state: {e}")
 
     def schedule_resume(self, timestamp_sec):
+        """Schedule resume of video playback"""
         if (self.player.duration or 0) > 0:
             self.player.time_pos = timestamp_sec
             print(f"Resumed session state at {timestamp_sec:.2f} sec.")
         else:
-            self.after(200, lambda: self.schedule_resume(timestamp_sec))
+            # Use QTimer instead of after()
+            QTimer.singleShot(200, lambda: self.schedule_resume(timestamp_sec))
 
     def load_session_state(self):
         resume_dir = os.path.join(self.output_dir, "Resume")
@@ -642,148 +1020,271 @@ class VideoAnnotator(tk.Frame):
 
     def auto_save_session_state(self):
         self.save_session_state()
-        self.after(5000, self.auto_save_session_state)
-        # Print the current player time (or 0 if not available)
-        current_time = self.player.time_pos or 0
-        print(f"Saved Session State: {current_time}")
+        # Changed from self.after to QTimer
+        QTimer.singleShot(5000, self.auto_save_session_state)
 
     def create_annotation_panel(self):
+            """Create and configure the annotation panel with scrollable trees and proper sizing"""
             print(f"Annotation Panel Width: {self.panel_width}")
-
-            # Calculate the available height for the annotation panel
+            
+            # Define font sizes for easy adjustment
+            tree_font = "12px"
+            heading_font = "12px"
+            
+            # Calculate heights
             available_height = self.panel_height - self.progress_bar_height
-            # Calculate equal height for each pane
-            pane_height = (available_height - 40) // 4  # Subtract some padding space
-
-            # Annotation Panel Frame (Right)
-            self.annotation_border_frame = tk.Frame(self, bg="grey", bd=2, relief="solid", height=available_height)
-            self.annotation_border_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=3, pady=0)
-            self.annotation_frame = tk.Frame(self.annotation_border_frame, bg="gray",
-                                           width=self.panel_width, height=available_height)
-            self.annotation_frame.pack(fill="both", expand=True, padx=3, pady=0)
-
+            pane_height = (available_height - 15) // 4  # Reduced padding space to fit more content
+            
+            # Create border frame with improved styling
+            self.annotation_frame = QFrame(self)
+            self.annotation_frame.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
+            self.annotation_frame.setStyleSheet("""
+                QFrame {
+                    background-color: #2b2b2b;
+                    border: 1px solid #3a3a3a;
+                    border-radius: 4px;
+                }
+            """)
+            
+            # Add annotation frame to right container
+            self.right_layout.addWidget(self.annotation_frame)
+            
+            # Create main layout for annotation panel
+            main_layout = QVBoxLayout(self.annotation_frame)
+            main_layout.setContentsMargins(3, 3, 3, 3)
+            main_layout.setSpacing(3)
+            
+            # Common styles
+            tree_style = """
+                QTreeWidget {
+                    background-color: #333333;
+                    border: 1px solid #444444;
+                    border-radius: 4px;
+                    color: #ffffff;
+                    font-size: """ + tree_font + """;
+                }
+                QTreeWidget::item {
+                    height: 18px;
+                    padding: 0px;
+                    margin: 0px;
+                    font-size: """ + tree_font + """;
+                }
+                QTreeWidget::item:selected {
+                    background-color: #0078D7;
+                    color: white;
+                }
+                QTreeWidget::item:hover {
+                    background-color: #404040;
+                }
+                QHeaderView::section {
+                    background-color: #2b2b2b;
+                    color: #ffffff;
+                    font-weight: bold;
+                    font-size: """ + heading_font + """;
+                    padding: 2px;
+                    border: none;
+                    border-bottom: 1px solid #444444;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background: #2b2b2b;
+                    width: 10px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background: #666666;
+                    min-height: 20px;
+                    border-radius: 5px;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+            """
+            
+            label_style = "color: white; font-weight: bold; font-size: " + heading_font + ";"
+            
+            button_style = """
+                QPushButton {
+                    background-color: #0078D7;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 3px 8px;
+                    font-size: """ + heading_font + """;
+                }
+                QPushButton:hover {
+                    background-color: #1084D9;
+                }
+                QPushButton:pressed {
+                    background-color: #006CC1;
+                }
+            """
+            
             # ------------------- State Behaviors Pane -------------------
-            state_frame = tk.Frame(self.annotation_frame, bg="gray", height=pane_height)
-            state_frame.pack(fill="x", pady=(0, 5))
-            state_frame.pack_propagate(False)  # Prevent frame from shrinking
+            state_frame = QFrame()
+            state_frame.setFixedHeight(pane_height)
+            state_layout = QVBoxLayout(state_frame)
+            state_layout.setContentsMargins(0, 0, 0, 0)
+            state_layout.setSpacing(1)
             
-            state_label = tk.Label(state_frame, text="State Behaviors", bg="gray", fg="white",
-                                 font=("Helvetica", 14, "bold"))
-            state_label.pack(anchor="w")
-
-            # Create Treeview and scrollbar with fixed height
-            self.state_behaviors_tree = ttk.Treeview(state_frame, columns=("Name", "Key", "ME Group"),
-                                                   show="headings", height=6)  # Adjusted height
-            self.state_behaviors_tree.heading("Name", text="Name")
-            self.state_behaviors_tree.heading("Key", text="Key")
-            self.state_behaviors_tree.heading("ME Group", text="ME Group")
-            self.state_behaviors_tree.column("Name", width=int(self.panel_width * 0.5))
-            self.state_behaviors_tree.column("Key", width=int(self.panel_width * 0.15), anchor="center")
-            self.state_behaviors_tree.column("ME Group", width=int(self.panel_width * 0.25), anchor="center")
-
-            state_scrollbar = ttk.Scrollbar(state_frame, orient="vertical",
-                                          command=self.state_behaviors_tree.yview)
-            self.state_behaviors_tree.configure(yscrollcommand=state_scrollbar.set)
-            state_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            self.state_behaviors_tree.pack(side=tk.LEFT, fill="both", expand=True)
-
+            state_label = QLabel("State Behaviors")
+            state_label.setStyleSheet(label_style)
+            state_layout.addWidget(state_label)
+            
+            self.state_behaviors_tree = QTreeWidget()
+            self.state_behaviors_tree.setStyleSheet(tree_style)
+            self.state_behaviors_tree.setHeaderLabels(["Name", "Key", "ME Group"])
+            self.state_behaviors_tree.setColumnWidth(0, int(self.panel_width * 0.5))
+            self.state_behaviors_tree.setColumnWidth(1, int(self.panel_width * 0.15))
+            self.state_behaviors_tree.setColumnWidth(2, int(self.panel_width * 0.25))
+            self.state_behaviors_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.state_behaviors_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            state_layout.addWidget(self.state_behaviors_tree)
+            
+            main_layout.addWidget(state_frame)
+            
             # ------------------- Point Behaviors Pane -------------------
-            point_frame = tk.Frame(self.annotation_frame, bg="gray", height=pane_height)
-            point_frame.pack(fill="x", pady=(0, 5))
-            point_frame.pack_propagate(False)  # Prevent frame from shrinking
-
-            point_label = tk.Label(point_frame, text="Point Behaviors", bg="gray", fg="white",
-                                 font=("Helvetica", 14, "bold"))
-            point_label.pack(anchor="w")
-
-            self.point_behaviors_tree = ttk.Treeview(point_frame, columns=("Name", "Key"),
-                                                   show="headings", height=6)  # Adjusted height
-            self.point_behaviors_tree.heading("Name", text="Name")
-            self.point_behaviors_tree.heading("Key", text="Key")
-            self.point_behaviors_tree.column("Name", width=int(self.panel_width * 0.5))
-            self.point_behaviors_tree.column("Key", width=int(self.panel_width * 0.25), anchor="center")
-
-            point_scrollbar = ttk.Scrollbar(point_frame, orient="vertical",
-                                          command=self.point_behaviors_tree.yview)
-            self.point_behaviors_tree.configure(yscrollcommand=point_scrollbar.set)
-            point_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            self.point_behaviors_tree.pack(side=tk.LEFT, fill="both", expand=True)
-
+            point_frame = QFrame()
+            point_frame.setFixedHeight(pane_height)
+            point_layout = QVBoxLayout(point_frame)
+            point_layout.setContentsMargins(0, 0, 0, 0)
+            point_layout.setSpacing(1)
+            
+            point_label = QLabel("Point Behaviors")
+            point_label.setStyleSheet(label_style)
+            point_layout.addWidget(point_label)
+            
+            self.point_behaviors_tree = QTreeWidget()
+            self.point_behaviors_tree.setStyleSheet(tree_style)
+            self.point_behaviors_tree.setHeaderLabels(["Name", "Key"])
+            self.point_behaviors_tree.setColumnWidth(0, int(self.panel_width * 0.6))
+            self.point_behaviors_tree.setColumnWidth(1, int(self.panel_width * 0.3))
+            self.point_behaviors_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.point_behaviors_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            point_layout.addWidget(self.point_behaviors_tree)
+            
+            main_layout.addWidget(point_frame)
+            
             # ------------------- State Annotations Pane -------------------
-            state_anno_frame = tk.Frame(self.annotation_frame, bg="gray", height=pane_height)
-            state_anno_frame.pack(fill="x", pady=(0, 5))
-            state_anno_frame.pack_propagate(False)  # Prevent frame from shrinking
-
-            state_anno_label_frame = tk.Frame(state_anno_frame, bg="gray")
-            state_anno_label_frame.pack(fill="x")
-            tk.Label(state_anno_label_frame, text="State Annotations", bg="gray", fg="white",
-                    font=("Helvetica", 14, "bold")).pack(side=tk.LEFT)
-            tk.Button(state_anno_label_frame, text="Sort", 
-                     font=("Helvetica", 12), command=self.sort_state_annotations).pack(side=tk.RIGHT, padx=10, pady=0)
-
-            self.state_annotations_tree = ttk.Treeview(state_anno_frame, 
-                                                     columns=("Name", "Start", "End"),
-                                                     show="headings",
-                                                     height=6)  # Adjusted height
-            self.state_annotations_tree.heading("Name", text="Name")
-            self.state_annotations_tree.heading("Start", text="Start")
-            self.state_annotations_tree.heading("End", text="End")
-            self.state_annotations_tree.column("Name", width=int(self.panel_width * 0.33))
-            self.state_annotations_tree.column("Start", width=int(self.panel_width * 0.25))
-            self.state_annotations_tree.column("End", width=int(self.panel_width * 0.25))
+            state_anno_frame = QFrame()
+            state_anno_frame.setFixedHeight(pane_height)
+            state_anno_layout = QVBoxLayout(state_anno_frame)
+            state_anno_layout.setContentsMargins(0, 0, 0, 0)
+            state_anno_layout.setSpacing(1)
             
-            self.state_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
+            # Header with label and sort button
+            state_anno_header = QWidget()
+            header_layout = QHBoxLayout(state_anno_header)
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            header_layout.setSpacing(3)
             
-            state_anno_scrollbar = ttk.Scrollbar(state_anno_frame, orient="vertical",
-                                               command=self.state_annotations_tree.yview)
-            self.state_annotations_tree.configure(yscrollcommand=state_anno_scrollbar.set)
-            state_anno_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            self.state_annotations_tree.pack(side=tk.LEFT, fill="both", expand=True)
-
+            state_anno_label = QLabel("State Annotations")
+            state_anno_label.setStyleSheet(label_style)
+            header_layout.addWidget(state_anno_label)
+            
+            state_sort_button = QPushButton("Sort")
+            state_sort_button.setStyleSheet(button_style)
+            state_sort_button.setFixedWidth(50)
+            state_sort_button.setFixedHeight(22)
+            state_sort_button.clicked.connect(self.sort_state_annotations)
+            header_layout.addStretch()
+            header_layout.addWidget(state_sort_button)
+            
+            state_anno_layout.addWidget(state_anno_header)
+            
+            self.state_annotations_tree = QTreeWidget()
+            self.state_annotations_tree.setStyleSheet(tree_style)
+            self.state_annotations_tree.setHeaderLabels(["Name", "Start", "End"])
+            self.state_annotations_tree.setColumnWidth(0, int(self.panel_width * 0.33))
+            self.state_annotations_tree.setColumnWidth(1, int(self.panel_width * 0.25))
+            self.state_annotations_tree.setColumnWidth(2, int(self.panel_width * 0.25))
+            self.state_annotations_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self.state_annotations_tree.customContextMenuRequested.connect(self.show_annotation_menu)
+            self.state_annotations_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.state_annotations_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            state_anno_layout.addWidget(self.state_annotations_tree)
+            
+            main_layout.addWidget(state_anno_frame)
+            
             # ------------------- Point Annotations Pane -------------------
-            point_anno_frame = tk.Frame(self.annotation_frame, bg="gray", height=pane_height)
-            point_anno_frame.pack(fill="x", pady=(0, 5))
-            point_anno_frame.pack_propagate(False)  # Prevent frame from shrinking
-
-            point_anno_label_frame = tk.Frame(point_anno_frame, bg="gray")
-            point_anno_label_frame.pack(fill="x")
-            tk.Label(point_anno_label_frame, text="Point Annotations", bg="gray", fg="white",
-                    font=("Helvetica", 14, "bold")).pack(side=tk.LEFT)
-            tk.Button(point_anno_label_frame, text="Sort", 
-                     font=("Helvetica", 12), command=self.sort_point_annotations).pack(side=tk.RIGHT, padx=10, pady=0)
-
-            self.point_annotations_tree = ttk.Treeview(point_anno_frame,
-                                                     columns=("Name", "Time"),
-                                                     show="headings",
-                                                     height=6)  # Adjusted height
-            self.point_annotations_tree.heading("Name", text="Name")
-            self.point_annotations_tree.heading("Time", text="Time")
-            self.point_annotations_tree.column("Name", width=int(self.panel_width * 0.33))
-            self.point_annotations_tree.column("Time", width=int(self.panel_width * 0.5), anchor="center")
-
-            self.point_annotations_tree.bind("<Button-3>", self.show_annotation_menu)
-
-            point_anno_scrollbar = ttk.Scrollbar(point_anno_frame, orient="vertical",
-                                               command=self.point_annotations_tree.yview)
-            self.point_annotations_tree.configure(yscrollcommand=point_anno_scrollbar.set)
-            point_anno_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            self.point_annotations_tree.pack(side=tk.LEFT, fill="both", expand=True)
-
-            # ------------------- Bottom Buttons -------------------
-            buttons_frame = tk.Frame(self.annotation_frame, bg="gray")
-            buttons_frame.pack(fill="x", pady=5)
+            point_anno_frame = QFrame()
+            point_anno_frame.setFixedHeight(pane_height)
+            point_anno_layout = QVBoxLayout(point_anno_frame)
+            point_anno_layout.setContentsMargins(0, 0, 0, 0)
+            point_anno_layout.setSpacing(1)
             
-            visualize_button = tk.Button(buttons_frame, text="Visualize\nAnnotations",
-                                       command=self.visualize_annotations,
-                                       width=16, font=("Helvetica", 12), wraplength=int(self.panel_width * 0.3))
-            visualize_button.pack(side=tk.LEFT, padx=10, pady=5)
-
-            summary_button = tk.Button(buttons_frame, text="Summary\nStatistics",
-                                     command=self.generate_summary_statistics,
-                                     width=16, font=("Helvetica", 12), wraplength=int(self.panel_width * 0.3))
-            summary_button.pack(side=tk.LEFT, padx=25, pady=5, anchor="center")
+            # Header with label and sort button
+            point_anno_header = QWidget()
+            header_layout = QHBoxLayout(point_anno_header)
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            header_layout.setSpacing(8)
+            
+            point_anno_label = QLabel("Point Annotations")
+            point_anno_label.setStyleSheet(label_style)
+            header_layout.addWidget(point_anno_label)
+            
+            point_sort_button = QPushButton("Sort")
+            point_sort_button.setStyleSheet(button_style)
+            point_sort_button.setFixedWidth(50)
+            point_sort_button.setFixedHeight(22)
+            point_sort_button.clicked.connect(self.sort_point_annotations)
+            header_layout.addStretch()
+            header_layout.addWidget(point_sort_button)
+            
+            point_anno_layout.addWidget(point_anno_header)
+            
+            self.point_annotations_tree = QTreeWidget()
+            self.point_annotations_tree.setStyleSheet(tree_style)
+            self.point_annotations_tree.setHeaderLabels(["Name", "Time"])
+            self.point_annotations_tree.setColumnWidth(0, int(self.panel_width * 0.4))
+            self.point_annotations_tree.setColumnWidth(1, int(self.panel_width * 0.5))
+            self.point_annotations_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self.point_annotations_tree.customContextMenuRequested.connect(self.show_annotation_menu)
+            self.point_annotations_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.point_annotations_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            point_anno_layout.addWidget(self.point_annotations_tree)
+            
+            main_layout.addWidget(point_anno_frame)
+            
+            # ------------------- Bottom Buttons -------------------
+            buttons_frame = QFrame()
+            buttons_layout = QHBoxLayout(buttons_frame)
+            buttons_layout.setContentsMargins(0, 3, 0, 0)
+            buttons_layout.setSpacing(6)
+            
+            button_size_policy = """
+                QPushButton {
+                    background-color: #0078D7;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px;
+                    min-width: 100px;
+                    min-height: 40px;
+                    font-size: """ + heading_font + """;
+                }
+                QPushButton:hover {
+                    background-color: #1084D9;
+                }
+                QPushButton:pressed {
+                    background-color: #006CC1;
+                }
+            """
+            
+            visualize_button = QPushButton("Visualize\nAnnotations")
+            visualize_button.setStyleSheet(button_size_policy)
+            visualize_button.clicked.connect(self.visualize_annotations)
+            buttons_layout.addWidget(visualize_button)
+            
+            summary_button = QPushButton("Summary\nStatistics")
+            summary_button.setStyleSheet(button_size_policy)
+            summary_button.clicked.connect(self.generate_summary_statistics)
+            buttons_layout.addWidget(summary_button)
+            
+            main_layout.addWidget(buttons_frame)
 
     def load_behaviors(self):
+        """Load behaviors from CSV file"""
         print(f"Loading behaviors from: {self.behavior_key_file}")
         with open(self.behavior_key_file, "r", newline="") as csvfile:
             reader = csv.reader(csvfile)
@@ -806,11 +1307,8 @@ class VideoAnnotator(tk.Frame):
                 self.behaviors.append((name, key, btype, me_group))
 
     def load_annotations(self):
-        """
-        Read annotations from the CSV file (expected at self.annotations_file)
-        and load them into the in-memory lists as well as update the treeviews.
-        """
-        # First, clear any existing in-memory events
+        """Read annotations from CSV file and load into memory"""
+        # Clear existing events
         self.state_events.clear()
         self.point_events.clear()
 
@@ -821,7 +1319,6 @@ class VideoAnnotator(tk.Frame):
             for row in reader:
                 annotation_type = row.get("Type", "").strip().lower()
                 name = row.get("Name", "").strip()
-                # Get Notes value (defaulting to empty string if not present)
                 notes = row.get("Notes", "")
 
                 if annotation_type == "state":
@@ -838,7 +1335,7 @@ class VideoAnnotator(tk.Frame):
                         'end_time': end_time,
                         'Type': 'State',
                         'Mutually_Exclusive': row.get("Mutually_Exclusive", "False"),
-                        'Notes': notes  # Include Notes
+                        'Notes': notes
                     })
 
                 elif annotation_type == "point":
@@ -847,79 +1344,94 @@ class VideoAnnotator(tk.Frame):
                         'Name': name,
                         'time': h_start,
                         'Manual_Edit': row.get("Manual_Edit", "False"),
-                        'Notes': notes  # Include Notes
+                        'Notes': notes
                     })
 
-
     def update_annotations(self):
-        """
-        Clear and repopulate the annotation treeviews using in-memory lists.
-        """
+        """Update annotation treeviews with current data"""
         # Update State Annotations
-        self.state_annotations_tree.delete(*self.state_annotations_tree.get_children())
+        self.state_annotations_tree.clear()
         for event in self.state_events:
             name = event['Name']
             start_time = self.format_time_human_readable(event['start_time'])
             end_time = self.format_time_human_readable(event['end_time']) if event['end_time'] else ""
-            self.state_annotations_tree.insert('', tk.END, values=(name, start_time, end_time))
-        state_items = self.state_annotations_tree.get_children()
-        if state_items:
-            self.state_annotations_tree.see(state_items[-1])
-            self.state_annotations_tree.yview_moveto(1)
+            item = QTreeWidgetItem([name, start_time, end_time])
+            self.state_annotations_tree.addTopLevelItem(item)
+        
+        # Scroll to last item if exists
+        if self.state_annotations_tree.topLevelItemCount() > 0:
+            last_item = self.state_annotations_tree.topLevelItem(
+                self.state_annotations_tree.topLevelItemCount() - 1
+            )
+            self.state_annotations_tree.scrollToItem(
+                last_item, QAbstractItemView.ScrollHint.EnsureVisible
+            )
 
         # Update Point Annotations
-        self.point_annotations_tree.delete(*self.point_annotations_tree.get_children())
+        self.point_annotations_tree.clear()
         for event in self.point_events:
             name = event['Name']
             time_ = event['time']
-            self.point_annotations_tree.insert('', tk.END, values=(name, time_))
-        point_items = self.point_annotations_tree.get_children()
-        if point_items:
-            self.point_annotations_tree.see(point_items[-1])
-            self.point_annotations_tree.yview_moveto(1)
+            item = QTreeWidgetItem([name, time_])
+            self.point_annotations_tree.addTopLevelItem(item)
+        
+        # Scroll to last item if exists
+        if self.point_annotations_tree.topLevelItemCount() > 0:
+            last_item = self.point_annotations_tree.topLevelItem(
+                self.point_annotations_tree.topLevelItemCount() - 1
+            )
+            self.point_annotations_tree.scrollToItem(
+                last_item, QAbstractItemView.ScrollHint.EnsureVisible
+            )
 
     def populate_behavior_treeviews(self):
-        """
-        Populate both the state and point behavior treeviews using self.behaviors.
-        Highlights active state behaviors and briefly highlights point behaviors when used.
-        """
+        """Populate behavior treeviews with current data"""
         # Clear existing entries
-        self.state_behaviors_tree.delete(*self.state_behaviors_tree.get_children())
-        self.point_behaviors_tree.delete(*self.point_behaviors_tree.get_children())
+        self.state_behaviors_tree.clear()
+        self.point_behaviors_tree.clear()
 
-        # Configure tags for highlighting
-        self.state_behaviors_tree.tag_configure("active", background="darkorange")
-        self.point_behaviors_tree.tag_configure("highlight", background="dodgerblue")
+        # Define highlight colors
+        active_color = QColor("darkorange")
+        highlight_color = QColor("dodgerblue")
 
         # Insert state behaviors
         for behavior in self.behaviors:
             name, key, b_type, me_group = behavior
             if b_type == "state":
-                tag = ("active",) if key in self.active_state_behaviors else ()
-                self.state_behaviors_tree.insert("", "end", values=(name, key, me_group), tags=tag)
+                item = QTreeWidgetItem([name, key, me_group])
+                if key in self.active_state_behaviors:
+                    for col in range(item.columnCount()):
+                        item.setBackground(col, active_color)
+                self.state_behaviors_tree.addTopLevelItem(item)
 
-        # Insert point behaviors (only two columns)
+        # Insert point behaviors
         for behavior in self.behaviors:
             name, key, b_type, _ = behavior
             if b_type == "point":
-                tag = ("highlight",) if key in self.used_point_behaviors else ()
-                item_id = self.point_behaviors_tree.insert("", "end", values=(name, key), tags=tag)
-
-                # Remove highlight after 250ms
+                item = QTreeWidgetItem([name, key])
                 if key in self.used_point_behaviors:
-                    self.parent.after(250, lambda i=item_id: self.remove_highlight(i))
+                    for col in range(item.columnCount()):
+                        item.setBackground(col, highlight_color)
+                    # Remove highlight after 250ms
+                    QTimer.singleShot(250, lambda i=item: self.remove_highlight(i))
+                self.point_behaviors_tree.addTopLevelItem(item)
 
-    def remove_highlight(self, item_id):
-        """Remove the highlight tag safely, only if the item exists."""
-        if item_id in self.point_behaviors_tree.get_children():
-            self.point_behaviors_tree.item(item_id, tags="")
+    def remove_highlight(self, item):
+        """Remove highlight from a tree item"""
+        # Check if item still exists in tree
+        if item in [self.point_behaviors_tree.topLevelItem(i) 
+                   for i in range(self.point_behaviors_tree.topLevelItemCount())]:
+            for col in range(item.columnCount()):
+                item.setBackground(col, QColor("transparent"))
 
-    def on_key_press(self, event):
+    def handle_key_press(self, event):
+        """Handle key press events from Qt"""
         # Block key presses if a dialog is open
         if self.dialog_open:
             return
             
-        key = event.char.lower()
+        # Get the key text and convert to lowercase
+        key = event.text().lower()
         if not key:
             return
             
@@ -934,56 +1446,76 @@ class VideoAnnotator(tk.Frame):
             behavior_info = self.behavior_map[key]
             current_time = self.player.time_pos or 0
             formatted_time = self.format_time_human_readable(current_time)
+            
             if behavior_info["Type"] == "State":
                 self.handle_state_behavior(key, current_time, formatted_time)
             elif behavior_info["Type"] == "Point":
-                # Prevent duplicate annotations
-                if any(evt["Name"] == behavior_info["Name"] and evt["time"] == formatted_time for evt in self.point_events):
-                    return
-                record = {
-                    "Video": self.video_name,
-                    "Name": behavior_info["Name"],
-                    "Type": "Point",
-                    "Mutually_Exclusive": "False",
-                    "H_Start": formatted_time,
-                    "H_End": "",
-                    "Start": f"{current_time:.2f}",
-                    "End": "",
-                    "Duration": "",
-                    "Manual_Edit": "False",
-                    'Notes': ""
-                }
-                self.append_annotation(record)
-                self.point_events.append({
-                    "Name": behavior_info["Name"],
-                    "time": formatted_time,
-                    "Manual_Edit": False,
-                    'Notes': ""
-                })
-                self.used_point_behaviors.add(key)
-                self.parent.after(100, lambda: self.used_point_behaviors.discard(key))
-                self.update_annotations()
-                self.populate_behavior_treeviews()
+                self.handle_point_behavior(key, current_time, formatted_time)
+
+    def handle_point_behavior(self, key, current_time, formatted_time):
+        """Handle point behavior key press"""
+        behavior_info = self.behavior_map[key]
+        
+        # Prevent duplicate annotations
+        if any(evt["Name"] == behavior_info["Name"] and evt["time"] == formatted_time 
+               for evt in self.point_events):
+            return
+            
+        # Create annotation record
+        record = {
+            "Video": self.video_name,
+            "Name": behavior_info["Name"],
+            "Type": "Point",
+            "Mutually_Exclusive": "False",
+            "H_Start": formatted_time,
+            "H_End": "",
+            "Start": f"{current_time:.2f}",
+            "End": "",
+            "Duration": "",
+            "Manual_Edit": "False",
+            "Notes": ""
+        }
+        
+        # Add annotation to records
+        self.append_annotation(record)
+        self.point_events.append({
+            "Name": behavior_info["Name"],
+            "time": formatted_time,
+            "Manual_Edit": False,
+            "Notes": ""
+        })
+        
+        # Handle highlighting
+        self.used_point_behaviors.add(key)
+        QTimer.singleShot(100, lambda: self.used_point_behaviors.discard(key))
+        
+        # Update UI
+        self.update_annotations()
+        self.populate_behavior_treeviews()
 
     def handle_state_behavior(self, key, frame_timestamp, formatted_timestamp):
-        """
-        Handle state behavior key presses: if the behavior is already active, deactivate it (logging the end time);
-        otherwise, start a new state event.
-        """
+        """Handle state behavior key press"""
         Name = self.state_behaviors.get(key)
         me_group = self.me_groups.get(key, None)
+        
+        # Handle mutually exclusive group
         if me_group:
             print(f"Key {key} belongs to ME Group {me_group}. Deactivating other behaviors in this group.")
             self.deactivate_me_group(me_group, frame_timestamp, current_behavior_key=key)
+        
         if key in self.active_state_behaviors:
             # End the active state behavior
             start_time = self.active_state_behaviors.pop(key)
             duration = frame_timestamp - start_time
+            
+            # Format timestamps
             human_readable_start_time = self.format_time_human_readable(start_time)
             human_readable_end_time = self.format_time_human_readable(frame_timestamp)
             machine_readable_start_time = self.format_time_machine_readable(start_time)
             machine_readable_end_time = self.format_time_machine_readable(frame_timestamp)
             machine_readable_duration = self.format_time_machine_readable(duration)
+            
+            # Create record
             record = {
                 "Video": self.video_name,
                 "Name": Name,
@@ -995,13 +1527,19 @@ class VideoAnnotator(tk.Frame):
                 "End": machine_readable_end_time,
                 "Duration": machine_readable_duration,
                 "Manual_Edit": "False",
-                "Notes": ""  # Initialize empty Notes
+                "Notes": ""
             }
+            
+            # Save record
             self.append_annotation(record)
+            
+            # Update state events
             for event in self.state_events:
                 if event['Name'] == Name and event['end_time'] is None:
                     event['end_time'] = frame_timestamp
                     break
+                    
+            # Update UI
             self.update_annotations()
             self.populate_behavior_treeviews()
         else:
@@ -1013,25 +1551,30 @@ class VideoAnnotator(tk.Frame):
                 'end_time': None,
                 'Type': 'State',
                 'Mutually_Exclusive': 'True' if me_group else 'False',
-                'Notes': ""  # Initialize empty Notes
+                'Notes': ""
             })
+            
+            # Update UI
             self.update_annotations()
             self.populate_behavior_treeviews()
 
     def deactivate_me_group(self, me_group, frame_timestamp, current_behavior_key):
-        """
-        Deactivate any active state behaviors belonging to the same ME group (except the current one).
-        """
+        """Deactivate behaviors in mutually exclusive group"""
         keys_to_remove = []
+        
         for key, start_time in list(self.active_state_behaviors.items()):
             if self.me_groups.get(key) == me_group and key != current_behavior_key:
                 Name = self.state_behaviors.get(key)
                 duration = frame_timestamp - start_time
+                
+                # Format timestamps
                 human_readable_start_time = self.format_time_human_readable(start_time)
                 human_readable_end_time = self.format_time_human_readable(frame_timestamp)
                 machine_readable_start_time = self.format_time_machine_readable(start_time)
                 machine_readable_end_time = self.format_time_machine_readable(frame_timestamp)
                 machine_readable_duration = self.format_time_machine_readable(duration)
+                
+                # Create record
                 record = {
                     "Video": self.video_name,
                     "Name": Name,
@@ -1043,42 +1586,53 @@ class VideoAnnotator(tk.Frame):
                     "End": machine_readable_end_time,
                     "Duration": machine_readable_duration,
                     "Manual_Edit": "False",
-                    "Notes": ""  # Initialize empty Notes
+                    "Notes": ""
                 }
+                
+                # Save record
                 self.append_annotation(record)
+                
+                # Update state events
                 for event in self.state_events:
                     if event['Name'] == Name and event['end_time'] is None:
                         event['end_time'] = frame_timestamp
                         break
+                        
                 keys_to_remove.append(key)
+        
+        # Remove deactivated behaviors
         for key in keys_to_remove:
             self.active_state_behaviors.pop(key)
+        
+        # Update UI
         self.update_annotations()
         self.populate_behavior_treeviews()
 
     def append_annotation(self, annotation_record):
-        """
-        Append an annotation record to the CSV file.
-        Reads existing rows, appends the new record,
-        writes to a temporary file, then replaces the original.
-        """
-        # Updated headers to include Notes
-        headers = ['Video','Name','Type','Mutually_Exclusive','H_Start','H_End','Start','End','Duration','Manual_Edit','Notes']
+        """Append annotation record to CSV file"""
+        # Define headers
+        headers = ['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End',
+                  'Start', 'End', 'Duration', 'Manual_Edit', 'Notes']
+        
+        # Read existing rows
         rows = []
         if os.path.exists(self.annotations_file):
             with open(self.annotations_file, 'r', newline="") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    # Ensure each row has a Notes field, even if it's empty
+                    # Ensure Notes field exists
                     if 'Notes' not in row:
                         row['Notes'] = ""
                     rows.append(row)
         
-        # Ensure the new annotation record has a Notes field, defaulting to empty
+        # Ensure Notes field in new record
         if 'Notes' not in annotation_record:
             annotation_record['Notes'] = ""
             
+        # Append new record
         rows.append(annotation_record)
+        
+        # Write to temporary file and replace original
         temp_file = self.annotations_file + ".tmp"
         with open(temp_file, 'w', newline="") as f:
             writer = csv.DictWriter(f, fieldnames=headers)
@@ -1098,19 +1652,22 @@ class VideoAnnotator(tk.Frame):
         self.update_annotations()
 
     def save_sorted_annotations(self):
+        """Save annotations to file with proper Manual_Edit handling"""
         with open(self.annotations_file, 'w', newline='') as file:
-            # Updated header row to include Notes
             writer = csv.writer(file)
-            writer.writerow(['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End', 'Start', 'End', 'Duration', 'Manual_Edit', 'Notes'])
+            writer.writerow(['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End', 
+                            'Start', 'End', 'Duration', 'Manual_Edit', 'Notes'])
+            
+            # Save state events
             for event in self.state_events:
                 start_time = self.format_time_machine_readable(event['start_time'])
                 end_time = self.format_time_machine_readable(event['end_time']) if event['end_time'] is not None else 'NA'
                 duration = self.format_time_machine_readable(event['end_time'] - event['start_time']) if event['end_time'] is not None else 'NA'
                 H_start = self.format_time_human_readable(event['start_time'])
                 H_end = self.format_time_human_readable(event['end_time']) if event['end_time'] is not None else 'NA'
-                manual_edit = 'True' if event.get('Manual_Edit') else 'False'
-                # Include notes if it exists, otherwise use empty string
+                manual_edit = str(event.get('Manual_Edit', False))  # Get Manual_Edit value, default to False
                 notes = event.get('Notes', "")
+                
                 writer.writerow([
                     self.video_name,
                     event['Name'],
@@ -1124,11 +1681,13 @@ class VideoAnnotator(tk.Frame):
                     manual_edit,
                     notes
                 ])
+                
+            # Save point events
             for event in self.point_events:
                 time_machine = self.format_time_machine_readable(self.parse_time(event['time']))
-                manual_edit = 'True' if event.get('Manual_Edit') else 'False'
-                # Include notes if it exists, otherwise use empty string
+                manual_edit = str(event.get('Manual_Edit', False))  # Get Manual_Edit value, default to False
                 notes = event.get('Notes', "")
+                
                 writer.writerow([
                     self.video_name,
                     event['Name'],
@@ -1144,17 +1703,9 @@ class VideoAnnotator(tk.Frame):
                 ])
 
     def save_point_annotation(self, new_entries, dialog, selected_annotation, old_start_time):
-        """
-        Saves the edited point annotation.
-
-        Parameters:
-          new_entries (dict): Contains Tkinter Entry widgets for 'Name' and 'H_Start'.
-          dialog (Tkinter.Toplevel): The dialog window for editing.
-          selected_annotation (dict): The original point annotation that was edited.
-          old_start_time (str): The original human-readable start time used to identify the annotation.
-        """
-        new_name = new_entries['Name'].get().strip()
-        new_h_start = new_entries['H_Start'].get().strip()
+        """Saves the edited point annotation."""
+        new_name = new_entries['Name'].text().strip()
+        new_h_start = new_entries['H_Start'].text().strip()
 
         if not new_name or not new_h_start:
             messagebox.showwarning("Invalid Input", "Both Name and Start Time are required.")
@@ -1162,41 +1713,43 @@ class VideoAnnotator(tk.Frame):
 
         print(f"Updating point annotation from {selected_annotation} to {{'Name': '{new_name}', 'H_Start': '{new_h_start}'}}")
 
-        # Convert the human-readable start time to machine-readable time (float seconds)
-        new_start_time = self.parse_time(new_h_start)
-
-        # Update the matching annotation in the in-memory list.
+        # Update only the specific matching annotation in the in-memory list
+        found_and_updated = False
         for annotation in self.point_events:
             if annotation['Name'] == selected_annotation['Name'] and annotation['time'] == old_start_time:
+                # Only set Manual_Edit to True if the name or time changed
+                if annotation['Name'] != new_name or annotation['time'] != new_h_start:
+                    annotation['Manual_Edit'] = True
                 annotation['Name'] = new_name
                 annotation['time'] = new_h_start
-                # Optionally, if you wish to track machine time as well:
-                annotation['start_time'] = new_start_time
-                annotation['Manual_Edit'] = True
+                found_and_updated = True
                 break
+        
+        if not found_and_updated:
+            print(f"Warning: Could not find matching annotation to update")
+            return
 
         self.save_sorted_annotations()
         self.update_annotations()
         self.dialog_open = False
         dialog.destroy()
 
-
     def save_state_annotation(self, new_entries, dialog, selected_annotation, old_start_time):
         """
         Saves the edited state annotation.
 
         Parameters:
-          new_entries (dict): Contains Tkinter Entry widgets for 'Name', 'H_Start', and 'H_End'.
-          dialog (Tkinter.Toplevel): The dialog window for editing.
+          new_entries (dict): Contains QLineEdit widgets for 'Name', 'H_Start', and 'H_End'.
+          dialog (QDialog): The dialog window for editing.
           selected_annotation (dict): The original state annotation that was edited.
           old_start_time (str): The original human-readable start time used to identify the annotation.
         """
-        new_name = new_entries['Name'].get().strip()
-        new_h_start = new_entries['H_Start'].get().strip()
-        new_h_end = new_entries['H_End'].get().strip()
+        new_name = new_entries['Name'].text().strip()
+        new_h_start = new_entries['H_Start'].text().strip()
+        new_h_end = new_entries['H_End'].text().strip()
 
         if not new_name or not new_h_start or not new_h_end:
-            messagebox.showwarning("Invalid Input", "Name, Start, and End times are required.")
+            QMessageBox.warning(self, "Invalid Input", "Name, Start, and End times are required.")
             return
 
         print(f"Updating state annotation from {selected_annotation} to {{'Name': '{new_name}', 'H_Start': '{new_h_start}', 'H_End': '{new_h_end}'}}")
@@ -1208,21 +1761,21 @@ class VideoAnnotator(tk.Frame):
         # Update the matching annotation in the in-memory list.
         for annotation in self.state_events:
             # Identify the annotation using the old human-readable start time.
-            if annotation['Name'] == selected_annotation['Name'] and self.format_time_human_readable(annotation.get('start_time', 0)) == old_start_time:
+            if (annotation['Name'] == selected_annotation['Name'] and 
+                self.format_time_human_readable(annotation.get('start_time', 0)) == old_start_time):
                 annotation['Name'] = new_name
-                annotation['H_Start'] = new_h_start
-                annotation['H_End'] = new_h_end
                 annotation['start_time'] = new_start_time
                 annotation['end_time'] = new_end_time
                 annotation['Manual_Edit'] = True
-                annotation['Notes'] = new_Note
+                # Preserve existing notes
+                if 'Notes' not in annotation:
+                    annotation['Notes'] = ""
                 break
 
         self.save_sorted_annotations()
         self.update_annotations()
         self.dialog_open = False
-        dialog.destroy()
-
+        dialog.accept()
 
     def format_time_human_readable(self, elapsed_time):
         minutes, seconds = divmod(float(elapsed_time), 60)
@@ -1237,145 +1790,78 @@ class VideoAnnotator(tk.Frame):
             return int(m) * 60 + float(s.rstrip('s'))
         return float(time_str)
 
-    # ----------------------- Playback Functions -----------------------
     def toggle_play(self, event=None):
-        # Toggle the pause property: True means paused, False means playing.
+        """Toggle play/pause state"""
         self.player.pause = not self.player.pause
 
     def refresh_paused_frame(self):
+        """Refresh the current frame when paused"""
         if not self.player.is_playing():
-            self.player.set_pause(0)
+            self.player.pause = False
             self.update()
-            self.after(20, lambda: self.player.set_pause(1))
+            # Fix: Use a regular function instead of lambda for assignment
+            def set_pause():
+                self.player.pause = True
+            QTimer.singleShot(20, set_pause)
 
     def step_frame_if_paused(self):
-        if ndlf.player.is_playing():
-            a.player.next_frame()
+        """Step forward one frame if paused"""
+        if self.player.is_playing():
+            self.player.next_frame()
 
     def seek_relative(self, offset_ms):
-        # Get current time (in seconds); default to 0 if None.
+        """Seek relative to current position with end-of-video handling"""
+        total_sec = self.player.duration or 0
         current_sec = self.player.time_pos or 0
-        # Convert offset from ms to seconds.
         offset_sec = offset_ms / 1000.0
-        new_time = max(current_sec + offset_sec, 0)
-        self.player.time_pos = new_time
-        # Optionally, refresh the frame if paused.
+        
+        # Calculate the new position
+        new_time = current_sec + offset_sec
+        
+        # Check if seeking beyond the end of the video
+        if new_time >= total_sec:
+            print(f"Attempting to seek beyond end of video. Pausing at last frame.")
+            new_time = max(0, total_sec - 0.5)  # Set to just before the end
+            self.player.time_pos = new_time
+            self.player.pause = True  # Pause playback
+        else:
+            # Normal seek within video bounds
+            new_time = max(0, new_time)  # Ensure we don't go below 0
+            self.player.time_pos = new_time
+        
+        # Update progress bar immediately to reflect new position
+        self.update_progress()
 
     def change_speed(self, delta):
-        """
-        Example usage: update the playback speed, and also update the speed_text.
-        """
+        """Change playback speed"""
         speed_steps = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 25]
         current_rate = self.player.speed
+        
         try:
             index = speed_steps.index(current_rate)
         except ValueError:
-            index = min(range(len(speed_steps)), key=lambda i: abs(speed_steps[i] - current_rate))
+            index = min(range(len(speed_steps)), 
+                       key=lambda i: abs(speed_steps[i] - current_rate))
+        
         new_index = max(0, min(len(speed_steps) - 1, index + (1 if delta > 0 else -1)))
         new_rate = speed_steps[new_index]
+        
         if new_rate != current_rate:
             self.player.speed = new_rate
             print(f"New speed: {new_rate:.2f}x")
+            
+            # Use the new method to update the center text
+            self.update_center_text(f"({new_rate:.1f}x)")
 
-        # Now update the speed_text
-        self.progress_bar_canvas.itemconfig("speed_text", text=f"({new_rate:.1f}x)")
-
-    def initialize_progress_bar(self):
-        # Clear any existing canvas elements.
-        self.progress_bar_canvas.delete("all")
-        bar_height = self.progress_bar_height
-        # Draw the static background.
-        self.progress_bar_canvas.create_rectangle(
-            0, 0, self.progress_bar_width, bar_height,
-            fill="grey", tags="background"
-        )
-        # Pre-create the progress rectangle (initially zero-width).
-        self.progress_rect = self.progress_bar_canvas.create_rectangle(
-            0, 0, 0, bar_height,
-            fill="#454545", tags="progress_bar"
-        )
-        # Create the current-time text on the left.
-        self.progress_bar_canvas.create_text(
-            5, bar_height / 2, anchor="w",
-            text="0m0.00s",
-            fill="white",
-            font=self.progress_bar_font,
-            tags="time_text_left"
-        )
-        # Create the playback speed text (which will be updated via change_speed()).
-        self.progress_bar_canvas.create_text(
-            110, bar_height / 2, anchor="w",
-            text="(1.0x)",
-            fill="white",
-            font=self.progress_bar_font,
-            tags="speed_text"
-        )
-        # Get total media length from MPV (in seconds).
-        total_sec = self.player.duration or 0
-        if total_sec <= 0:
-            # Media not yet loaded; try again in 250ms.
-            self.after(250, self.initialize_progress_bar)
-            return
-        total_time_str = self.format_time_human_readable(total_sec)
-        # Create the total-time text (on the right) once and never update it.
-        self.progress_bar_canvas.create_text(
-            self.progress_bar_width - 5, bar_height / 2, anchor="e",
-            text=total_time_str,
-            fill="white",
-            font=self.progress_bar_font,
-            tags="time_text_right"
-        )
-        # Start polling to update the current time and progress rectangle every 500ms.
-        self.poll_progress_bar()
-
-    def poll_progress_bar(self):
-        """Update the progress bar and schedule the next update in 500ms."""
-        self.update_progress_bar()
-        total_sec = self.player.duration or 0
-        current_sec = self.player.time_pos or 0
-        # If near the end of the video (within 0.5 seconds), restart playback.
-        if total_sec > 0 and current_sec >= total_sec - 0.5:
-            print("Video ended. Restarting from beginning.")
-            # Reload the video file, replacing the current one
-            self.player.command("loadfile", self.video_path, "replace")
-            # Ensure playback is resumed
-            self.player.pause = False
-        self.after(500, self.poll_progress_bar)
-
-        if total_sec > 0 and current_sec >= total_sec - 0.5:
-            print("Video ended. Restarting from beginning.")
-            # Reload the video file, replacing the current one
-            self.player.command("loadfile", self.video_path, "replace")
-            # Ensure playback is resumed
-            self.player.pause = False
-
-    def update_progress_bar(self):
-        """Update only the dynamic parts of the progress bar."""
-        total_sec = self.player.duration or 0
-        current_sec = self.player.time_pos or 0
-        ratio = (current_sec / total_sec) if total_sec > 0 else 0
-        progress = int(ratio * self.progress_bar_width)
-        # Update the coordinates of the progress rectangle.
-        self.progress_bar_canvas.coords(
-            self.progress_rect,
-            0, 0, progress, self.progress_bar_height
-        )
-        # Update the current time text (left).
-        current_time_str = self.format_time_human_readable(current_sec)
-        self.progress_bar_canvas.itemconfig("time_text_left", text=current_time_str)
-        # Ensure the text items remain on top.
-        self.progress_bar_canvas.tag_raise("time_text_left")
-        self.progress_bar_canvas.tag_raise("time_text_right")
-        self.progress_bar_canvas.tag_raise("speed_text")
-
-    def on_progress_click(self, event):
-        click_x = event.x
-        ratio = click_x / self.progress_bar_width
-        total_sec = self.player.duration or 0
-        if total_sec > 0:
-            # Calculate the target time in seconds and update MPV's time_pos.
-            target_sec = ratio * total_sec
-            self.player.time_pos = target_sec
+    def reset_speed(self):
+        """Reset playback speed to 1x"""
+        current_rate = self.player.speed
+        if current_rate != 1.0:
+            self.player.speed = 1.0
+            print("Reset speed to 1.0x")
+            
+            # Update the center text in the progress bar
+            self.update_center_text("(1.0x)")
 
     def on_closing(self):
         """Handle application closing and ensure floating windows are destroyed."""
@@ -1388,159 +1874,178 @@ class VideoAnnotator(tk.Frame):
                 'controls_window',
                 'edit_dialog'
             ]
+            
+            # Delete floating windows
             for attr in floating_attrs:
                 if hasattr(self, attr):
                     win = getattr(self, attr)
-                    if win is not None and win.winfo_exists():
-                        win.destroy()
-            
-            # Additionally, destroy any windows tracked in self.floating_windows
+                    if win is not None:
+                        win.deleteLater()
+
+            # Delete additional tracked windows
             if hasattr(self, 'floating_windows'):
                 for win in self.floating_windows:
-                    if win is not None and win.winfo_exists():
-                        win.destroy()
+                    if win is not None:
+                        win.deleteLater()
                 self.floating_windows.clear()
-
-            # Save session state and stop the player
+            
+            # Save session state and stop player
             if hasattr(self, 'player') and self.player:
                 self.save_session_state()
                 self.player.pause = True
                 self.player.stop()
-
-            # Finally, destroy the main window
-            self.parent.destroy()
+            
+            # Close main window
+            self.parent.close()
+            
         except Exception as e:
             print(f"Error during closing: {e}")
-            self.parent.destroy()
+            self.parent.close()
 
     def visualize_annotations(self):
+        """Show visualization dialog"""
         self.dialog_open = True
-        dialog = tk.Toplevel(self.parent)
-        dialog.transient(self.parent)     # Make dialog dependent on the main window
-        dialog.grab_set()                 # Prevent interaction with the main window
-        dialog.focus_force()              # Bring dialog to the front
-        dialog.attributes('-topmost', True)  # Ensure it stays above the main window
-
-        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
-        dialog.title("Visualize Annotations")
-        self.center_window(dialog, width=300, height=150)
-
-        tk.Label(dialog, text="Annotations visualization is\ncurrently under development.").pack(pady=20)
-        tk.Button(dialog, text="OK", command=dialog.destroy).pack(pady=5)
-        dialog.protocol("WM_DELETE_WINDOW", lambda: self.on_visualization_close(dialog))
+        
+        # Create dialog
+        dialog = QDialog(self.parent)
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        dialog.setWindowTitle("Visualize Annotations")
+        dialog.setModal(True)
+        
+        # Center dialog
+        self.center_window(dialog, 300, 150)
+        
+        # Create layout
+        layout = QVBoxLayout(dialog)
+        
+        # Add label
+        label = QLabel("Annotations visualization is\ncurrently under development.")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+        
+        # Add OK button
+        button = QPushButton("OK")
+        button.clicked.connect(lambda: self.on_visualization_close(dialog))
+        layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignCenter)
+                
+        # Show dialog
+        dialog.exec()
 
     def generate_summary_statistics(self):
+        """Show summary statistics dialog"""
         self.dialog_open = True
-        dialog = tk.Toplevel(self.parent)
-        dialog.transient(self.parent)
-        dialog.grab_set()
-        dialog.focus_force()
-        dialog.attributes('-topmost', True)
-
-        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
-        dialog.title("Summary Statistics")
-        self.center_window(dialog, width=300, height=150)
-
-        tk.Label(dialog, text="Generating summary statistics is\ncurrently under development").pack(pady=20)
-        tk.Button(dialog, text="OK", command=dialog.destroy).pack(pady=5)
-        dialog.protocol("WM_DELETE_WINDOW", lambda: self.on_summary_close(dialog))
+        
+        # Create dialog
+        dialog = QDialog(self.parent)
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        dialog.setWindowTitle("Summary Statistics")
+        dialog.setModal(True)
+        
+        # Center dialog
+        self.center_window(dialog, 300, 150)
+        
+        # Create layout
+        layout = QVBoxLayout(dialog)
+        
+        # Add label
+        label = QLabel("Generating summary statistics is\ncurrently under development")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+        
+        # Add OK button
+        button = QPushButton("OK")
+        button.clicked.connect(lambda: self.on_summary_close(dialog))
+        layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        # Set up close handling
+        dialog.finished.connect(lambda: self.on_summary_close(dialog))
+        
+        # Show dialog
+        dialog.exec()
 
     def on_visualization_close(self, dialog):
         """Handle visualization dialog closing"""
         self.dialog_open = False
-        dialog.destroy()
+        dialog.accept()
 
     def on_summary_close(self, dialog):
         """Handle summary dialog closing"""
         self.dialog_open = False
-        dialog.destroy()
+        dialog.accept()
 
-    def center_window(self, win, width, height):
-        # Identify the primary monitor
-        monitors = get_monitors()
-        primary_monitor = next((m for m in monitors if m.is_primary), monitors[0])
-        # Calculate center position within primary monitor
-        x = primary_monitor.x + (primary_monitor.width // 2) - (width // 2)
-        y = primary_monitor.y + (primary_monitor.height // 2) - (height // 2)
-        # Apply geometry to window
-        win.geometry(f"{width}x{height}+{x}+{y}")
-        win.update_idletasks()
-
-    # Annotation Menu and Editing Methods
-    def show_annotation_menu(self, event):
-        # Pause the video when opening the menu
+    def show_annotation_menu(self, point):
+        """Show context menu for annotation item"""
+        # Pause the video
         if hasattr(self, 'player') and self.player:
             self.player.pause = True
         
-        # Determine which treeview was clicked
-        widget = event.widget
-        self.selected_treeview = widget
-
-        # Get selected item based on click location
-        item_id = widget.identify_row(event.y)
-        if not item_id:
+        # Determine which tree widget was clicked
+        tree_widget = self.sender()
+        self.selected_treeview = tree_widget
+        
+        # Get selected item at click position
+        item = tree_widget.itemAt(point)
+        if not item:
             return
-
-        widget.selection_set(item_id)
-        self.selected_item = item_id
-
-        # Determine the selected index from the appropriate treeview
+        
+        tree_widget.setCurrentItem(item)
+        self.selected_item = item
+        
+        # Get selected index
         if self.selected_treeview == self.state_annotations_tree:
-            self.selected_index = self.state_annotations_tree.index(self.selected_item)
+            self.selected_index = self.state_annotations_tree.indexOfTopLevelItem(item)
         else:
-            self.selected_index = self.point_annotations_tree.index(self.selected_item)
+            self.selected_index = self.point_annotations_tree.indexOfTopLevelItem(item)
+        
+        # Create context menu
+        menu = QMenu(self)
+        menu.addAction("Edit", self.edit_annotation)
+        menu.addAction("Add Note", self.add_note_to_annotation)
+        menu.addAction("View Details", self.view_annotation_details)
+        menu.addAction("Skip to Annotation", self.skip_to_annotation)
+        menu.addAction("Delete", self.delete_annotation)
+        
+        # Show menu at cursor position
+        menu.exec(tree_widget.viewport().mapToGlobal(point))
 
-        # Create a popup menu (using self.parent instead of self.root)
-        self.annotation_menu = tk.Menu(self.parent, tearoff=0)
-        self.annotation_menu.add_command(label="Edit", command=self.edit_annotation)
-        self.annotation_menu.add_command(label="Add Note", command=self.add_note_to_annotation)
-        self.annotation_menu.add_command(label="View Details", command=self.view_annotation_details)  # New option
-        self.annotation_menu.add_command(label="Skip to Annotation", command=self.skip_to_annotation)
-        self.annotation_menu.add_command(label="Delete", command=self.delete_annotation)
-        self.annotation_menu.tk_popup(event.x_root, event.y_root)
-    
     def view_annotation_details(self):
-        """Show a dialog with all details of the selected annotation."""
+        """Show annotation details dialog"""
         if not hasattr(self, 'selected_treeview') or not self.selected_item:
             return
-            
-        # Determine whether we're dealing with state or point annotation
+        
+        # Get annotation data
         if self.selected_treeview == self.state_annotations_tree:
             annotation = self.state_events[self.selected_index]
             annotation_type = "State"
         else:
             annotation = self.point_events[self.selected_index]
             annotation_type = "Point"
-            
-        # Create a dialog for showing details
+        
+        # Create dialog
         self.dialog_open = True
         
-        # Create the dialog window
         if hasattr(self, 'details_dialog') and self.details_dialog is not None:
-            self.details_dialog.destroy()
-            
-        self.details_dialog = tk.Toplevel(self.parent)
-        self.details_dialog.transient(self.parent)
-        self.details_dialog.grab_set()
-        self.details_dialog.focus_force()
-        self.details_dialog.attributes('-topmost', True)
-        self.details_dialog.protocol("WM_DELETE_WINDOW", self.on_details_dialog_close)
-        self.details_dialog.title(f"Annotation Details - {annotation['Name']}")
-        self.center_window(self.details_dialog, width=500, height=400)
+            self.details_dialog.deleteLater()
         
-        # Create main frame with padding
-        main_frame = tk.Frame(self.details_dialog, padx=15, pady=15)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        self.details_dialog = QDialog(self.parent)
+        self.details_dialog.setWindowFlags(
+            self.details_dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.details_dialog.setWindowTitle(f"Annotation Details - {annotation['Name']}")
+        self.details_dialog.setModal(True)
+        self.center_window(self.details_dialog, 500, 400)
         
-        # Create a frame for details in the top section
-        details_frame = tk.Frame(main_frame)
-        details_frame.pack(fill=tk.X, pady=(0, 10))
+        # Create main layout
+        main_layout = QVBoxLayout(self.details_dialog)
+        main_layout.setContentsMargins(15, 15, 15, 15)
         
-        # Configure grid for details
-        details_frame.columnconfigure(0, weight=1)
-        details_frame.columnconfigure(1, weight=2)
+        # Create details grid
+        details_widget = QWidget()
+        details_layout = QGridLayout(details_widget)
+        details_layout.setColumnStretch(1, 1)
+        main_layout.addWidget(details_widget)
         
-        # Common details for all annotation types
+        # Common details
         details = [
             ("Name:", annotation['Name']),
             ("Type:", annotation_type),
@@ -1558,7 +2063,7 @@ class VideoAnnotator(tk.Frame):
                 duration_str = self.format_time_human_readable(duration)
             else:
                 duration_str = "NA"
-                
+            
             additional_details = [
                 ("Start Time:", start_time),
                 ("End Time:", end_time),
@@ -1569,121 +2074,257 @@ class VideoAnnotator(tk.Frame):
         else:  # Point annotation
             details.append(("Time:", annotation['time']))
         
-        # Add manual edit status if available
+        # Add manual edit status
         if 'Manual_Edit' in annotation:
             details.append(("Manually Edited:", str(annotation['Manual_Edit'])))
         
-        # Display all details in a grid
+        # Display details in grid
         for row, (label, value) in enumerate(details):
-            tk.Label(details_frame, text=label, anchor="w", font=("Helvetica", 10, "bold")).grid(
-                row=row, column=0, sticky="w", pady=2)
-            tk.Label(details_frame, text=value, anchor="w").grid(
-                row=row, column=1, sticky="w", pady=2)
+            label_widget = QLabel(label)
+            label_widget.setStyleSheet("font-weight: bold;")
+            value_widget = QLabel(value)
+            details_layout.addWidget(label_widget, row, 0)
+            details_layout.addWidget(value_widget, row, 1)
         
-        # Separator
-        separator = ttk.Separator(main_frame, orient='horizontal')
-        separator.pack(fill=tk.X, pady=10)
+        # Add separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        main_layout.addWidget(separator)
         
         # Notes section
-        tk.Label(main_frame, text="Notes:", anchor="w", font=("Helvetica", 10, "bold")).pack(anchor=tk.W)
+        notes_label = QLabel("Notes:")
+        notes_label.setStyleSheet("font-weight: bold;")
+        main_layout.addWidget(notes_label)
         
-        # Get existing note and convert dots back to newlines for display
+        # Get existing note and convert dots to newlines
         existing_note = annotation.get('Notes', "")
         if " . " in existing_note:
             existing_note = existing_note.replace(" . ", "\n")
         
-        # Create a text widget for the note (read-only in details view)
-        notes_frame = tk.Frame(main_frame)
-        notes_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        # Create text editor for notes
+        self.details_note_text = QTextEdit()
+        self.details_note_text.setMinimumHeight(100)
+        self.details_note_text.setText(existing_note)
+        self.details_note_text.setReadOnly(True)
+        main_layout.addWidget(self.details_note_text)
         
-        self.details_note_text = tk.Text(notes_frame, height=6, width=50)
-        self.details_note_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.details_note_text.insert(tk.END, existing_note)
+        # Button frame
+        button_frame = QWidget()
+        button_layout = QHBoxLayout(button_frame)
+        button_layout.setContentsMargins(0, 10, 0, 0)
         
-        # Make read-only but allow selection for copying
-        self.details_note_text.config(state=tk.DISABLED)
-        
-        # Add scrollbar
-        notes_scrollbar = tk.Scrollbar(notes_frame)
-        notes_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.details_note_text.config(yscrollcommand=notes_scrollbar.set)
-        notes_scrollbar.config(command=self.details_note_text.yview)
-        
-        # Add buttons at the bottom
-        button_frame = tk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        # Add Edit Note button
-        edit_note_button = tk.Button(
-            button_frame,
-            text="Edit Note",
-            command=lambda: self.edit_note_from_details(annotation)
+        # Add buttons
+        edit_button = QPushButton("Edit")
+        edit_button.clicked.connect(
+            lambda: self.open_comprehensive_edit(annotation, annotation_type)
         )
-        edit_note_button.pack(side=tk.LEFT)
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.on_details_dialog_close)
         
-        # Add Close button
-        close_button = tk.Button(
-            button_frame,
-            text="Close",
-            command=self.on_details_dialog_close
-        )
-        close_button.pack(side=tk.RIGHT)
+        button_layout.addWidget(edit_button)
+        button_layout.addStretch()
+        button_layout.addWidget(close_button)
+        
+        main_layout.addWidget(button_frame)
+        
+        # Connect close event
+        self.details_dialog.finished.connect(self.on_details_dialog_close)
+        
+        # Show dialog
+        self.details_dialog.exec()
 
-    def edit_note_from_details(self, annotation):
-        """Switch from details view to note editing."""
-        # Close the details dialog
-        self.on_details_dialog_close()
-        # Open the note editing dialog
-        self.add_note_to_annotation()
+    def open_comprehensive_edit(self, annotation, annotation_type):
+        """Open a comprehensive edit dialog for both timing and notes."""
+        # Close the details dialog if open
+        if hasattr(self, 'details_dialog') and self.details_dialog:
+            self.on_details_dialog_close()
+        
+        self.dialog_open = True
+        
+        # Create edit dialog
+        edit_dialog = QDialog(self.parent)
+        edit_dialog.setWindowFlags(
+            edit_dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint
+        )
+        edit_dialog.setWindowTitle(f"Edit {annotation_type} Annotation")
+        edit_dialog.setModal(True)
+        self.center_window(edit_dialog, 400, 500)
+        
+        # Create main layout
+        main_layout = QVBoxLayout(edit_dialog)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        
+        # Create form layout for entries
+        form_layout = QFormLayout()
+        entries = {}
+        
+        # Common fields
+        fields = ['Name']
+        if annotation_type == 'State':
+            fields.extend(['H_Start', 'H_End'])
+        else:
+            fields.append('H_Start')
+        
+        # Create entry fields
+        for field in fields:
+            entry = QLineEdit()
+            if field == 'Name':
+                entry.setText(annotation['Name'])
+            elif field == 'H_Start':
+                if annotation_type == 'State':
+                    entry.setText(self.format_time_human_readable(annotation['start_time']))
+                else:
+                    entry.setText(annotation['time'])
+            elif field == 'H_End':
+                if annotation['end_time'] is not None:
+                    entry.setText(self.format_time_human_readable(annotation['end_time']))
+            
+            # Add to form layout with proper label
+            form_layout.addRow(field.replace('H_', '') + ':', entry)
+            entries[field] = entry
+        
+        main_layout.addLayout(form_layout)
+        
+        # Notes section
+        notes_label = QLabel("Notes:")
+        main_layout.addWidget(notes_label)
+        
+        # Get existing note and convert dots to newlines
+        existing_note = annotation.get('Notes', "")
+        if " . " in existing_note:
+            existing_note = existing_note.replace(" . ", "\n")
+        
+        # Create text editor for notes
+        notes_text = QTextEdit()
+        notes_text.setMinimumHeight(150)
+        notes_text.setText(existing_note)
+        main_layout.addWidget(notes_text)
+        
+        # Button frame
+        button_frame = QWidget()
+        button_layout = QHBoxLayout(button_frame)
+        
+        def save_comprehensive_edit():
+            # Get values from entries
+            new_values = {field: entry.text().strip() for field, entry in entries.items()}
+            new_note = notes_text.toPlainText().strip()
+            
+            # Convert newlines to dots for storage
+            new_note = new_note.replace("\n", " . ")
+            
+            # Update the annotation
+            if annotation_type == 'State':
+                # Convert times to float values
+                new_start = self.parse_time(new_values['H_Start'])
+                new_end = self.parse_time(new_values['H_End'])
+                
+                # Find and update the annotation in state_events
+                for evt in self.state_events:
+                    if (evt['Name'] == annotation['Name'] and 
+                        evt['start_time'] == annotation['start_time']):
+                        # Check if time or name changed before setting Manual_Edit
+                        if (evt['Name'] != new_values['Name'] or 
+                            evt['start_time'] != new_start or 
+                            evt['end_time'] != new_end):
+                            evt['Manual_Edit'] = True
+                        evt['Name'] = new_values['Name']
+                        evt['start_time'] = new_start
+                        evt['end_time'] = new_end
+                        evt['Notes'] = new_note
+                        break
+            else:
+                # Find and update the annotation in point_events
+                for evt in self.point_events:
+                    if evt['Name'] == annotation['Name'] and evt['time'] == annotation['time']:
+                        # Check if time or name changed before setting Manual_Edit
+                        if (evt['Name'] != new_values['Name'] or 
+                            evt['time'] != new_values['H_Start']):
+                            evt['Manual_Edit'] = True
+                        evt['Name'] = new_values['Name']
+                        evt['time'] = new_values['H_Start']
+                        evt['Notes'] = new_note
+                        break
+            
+            # Save changes to file
+            self.save_sorted_annotations()
+            self.update_annotations()
+            
+            # Close dialog
+            self.dialog_open = False
+            edit_dialog.accept()
+        
+        def cancel_edit():
+            self.dialog_open = False
+            edit_dialog.reject()
+        
+        # Create and add buttons
+        save_button = QPushButton("Save")
+        save_button.clicked.connect(save_comprehensive_edit)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(cancel_edit)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(save_button)
+        button_layout.addWidget(cancel_button)
+        
+        main_layout.addWidget(button_frame)
+        
+        # Connect dialog finished signal
+        edit_dialog.finished.connect(lambda: setattr(self, 'dialog_open', False))
+        
+        # Show dialog
+        edit_dialog.exec()
 
     def save_note_to_annotation(self, annotation):
         """Save the entered note to the annotation."""
         if not hasattr(self, 'note_text'):
             return
-            
-        # Get the note text from the text widget
-        note = self.note_text.get("1.0", tk.END).strip()
         
-        # Replace newline/return characters with dots for CSV compatibility
+        # Get note text
+        note = self.note_text.toPlainText().strip()
+        
+        # Replace newlines with dots for CSV compatibility
         note = note.replace("\n", " . ").replace("\r", " . ")
         
-        # Update the annotation in memory
+        # Update annotation in memory
         annotation['Notes'] = note
         
         # Save to file
         self.save_sorted_annotations()
         
-        # Close the dialog
+        # Close dialog
         self.on_note_dialog_close()
 
     def on_menu_close(self):
         """Handle menu closing"""
-        # Do NOT set self.dialog_open = False here
+        # Don't set dialog_open to False here
         if hasattr(self, 'annotation_menu'):
-            self.annotation_menu.destroy()
+            self.annotation_menu.deleteLater()
 
     def on_edit_dialog_close(self):
-        """Update on_edit_dialog_close to reset dialog state"""
+        """Handle edit dialog closing"""
         self.dialog_open = False
         if hasattr(self, 'edit_dialog') and self.edit_dialog is not None:
-            self.edit_dialog.destroy()
+            self.edit_dialog.deleteLater()
             self.edit_dialog = None
 
     def on_note_dialog_close(self):
-        """Handle note dialog closing."""
+        """Handle note dialog closing"""
         self.dialog_open = False
         if hasattr(self, 'note_dialog') and self.note_dialog is not None:
-            self.note_dialog.destroy()
+            self.note_dialog.deleteLater()
             self.note_dialog = None
-            
+
     def on_details_dialog_close(self):
-        """Handle details dialog closing."""
+        """Handle details dialog closing"""
         self.dialog_open = False
         if hasattr(self, 'details_dialog') and self.details_dialog is not None:
-            self.details_dialog.destroy()
+            self.details_dialog.deleteLater()
             self.details_dialog = None
 
     def edit_annotation(self):
+        """Edit the selected annotation"""
         if not hasattr(self, 'selected_treeview') or not self.selected_item:
             return
         if self.selected_treeview == self.state_annotations_tree:
@@ -1692,191 +2333,284 @@ class VideoAnnotator(tk.Frame):
             self.edit_point_annotation()
 
     def edit_state_annotation(self):
+        """Edit a state annotation"""
         if self.selected_index is None:
             return
+        
         self.dialog_open = True
-
         selected_annotation = self.state_events[self.selected_index]
+        
         if selected_annotation['end_time'] is None:
-            messagebox.showwarning("Edit Error", "Please end the state behavior before editing.")
+            QMessageBox.warning(self, "Edit Error", "Please end the state behavior before editing.")
             return
 
         latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_Start', 'H_End')
         print(f"Editing state annotation: {latest_annotation}")
 
-        if hasattr(self, 'edit_dialog') and self.edit_dialog is not None:
-            self.edit_dialog.destroy()
+        # Create edit dialog
+        edit_dialog = QDialog(self.parent)
+        edit_dialog.setWindowFlags(edit_dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        edit_dialog.setWindowTitle("Edit State Annotation")
+        edit_dialog.setModal(True)
+        self.center_window(edit_dialog, 250, 300)
 
-        self.edit_dialog = tk.Toplevel(self.parent)
-        self.edit_dialog.transient(self.parent)
-        self.edit_dialog.grab_set()
-        self.edit_dialog.focus_force()
-        self.edit_dialog.attributes('-topmost', True)
-        self.edit_dialog.protocol("WM_DELETE_WINDOW", self.on_edit_dialog_close)
-        self.edit_dialog.title("Edit State Annotation")
-        self.center_window(self.edit_dialog, width=250, height=300)
+        # Create layout
+        layout = QVBoxLayout(edit_dialog)
 
-        # Bind the Enter key to trigger the save action
-        self.edit_dialog.bind("<Return>", lambda event: self.save_state_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_Start']))
+        # Current annotation section
+        current_group = QGroupBox("Current Annotation")
+        current_layout = QFormLayout()
+        current_layout.addRow("Name:", QLabel(latest_annotation['Name']))
+        current_layout.addRow("Start:", QLabel(latest_annotation['H_Start']))
+        current_layout.addRow("End:", QLabel(latest_annotation['H_End']))
+        current_group.setLayout(current_layout)
+        layout.addWidget(current_group)
 
-        # Display current annotation (non-editable)
-        tk.Label(self.edit_dialog, text="Current Annotation").grid(row=0, column=0, columnspan=2, pady=5)
-        tk.Label(self.edit_dialog, text="Name:").grid(row=1, column=0)
-        tk.Label(self.edit_dialog, text=latest_annotation['Name']).grid(row=1, column=1)
-        tk.Label(self.edit_dialog, text="Start:").grid(row=2, column=0)
-        tk.Label(self.edit_dialog, text=latest_annotation['H_Start']).grid(row=2, column=1)
-        tk.Label(self.edit_dialog, text="End:").grid(row=3, column=0)
-        tk.Label(self.edit_dialog, text=latest_annotation['H_End']).grid(row=3, column=1)
-
-        # Fields for new annotation values
-        tk.Label(self.edit_dialog, text="New Annotation").grid(row=4, column=0, columnspan=2, pady=5)
+        # New annotation section
+        new_group = QGroupBox("New Annotation")
+        new_layout = QFormLayout()
         new_entries = {}
         new_fields = ['Name', 'H_Start', 'H_End']
-        for i, field in enumerate(new_fields, start=5):
-            tk.Label(self.edit_dialog, text=f"{field}:").grid(row=i, column=0)
-            entry = tk.Entry(self.edit_dialog)
-            entry.insert(0, latest_annotation.get(field, ""))
-            entry.grid(row=i, column=1)
+        
+        for field in new_fields:
+            entry = QLineEdit()
+            entry.setText(latest_annotation.get(field, ""))
+            new_layout.addRow(field.replace('H_', '') + ':', entry)
             new_entries[field] = entry
+        
+        new_group.setLayout(new_layout)
+        layout.addWidget(new_group)
 
-        save_button = tk.Button(
-            self.edit_dialog, text="Save",
-            command=lambda: self.save_state_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_Start'])
+        # Button box
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | 
+            QDialogButtonBox.StandardButton.Cancel
         )
-        save_button.grid(row=i + 1, column=0, columnspan=2, pady=10)
+        button_box.accepted.connect(
+            lambda: self.save_state_annotation(new_entries, edit_dialog, 
+                                             selected_annotation, latest_annotation['H_Start'])
+        )
+        button_box.rejected.connect(edit_dialog.reject)
+        layout.addWidget(button_box)
+
+        # Handle dialog closing
+        edit_dialog.finished.connect(lambda: self.on_edit_dialog_close())
+        
+        # Show dialog
+        edit_dialog.exec()
 
     def edit_point_annotation(self):
+        """Edit a point annotation"""
         if self.active_state_behaviors:
-            messagebox.showwarning("Active Annotation", "Please end the active state before editing.")
+            QMessageBox.warning(self, "Active Annotation", 
+                              "Please end the active state before editing.")
             return
 
         if self.selected_index is None:
             return
+            
         self.dialog_open = True
-
         selected_annotation = self.point_events[self.selected_index]
         print(f"Editing point annotation: {selected_annotation}")
 
         latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_Start')
         print(f"Latest annotation data for editing: {latest_annotation}")
 
-        if hasattr(self, 'edit_dialog') and self.edit_dialog is not None:
-            self.edit_dialog.destroy()
+        # Create edit dialog
+        edit_dialog = QDialog(self.parent)
+        edit_dialog.setWindowFlags(edit_dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        edit_dialog.setWindowTitle("Edit Point Annotation")
+        edit_dialog.setModal(True)
+        self.center_window(edit_dialog, 275, 250)
 
-        self.edit_dialog = tk.Toplevel(self.parent)
-        self.edit_dialog.transient(self.parent)
-        self.edit_dialog.grab_set()
-        self.edit_dialog.focus_force()
-        self.edit_dialog.attributes('-topmost', True)
-        self.edit_dialog.protocol("WM_DELETE_WINDOW", self.on_edit_dialog_close)
-        self.edit_dialog.title("Edit Point Annotation")
-        self.center_window(self.edit_dialog, width=275, height=250)
+        # Create layout
+        layout = QVBoxLayout(edit_dialog)
 
-        self.edit_dialog.bind("<Return>", lambda event: self.save_point_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_Start']))
+        # Current annotation section
+        current_group = QGroupBox("Current Annotation")
+        current_layout = QFormLayout()
+        current_layout.addRow("Name:", QLabel(latest_annotation['Name']))
+        current_layout.addRow("Time:", QLabel(latest_annotation['H_Start']))
+        current_group.setLayout(current_layout)
+        layout.addWidget(current_group)
 
-        tk.Label(self.edit_dialog, text="Current Annotation").grid(row=0, column=0, columnspan=2, pady=5)
-        tk.Label(self.edit_dialog, text="Name:").grid(row=1, column=0)
-        tk.Label(self.edit_dialog, text=latest_annotation['Name']).grid(row=1, column=1)
-        tk.Label(self.edit_dialog, text="Start:").grid(row=2, column=0)
-        tk.Label(self.edit_dialog, text=latest_annotation['H_Start']).grid(row=2, column=1)
-
-        tk.Label(self.edit_dialog, text="New Annotation").grid(row=4, column=0, columnspan=2, pady=5)
+        # New annotation section
+        new_group = QGroupBox("New Annotation")
+        new_layout = QFormLayout()
         new_entries = {}
         new_fields = ['Name', 'H_Start']
-        for i, field in enumerate(new_fields, start=5):
-            tk.Label(self.edit_dialog, text=f"{field}:").grid(row=i, column=0)
-            entry = tk.Entry(self.edit_dialog)
-            entry.insert(0, latest_annotation.get(field, ""))
-            entry.grid(row=i, column=1)
+        
+        for field in new_fields:
+            entry = QLineEdit()
+            entry.setText(latest_annotation.get(field, ""))
+            new_layout.addRow(field.replace('H_', '') + ':', entry)
             new_entries[field] = entry
+            
+        new_group.setLayout(new_layout)
+        layout.addWidget(new_group)
 
-        save_button = tk.Button(
-            self.edit_dialog, text="Save",
-            command=lambda: self.save_point_annotation(new_entries, self.edit_dialog, selected_annotation, latest_annotation['H_Start'])
+        # Button box
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | 
+            QDialogButtonBox.StandardButton.Cancel
         )
-        save_button.grid(row=i + 1, column=0, columnspan=2, pady=10)
+        button_box.accepted.connect(
+            lambda: self.save_point_annotation(new_entries, edit_dialog, 
+                                             selected_annotation, latest_annotation['H_Start'])
+        )
+        button_box.rejected.connect(edit_dialog.reject)
+        layout.addWidget(button_box)
+
+        # Handle dialog closing
+        edit_dialog.finished.connect(lambda: self.on_edit_dialog_close())
+        
+        # Show dialog
+        edit_dialog.exec()
 
     def load_annotation_data(self, annotation, *fields):
+        """Load annotation data from file"""
         latest_annotation = {field: "" for field in fields}
         print(f"Loading annotation data for {annotation}")
+        
         with open(self.annotations_file, 'r') as file:
             reader = csv.DictReader(file)
             for row in reader:
-                # For state annotations, compare 'Name' and 'H_Start'
-                if row['Name'] == annotation['Name'] and row['H_Start'] == self.format_time_human_readable(annotation.get('start_time', 0)):
+                # For state annotations, compare Name and H_Start
+                if (row['Name'] == annotation['Name'] and 
+                    row['H_Start'] == self.format_time_human_readable(
+                        annotation.get('start_time', 0))):
                     latest_annotation.update({field: row.get(field, "") for field in fields})
                     print(f"Found matching row: {latest_annotation}")
                     break
                 # For point annotations, check H_Start only
-                elif 'H_Start' in row and row['H_Start'] == annotation.get('time'):
+                elif ('H_Start' in row and 
+                      row['H_Start'] == annotation.get('time')):
                     latest_annotation.update({field: row.get(field, "") for field in fields})
                     print(f"Found matching point row: {latest_annotation}")
                     break
         return latest_annotation
 
     def skip_to_annotation(self):
+        """Skip to selected annotation's time"""
         if not hasattr(self, 'selected_treeview') or not self.selected_item:
             return
 
-        values = self.selected_treeview.item(self.selected_item, 'values')
-        # Assume column 1 holds the human-readable start time.
-        start_time_str = values[1]
-        start_time = self.parse_time(start_time_str)
+        # Get time from selected item
+        time_column = 1  # Assume column 1 holds the start time
+        time_str = self.selected_item.text(time_column)
+        start_time = self.parse_time(time_str)
+        
         if start_time is not None:
-            # mpv uses seconds for the time_pos property.
+            # Set player position and pause
             self.player.time_pos = start_time
-            self.update_progress_bar()
-            # Pause the player by setting pause to True.
+            self.update_progress()
             self.player.pause = True
 
     def delete_annotation(self):
-        # Try to get the selection from each treeview
-        state_selection = self.state_annotations_tree.selection()
-        point_selection = self.point_annotations_tree.selection()
-        
-        if state_selection:
-            # Use the state annotations treeview
-            self.selected_treeview = self.state_annotations_tree
-            self.selected_item = state_selection[0]
-            self.selected_index = self.state_annotations_tree.index(self.selected_item)
-        elif point_selection:
-            # Use the point annotations treeview
-            self.selected_treeview = self.point_annotations_tree
-            self.selected_item = point_selection[0]
-            self.selected_index = self.point_annotations_tree.index(self.selected_item)
-        else:
-            # No selection found in either treeview
-            return
-
-        # Proceed to remove the annotation from the corresponding list
+        """Delete selected annotation"""
+        # Get selected item
         if self.selected_treeview == self.state_annotations_tree:
             deleted_annotation = self.state_events.pop(self.selected_index)
             self.undo_stack.append(("state", self.selected_index, deleted_annotation))
         else:
             deleted_annotation = self.point_events.pop(self.selected_index)
             self.undo_stack.append(("point", self.selected_index, deleted_annotation))
-            
+        
+        # Update UI
         self.save_sorted_annotations()
         self.update_annotations()
         self.populate_behavior_treeviews()
 
-    def delete_annotation_key(self, event):
+    def delete_annotation_key(self):
+        """Handle delete key press"""
         self.delete_annotation()
 
-    def undo_delete(self, event):
+    def undo_delete(self):
+        """Undo last annotation deletion"""
         if not self.undo_stack:
             return  # Nothing to undo
 
-        # Pop the last deleted annotation info
+        # Get last deleted annotation
         annotation_type, index, annotation = self.undo_stack.pop()
 
+        # Restore annotation
         if annotation_type == "state":
-            # Insert back into the state events list at the original index
             self.state_events.insert(index, annotation)
         else:
-            # Insert back into the point events list
             self.point_events.insert(index, annotation)
         
+        # Update UI
         self.save_sorted_annotations()
         self.update_annotations()
         self.populate_behavior_treeviews()
+
+    def return_to_file_selection(self):
+        """
+        Save session state, close video annotator, and return to file selection UI.
+        """
+        try:
+            # 1. Save session state
+            self.save_session_state()
+            
+            # 2. Clean up resources
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+                self.player.stop()
+            
+            # Close floating windows
+            floating_attrs = [
+                'floating_controls_window',
+                'behavior_buttons_window',
+                'behavior_toggle_window',
+                'controls_window',
+                'edit_dialog'
+            ]
+            
+            for attr in floating_attrs:
+                if hasattr(self, attr):
+                    win = getattr(self, attr)
+                    if win is not None:
+                        win.deleteLater()
+
+            for win in self.floating_windows:
+                if win is not None:
+                    win.deleteLater()
+            self.floating_windows.clear()
+            
+            # 3. Create and show new SetupManager
+            from setup_manager import SetupManager
+            from config_manager import ConfigManager
+            
+            config_manager = ConfigManager()
+            setup_dialog = SetupManager(config_manager=config_manager, parent=self.parent)
+            
+            # First remove the video annotator from parent
+            if self.parent:
+                self.parent.setCentralWidget(None)
+                self.deleteLater()
+            
+            # Show the setup dialog
+            setup_dialog.exec()
+            
+            # Check if setup was successful and create new video annotator
+            if setup_dialog.start_video_flag and setup_dialog.video_path and setup_dialog.behavior_key_file:
+                # Initialize new video annotator with new parameters
+                new_video_annotator = VideoAnnotator(
+                    self.parent,
+                    video_path=setup_dialog.video_path,
+                    session_state_file=setup_dialog.session_state_file,
+                    behavior_key_file=setup_dialog.behavior_key_file,
+                    output_dir=setup_dialog.output_dir
+                )
+                
+                # Set as central widget
+                self.parent.setCentralWidget(new_video_annotator)
+            else:
+                # If user cancels, close the application
+                self.parent.close()
+                
+        except Exception as e:
+            print(f"Error returning to file selection: {e}")
+            # If error occurs, close the application
+            if self.parent:
+                self.parent.close()
