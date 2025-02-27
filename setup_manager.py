@@ -46,9 +46,7 @@ class SetupManager(QDialog):
         self.session_state_file = ""
         
         # Set window properties
-        self.setWindowTitle("LaserTAG Setup")
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
-        self.setMinimumSize(QSize(400, 200))
+        self.setWindowTitle("LaserTAG")
         
         # Handle window close event
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -60,19 +58,33 @@ class SetupManager(QDialog):
         self.start_setup()
         
     def configure_display(self):
-        """Configure display settings and window properties"""
+        """Configure display settings and window properties using available screen geometry."""
         self.app = QApplication.instance() or QApplication([])
-        # Get the primary screen
         self.screen = self.app.primaryScreen()
         self.scaling_factor = self.screen.devicePixelRatio()
         
-        # Get geometry from the primary screen (returns a QRect)
-        geom = self.screen.geometry()
+        # Use available geometry to account for system elements like taskbars
+        geom = self.screen.availableGeometry()
         self.display_width = geom.width()
         self.display_height = geom.height()
         self.display_x = geom.x()
         self.display_y = geom.y()
+
+    def center_window(self, window, width, height):
+        """Center a window on the primary screen."""
+        # Calculate the center position
+        x = self.display_x + (self.display_width - width) // 2
+        y = self.display_y + (self.display_height - height) // 2
         
+        # Set the geometry
+        window.setGeometry(x, y, width, height)
+                
+        # Set preferred size
+        window.resize(width, height)
+        
+        # Make sure the window is not maximized
+        window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMaximized)
+
     def closeEvent(self, event):
         """Handle window close event."""
         # Just let the close event proceed normally
@@ -133,54 +145,167 @@ class SetupManager(QDialog):
         """Initialize file paths for annotations and session state."""
         self.annotations_file = os.path.join(self.annotations_dir, f"{self.video_name}_Annotations.csv")
         self.session_state_file = os.path.join(self.resume_dir, f"{self.video_name}_session_state.json")
-        
+
     def create_empty_files(self):
-        """Create new empty annotation and session state files."""
+        """Create new empty annotation and session state files with error handling."""
         try:
             # Create empty annotation file
-            with open(self.annotations_file, 'w', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([
-                    'Video',
-                    'Name',
-                    'Type',
-                    'Mutually_Exclusive',
-                    'H_Start',
-                    'H_End',
-                    'Start',
-                    'End',
-                    'Duration',
-                    'Manual_Edit',
-                    'Notes'  # Added Notes field
-                ])
-            
-            # Create empty session state file with timestamp in milliseconds
-            with open(self.session_state_file, 'w') as f:
-                json.dump({"timestamp_ms": 0, "current_frame": 0}, f)
+            try:
+                # First check if we can write to the file location by using a temp file
+                temp_annotations_file = self.annotations_file + ".tmp"
+                with open(temp_annotations_file, 'w', newline='') as file:
+                    writer = csv.writer(file)
+                    writer.writerow([
+                        'Video',
+                        'Name',
+                        'Type',
+                        'Mutually_Exclusive',
+                        'H_Start',
+                        'H_End',
+                        'Start',
+                        'End',
+                        'Duration',
+                        'Manual_Edit',
+                        'Notes'
+                    ])
                 
+                # If successful, replace the actual file
+                os.replace(temp_annotations_file, self.annotations_file)
+            except (PermissionError, OSError) as e:
+                # Clean up temp file if it exists
+                if os.path.exists(temp_annotations_file):
+                    try:
+                        os.remove(temp_annotations_file)
+                    except:
+                        pass
+                
+                QMessageBox.critical(self, "Error", 
+                                  "Cannot create annotations file.\nIs it open in another application?")
+                self.done(QDialog.DialogCode.Rejected)
+                return False
+                
+            # Create empty session state file with timestamp in seconds
+            try:
+                # First check if we can write to the file location by using a temp file
+                temp_session_state_file = self.session_state_file + ".tmp"
+                with open(temp_session_state_file, 'w') as f:
+                    json.dump({"timestamp_sec": 0, "current_frame": 0}, f)
+                
+                # If successful, replace the actual file
+                os.replace(temp_session_state_file, self.session_state_file)
+            except (PermissionError, OSError) as e:
+                # Clean up temp file if it exists
+                if os.path.exists(temp_session_state_file):
+                    try:
+                        os.remove(temp_session_state_file)
+                    except:
+                        pass
+                
+                QMessageBox.critical(self, "Error", 
+                                  "Cannot create session state file.\nIs it open in another application?")
+                self.done(QDialog.DialogCode.Rejected)
+                return False
+                
+            return True
+                    
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error creating files: {str(e)}")
             self.done(QDialog.DialogCode.Rejected)
+            return False
             
     def check_existing_session(self):
-        """Check if a previous session exists and handle accordingly."""
+        """Check if a previous session exists and handle accordingly with error handling."""
         try:
+            # Check if we can access the session state file
             if os.path.exists(self.session_state_file):
-                with open(self.session_state_file, 'r') as f:
-                    self.saved_state = json.load(f)
-                    # Convert from milliseconds to seconds if using old format
-                    if 'timestamp_ms' in self.saved_state:
-                        self.saved_state['timestamp_sec'] = self.saved_state['timestamp_ms'] / 1000.0
-                self.show_resume_dialog()
+                try:
+                    with open(self.session_state_file, 'r') as f:
+                        self.saved_state = json.load(f)
+                        # Convert from milliseconds to seconds if using old format
+                        if 'timestamp_ms' in self.saved_state:
+                            self.saved_state['timestamp_sec'] = self.saved_state['timestamp_ms'] / 1000.0
+                    
+                    # Check if we can access the annotations file
+                    if os.path.exists(self.annotations_file):
+                        try:
+                            with open(self.annotations_file, 'r') as f:
+                                # Just try to read a bit to verify access
+                                f.read(1)
+                        except (PermissionError, OSError):
+                            QMessageBox.critical(self, "Error", 
+                                              "Cannot access annotations file.\nIs it open in another application?")
+                            self.done(QDialog.DialogCode.Rejected)
+                            return
+                    
+                    self.show_resume_dialog()
+                except (PermissionError, OSError):
+                    QMessageBox.critical(self, "Error", 
+                                      "Cannot access session state file.\nIs it open in another application?")
+                    self.done(QDialog.DialogCode.Rejected)
+                    return
+                except json.JSONDecodeError:
+                    QMessageBox.warning(self, "Warning", 
+                                      "Session state file is corrupted. Starting a new session.")
+                    if self.create_empty_files():
+                        self.show_behavior_key_editor()
             else:
                 self.start_frame = 0
                 self.saved_state = None
-                self.create_empty_files()
-                self.show_behavior_key_editor()
+                if self.create_empty_files():
+                    self.show_behavior_key_editor()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error checking existing session: {str(e)}")
             self.done(QDialog.DialogCode.Rejected)
             
+    def confirm_start_over(self):
+        """Show confirmation dialog for starting over with error handling."""
+        reply = QMessageBox.question(
+            self,
+            "Confirm Start Over",
+            f"Are you sure?\n\nStarting over will delete all current annotations for\n{self.video_name}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # Try to delete existing files
+            files_to_delete = [self.session_state_file, self.annotations_file]
+            deletion_failed = False
+            
+            for file_path in files_to_delete:
+                if os.path.exists(file_path):
+                    try:
+                        # First check if we can write to the file
+                        with open(file_path, 'a'):
+                            pass
+                        
+                        # If we can write, try to delete it
+                        os.remove(file_path)
+                    except (PermissionError, OSError):
+                        QMessageBox.warning(self, "Warning", 
+                                          f"Cannot delete {os.path.basename(file_path)}.\nIs it open in another application?")
+                        deletion_failed = True
+                        break
+                    except Exception as e:
+                        QMessageBox.warning(self, "Warning", f"Error deleting file {file_path}: {str(e)}")
+                        deletion_failed = True
+                        break
+            
+            if deletion_failed:
+                # Go back to resume dialog if deletion failed
+                self.show_resume_dialog()
+                return
+            
+            # Reset state
+            self.start_frame = 0
+            self.saved_state = None
+            
+            # Create new empty files
+            if self.create_empty_files():
+                self.show_behavior_key_editor()
+        else:
+            self.show_resume_dialog()
+
     def show_resume_dialog(self):
         """Show dialog asking user if they want to resume previous session."""
         dialog = QDialog(self)
@@ -242,38 +367,7 @@ class SetupManager(QDialog):
             self.confirm_start_over()
         else:  # cancel
             self.done(QDialog.DialogCode.Rejected)
-            
-    def confirm_start_over(self):
-        """Show confirmation dialog for starting over."""
-        reply = QMessageBox.question(
-            self,
-            "Confirm Start Over",
-            f"Are you sure?\n\nStarting over will delete all current annotations for\n{self.video_name}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            # Delete existing files
-            files_to_delete = [self.session_state_file, self.annotations_file]
-            for file_path in files_to_delete:
-                if os.path.exists(file_path):
-                    try:
-                        os.remove(file_path)
-                    except Exception as e:
-                        QMessageBox.warning(self, "Warning", f"Error deleting file {file_path}: {str(e)}")
-            
-            # Reset state
-            self.start_frame = 0
-            self.saved_state = None
-            
-            # Create new empty files
-            self.create_empty_files()
-            
-            self.show_behavior_key_editor()
-        else:
-            self.show_resume_dialog()
-            
+
     def resume_session(self):
         """Resume the previous session."""
         if self.saved_state:
@@ -323,21 +417,29 @@ class SetupManager(QDialog):
         """Handle cancellation."""
         self.start_video_flag = False
         self.done(QDialog.DialogCode.Rejected)
+
+    def check_behavior_key_file_access(self, behavior_key_file):
+        """
+        Check if the behavior key file is accessible.
         
-    def center_window(self, window, width, height):
-        """Center a window on the primary screen."""
-        # Calculate the center position
-        x = self.display_x + (self.display_width - width) // 2
-        y = self.display_y + (self.display_height - height) // 2
-        
-        # Set the geometry
-        window.setGeometry(x, y, width, height)
-        
-        # Set a minimum size to prevent the window from being resized too small
-        window.setMinimumSize(int(width * 0.8), int(height * 0.8))
-        
-        # Set preferred size
-        window.resize(width, height)
-        
-        # Make sure the window is not maximized
-        window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMaximized)
+        Args:
+            behavior_key_file: Path to the behavior key file
+            
+        Returns:
+            bool: True if file is accessible, False otherwise
+        """
+        if not os.path.exists(behavior_key_file):
+            return False
+            
+        try:
+            # Try to open the file for reading to verify access
+            with open(behavior_key_file, 'r') as f:
+                f.read(1)  # Just read a bit to verify access
+            return True
+        except (PermissionError, OSError):
+            QMessageBox.critical(self, "Error", 
+                              f"Cannot access behavior key file.\nIs it open in another application?")
+            return False
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error accessing behavior key file: {str(e)}")
+            return False

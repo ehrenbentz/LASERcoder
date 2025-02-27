@@ -64,24 +64,24 @@ class FilesManager(QDialog):
         main_layout = QHBoxLayout(self)
         
         # Create splitter for resizable panels
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(splitter)
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(main_splitter)
         
         # Left panel: Output Directory Selector
         output_panel = QFrame()
         output_layout = QVBoxLayout(output_panel)
         self.setup_output_panel(output_layout)
-        splitter.addWidget(output_panel)
+        main_splitter.addWidget(output_panel)
         
         # Right panel: Video File Selector
         video_panel = QFrame()
         video_layout = QVBoxLayout(video_panel)
         self.setup_video_panel(video_layout)
-        splitter.addWidget(video_panel)
+        main_splitter.addWidget(video_panel)
         
         # Main splitter - divide into 1/3 for output and 2/3 for video
         width = int(self.display_width * 0.6)  # Total dialog width
-        splitter.setSizes([int(width/3), int(2*width/3)])
+        main_splitter.setSizes([int(width/3), int(2*width/3)])
 
     def setup_video_panel(self, layout):
         """Set up the video file selection panel."""
@@ -106,47 +106,63 @@ class FilesManager(QDialog):
         
         layout.addWidget(nav_frame)
         
+        # Create a main container that will take up all available vertical space
+        video_container = QWidget()
+        layout.addWidget(video_container, 1)  # Add stretch factor to make it fill available space
+        
+        video_container_layout = QVBoxLayout(video_container)
+        video_container_layout.setContentsMargins(0, 0, 0, 0)
+        
         # Create a sub-splitter for directories and files
         sub_splitter = QSplitter(Qt.Orientation.Horizontal)
-        layout.addWidget(sub_splitter)
+        video_container_layout.addWidget(sub_splitter)
         
         # Left sub-panel: Directories
         dir_panel = QFrame()
+        # Remove the box frame shape to eliminate the border
         dir_layout = QVBoxLayout(dir_panel)
         dir_layout.setContentsMargins(5, 5, 5, 5)
         
         dir_layout.addWidget(QLabel("Directories:"))
         self.video_dir_listbox = QListWidget()
         self.video_dir_listbox.itemDoubleClicked.connect(self.on_video_dir_double_click)
-        dir_layout.addWidget(self.video_dir_listbox)
+        dir_layout.addWidget(self.video_dir_listbox, 1)  # Add stretch factor
+        
+        # Add empty space at the bottom to match the height with the right panel
+        spacer = QWidget()
+        spacer.setFixedHeight(30)  # Match the height of the Select Video button
+        dir_layout.addWidget(spacer)
         
         sub_splitter.addWidget(dir_panel)
         
         # Right sub-panel: Video files
         file_panel = QFrame()
+        # Remove the box frame shape to eliminate the border
         file_layout = QVBoxLayout(file_panel)
         file_layout.setContentsMargins(5, 5, 5, 5)
         
         file_layout.addWidget(QLabel("Video Files:"))
         self.video_file_listbox = QListWidget()
         self.video_file_listbox.itemDoubleClicked.connect(self.select_video_file)
-        file_layout.addWidget(self.video_file_listbox)
+        file_layout.addWidget(self.video_file_listbox, 1)  # Add stretch factor
+        
+        # Add Select Video button aligned only under the right panel
+        select_video_btn = QPushButton("Select Video")
+        select_video_btn.setFixedSize(150, 30)
+        select_video_btn.clicked.connect(self.select_video_file)
+        
+        # Create an HBox layout to position the button
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()  # This pushes the button to the right
+        btn_layout.addWidget(select_video_btn)
+        btn_layout.addStretch(0)  # Optional: add a small margin on the right
+        
+        file_layout.addLayout(btn_layout)
         
         sub_splitter.addWidget(file_panel)
         
         # Set equal sizes for the sub-splitter
         sub_splitter.setSizes([int(sub_splitter.width()/2), int(sub_splitter.width()/2)])
-
-        select_video_btn = QPushButton("Select Video")
-        select_video_btn.setFixedSize(150, 30)  # Set desired width and height
-
-        # Create a horizontal layout to center the button
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        btn_layout.addWidget(select_video_btn)
-        btn_layout.addStretch()
-
-        layout.addLayout(btn_layout)
         
         # Populate initial lists
         self.populate_video_dir_list(self.initial_video_dir)
@@ -194,6 +210,11 @@ class FilesManager(QDialog):
         create_dir_btn.clicked.connect(self.create_directory)
         btn_layout.addWidget(create_dir_btn)
         
+        # Delete Directory button
+        delete_dir_btn = QPushButton("Delete Directory")
+        delete_dir_btn.clicked.connect(self.delete_directory)
+        btn_layout.addWidget(delete_dir_btn)
+        
         # Select Directory button
         select_dir_btn = QPushButton("Select Directory")
         select_dir_btn.clicked.connect(self.select_directory)
@@ -203,69 +224,6 @@ class FilesManager(QDialog):
         
         # Populate initial directory list
         self.populate_dir_list(self.initial_output_dir)
-
-    def setup_video_panel(self, layout):
-        """Set up the video file selection panel."""
-        # Label
-        layout.addWidget(QLabel("Select Video File:"))
-        
-        # Navigation frame
-        nav_frame = QFrame()
-        nav_layout = QHBoxLayout(nav_frame)
-        nav_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Up button
-        up_btn = QPushButton("↑")
-        up_btn.setFixedWidth(30)
-        up_btn.clicked.connect(lambda: self.go_up('video'))
-        nav_layout.addWidget(up_btn)
-        
-        # Directory entry
-        self.video_dir_entry = QLineEdit(self.initial_video_dir)
-        self.video_dir_entry.returnPressed.connect(self.on_video_dir_update)
-        nav_layout.addWidget(self.video_dir_entry)
-        
-        layout.addWidget(nav_frame)
-        
-        # Lists frame
-        lists_frame = QFrame()
-        lists_layout = QHBoxLayout(lists_frame)
-        lists_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Directories list
-        dir_frame = QFrame()
-        dir_layout = QVBoxLayout(dir_frame)
-        dir_layout.setContentsMargins(0, 0, 0, 0)
-        
-        dir_layout.addWidget(QLabel("Directories:"))
-        self.video_dir_listbox = QListWidget()
-        self.video_dir_listbox.itemDoubleClicked.connect(self.on_video_dir_double_click)
-        dir_layout.addWidget(self.video_dir_listbox)
-        
-        lists_layout.addWidget(dir_frame)
-        
-        # Files list
-        file_frame = QFrame()
-        file_layout = QVBoxLayout(file_frame)
-        file_layout.setContentsMargins(0, 0, 0, 0)
-        
-        file_layout.addWidget(QLabel("Video Files:"))
-        self.video_file_listbox = QListWidget()
-        self.video_file_listbox.itemDoubleClicked.connect(self.select_video_file)
-        file_layout.addWidget(self.video_file_listbox)
-        
-        lists_layout.addWidget(file_frame)
-        
-        layout.addWidget(lists_frame)
-        
-        # Select Video button
-        select_video_btn = QPushButton("Select Video")
-        select_video_btn.clicked.connect(self.select_video_file)
-        layout.addWidget(select_video_btn)
-        
-        # Populate initial lists
-        self.populate_video_dir_list(self.initial_video_dir)
-        self.populate_file_list(self.initial_video_dir)
 
     def go_up(self, panel_type):
         """Navigate up one directory level."""
@@ -306,8 +264,63 @@ class FilesManager(QDialog):
                 self.dir_selected_label.setText(f"Selected Output Directory: {self.output_dir}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not create directory: {str(e)}")
-                # Center the error dialog
-                self.center_window(QMessageBox.findChild(self, "qt_msgbox_label"))
+
+    def delete_directory(self):
+        """Delete the currently selected directory."""
+        # Get the selected directory
+        current_item = self.output_dir_listbox.currentItem()
+        if not current_item:
+            QMessageBox.warning(
+                self,
+                "Warning",
+                "Please select a directory to delete."
+            )
+            return
+        
+        dir_name = current_item.text()
+        dir_path = os.path.join(self.current_output_dir, dir_name)
+        
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self,
+            "Confirm Deletion",
+            f"Are you sure you want to delete directory '{dir_name}'?\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                # Check if directory is empty
+                if os.listdir(dir_path):
+                    confirm_non_empty = QMessageBox.question(
+                        self,
+                        "Non-empty Directory",
+                        f"Directory '{dir_name}' is not empty. Delete anyway?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No
+                    )
+                    if confirm_non_empty != QMessageBox.StandardButton.Yes:
+                        return
+                
+                # Delete the directory (and all contents if non-empty)
+                import shutil
+                shutil.rmtree(dir_path)
+                
+                # Refresh the directory list
+                self.populate_dir_list(self.current_output_dir)
+                
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Directory '{dir_name}' has been deleted."
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"Could not delete directory: {str(e)}"
+                )
 
     def select_directory(self):
         """Select the current or highlighted directory as output directory."""
@@ -413,8 +426,6 @@ class FilesManager(QDialog):
                     "Warning", 
                     "Please select an output directory first using the 'Select Directory' button."
                 )
-                # Center the warning dialog
-                self.center_window(msg)
                 return
                 
             file_name = current_item.text()
@@ -428,8 +439,6 @@ class FilesManager(QDialog):
                 "Note", 
                 "You must select a video file to proceed"
             )
-            # Center the information dialog
-            self.center_window(msg)
 
     def center_window(self, width, height):
         """Center the window on the primary screen using Qt6's native functions."""

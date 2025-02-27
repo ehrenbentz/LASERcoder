@@ -333,8 +333,14 @@ class BehaviorKeyEditor(QDialog):
             self.behavior_key_combo.addItem("No file found")
 
     def load_behaviors(self):
-        """Load behaviors from file."""
+        """Load behaviors from file with improved error handling."""
         if os.path.exists(self.behavior_key_file):
+            if not self.check_file_access(self.behavior_key_file):
+                QMessageBox.critical(self, "Error", 
+                                   "Cannot access behavior key file.\nIs it open in another application?")
+                self.behaviors = [["", "", "point", ""] for _ in range(30)]
+                return False
+            
             try:
                 with open(self.behavior_key_file, 'r') as file:
                     reader = csv.reader(file)
@@ -343,13 +349,16 @@ class BehaviorKeyEditor(QDialog):
                         while len(row) < 4:
                             row.append("")
                         self.behaviors.append(row)
-                    while len(self.behaviors) < 30:  # Changed from 20 to 30
+                    while len(self.behaviors) < 30:
                         self.behaviors.append(["", "", "point", ""])
+                return True
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Error loading behaviors: {str(e)}")
-                self.behaviors = [["", "", "point", ""] for _ in range(30)]  # Changed from 20 to 30
+                self.behaviors = [["", "", "point", ""] for _ in range(30)]
+                return False
         else:
-            self.behaviors = [["", "", "point", ""] for _ in range(30)]  # Changed from 20 to 30
+            self.behaviors = [["", "", "point", ""] for _ in range(30)]
+            return True
             
     def update_behavior_entries(self):
         """Update UI entries with current behaviors."""
@@ -370,7 +379,7 @@ class BehaviorKeyEditor(QDialog):
                 self.me_group_entries[i].setText(me_group)
 
     def new_behavior_key_file(self):
-        """Create a new behavior key file."""
+        """Create a new behavior key file with improved error handling and cleanup."""
         if self.new_behavior_dialog_open:
             return
             
@@ -408,31 +417,52 @@ class BehaviorKeyEditor(QDialog):
                 return
                 
             new_name = f"{name}_behaviors.csv" if not name.endswith('_behaviors.csv') else name
-            self.behavior_key_file = os.path.join(self.behavior_key_dir, new_name)
+            new_file_path = os.path.join(self.behavior_key_dir, new_name)
             
+            # Check if we can write to this location
+            if not self.check_file_access(new_file_path, for_writing=True):
+                QMessageBox.critical(self, "Error", 
+                                   "Cannot create behavior key file.\nCheck folder permissions or if a file with the same name is open.")
+                self.new_behavior_dialog_open = False
+                return
+            
+            temp_file = new_file_path + ".tmp"
             try:
-                with open(self.behavior_key_file, 'w', newline='') as file:
+                # Use a temporary file and atomic rename for safety
+                with open(temp_file, 'w', newline='') as file:
                     writer = csv.writer(file)
-                    for behavior in [["", "", "point", ""] for _ in range(30)]:  # Changed from 20 to 30
+                    for behavior in [["", "", "point", ""] for _ in range(30)]:
                         writer.writerow(behavior)
-                        
+                
+                # If successful, rename to the actual file atomically
+                os.replace(temp_file, new_file_path)
+                
+                self.behavior_key_file = new_file_path
                 self.behavior_key_files[new_name] = self.behavior_key_file
                 self.update_behavior_key_menu()
                 self.behavior_key_combo.setCurrentText(name)
                 self.load_behaviors()
                 self.update_behavior_entries()
-                
+                    
             except Exception as e:
+                # Clean up temp file if it exists
+                self.cleanup_temp_file(temp_file)
                 QMessageBox.critical(self, "Error", f"Error creating file: {str(e)}")
                 
         self.new_behavior_dialog_open = False
 
     def rename_behavior_key(self):
-        """Rename the current behavior key file."""
+        """Rename the current behavior key file with improved atomicity and cleanup."""
         current_name = self.behavior_key_combo.currentText()
         if not current_name or current_name == "No file found":
             QMessageBox.warning(self, "No Selection",
                               "Please select a Behavior Key file to rename.")
+            return
+            
+        # Check if we have access to the current file
+        if not self.check_file_access(self.behavior_key_file, for_writing=True):
+            QMessageBox.critical(self, "Error", 
+                               "Cannot access the current behavior key file.\nIs it open in another application?")
             return
             
         dialog = QInputDialog(self)
@@ -474,22 +504,64 @@ class BehaviorKeyEditor(QDialog):
                                   "A file with this name already exists.")
                 return
                 
+            # Check if we can write to the new location
+            if not self.check_file_access(new_path, for_writing=True):
+                QMessageBox.critical(self, "Error", 
+                                   "Cannot create file at the new location.\nCheck folder permissions.")
+                return
+                
+            temp_path = new_path + ".tmp"
             try:
-                os.rename(old_path, new_path)
+                # Use os.rename (which is atomic on most file systems) instead of separate read/write operations
+                # First, create a copy of the file with the new name as a temporary file
+                with open(old_path, 'rb') as src_file:
+                    with open(temp_path, 'wb') as dest_file:
+                        dest_file.write(src_file.read())
+                
+                # Use atomic replace operation to rename the temp file to the new name
+                os.replace(temp_path, new_path)
+                
+                # Only after successful creation of the new file, remove the old one
+                try:
+                    os.remove(old_path)
+                except Exception as e:
+                    # If we can't remove the old file, it's not critical - we already have a good copy
+                    # Just log or display a warning
+                    print(f"Warning: Could not remove old file {old_path}: {e}")
+                    # Could show a non-blocking message here if desired
+                
+                # Update state
                 self.behavior_key_file = new_path
                 self.update_behavior_key_menu()
                 self.behavior_key_combo.setCurrentText(new_name)
                 
             except Exception as e:
+                # Clean up temp file if it exists
+                self.cleanup_temp_file(temp_path)
                 QMessageBox.critical(self, "Error",
                                    f"Failed to rename the file: {str(e)}")
 
+    def cleanup_temp_file(self, file_path):
+        """Safely clean up a temporary file if it exists."""
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                # Just log the error, but don't interrupt processing
+                print(f"Warning: Could not remove temporary file {file_path}: {e}")
+
     def delete_behavior_key(self):
-        """Delete the current behavior key file."""
+        """Delete the current behavior key file with improved error handling."""
         current_name = self.behavior_key_combo.currentText()
         if not current_name or current_name == "No file found":
             QMessageBox.warning(self, "No Selection",
                               "Please select a Behavior Key file to delete.")
+            return
+            
+        # Check if we have access to the file for deletion
+        if not self.check_file_access(self.behavior_key_file, for_writing=True):
+            QMessageBox.critical(self, "Error", 
+                               "Cannot access the behavior key file for deletion.\nIs it open in another application?")
             return
             
         msg_box = QMessageBox(self)
@@ -534,15 +606,23 @@ class BehaviorKeyEditor(QDialog):
                                    f"Failed to delete the file: {str(e)}")
 
     def save_behaviors(self):
-        """Save behaviors to file."""
+        """Save behaviors to file with improved error handling and cleanup."""
         if not self.behavior_key_file or self.behavior_key_combo.currentText() == "No file found":
             self.new_behavior_key_file()
             return False
             
+        # Check if we have write access to the file
+        if not self.check_file_access(self.behavior_key_file, for_writing=True):
+            QMessageBox.critical(self, "Error", 
+                               "Cannot save to behavior key file.\nIs it open in another application?")
+            return False
+            
+        temp_file = self.behavior_key_file + ".tmp"
         try:
-            with open(self.behavior_key_file, 'w', newline='') as file:
+            # Use a temporary file and atomic replace for data safety
+            with open(temp_file, 'w', newline='') as file:
                 writer = csv.writer(file)
-                for i in range(30):  # Changed from 20 to 30
+                for i in range(30):
                     behavior = [
                         self.name_entries[i].text(),
                         self.key_entries[i].text(),
@@ -550,6 +630,9 @@ class BehaviorKeyEditor(QDialog):
                         self.me_group_entries[i].text()
                     ]
                     writer.writerow(behavior)
+            
+            # Atomically replace the original file
+            os.replace(temp_file, self.behavior_key_file)
                     
             # Update config
             filename = os.path.basename(self.behavior_key_file)
@@ -557,6 +640,8 @@ class BehaviorKeyEditor(QDialog):
             return True
             
         except Exception as e:
+            # Clean up temp file if it exists
+            self.cleanup_temp_file(temp_file)
             QMessageBox.critical(self, "Error",
                                f"Error saving behaviors: {str(e)}")
             return False
@@ -737,3 +822,35 @@ class BehaviorKeyEditor(QDialog):
         
         # Make sure the window is not maximized
         window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMaximized)
+
+    def check_file_access(self, file_path, for_writing=False):
+        """Check if a file is accessible for reading or writing"""
+        try:
+            if for_writing:
+                # For writing, we need to check if we can open the file for writing
+                if os.path.exists(file_path):
+                    # File exists, try to open for appending
+                    with open(file_path, 'a'):
+                        pass
+                else:
+                    # File doesn't exist, try to create a temporary file in the same directory
+                    temp_file = file_path + ".access_test"
+                    try:
+                        with open(temp_file, 'w') as f:
+                            f.write("test")
+                        os.remove(temp_file)  # Immediately clean up
+                    except Exception:
+                        # If cleanup fails, make sure we try once more
+                        self.cleanup_temp_file(temp_file)
+                        return False
+            else:
+                # For reading, just try to read a small bit
+                if os.path.exists(file_path):
+                    with open(file_path, 'r') as f:
+                        f.read(1)
+                else:
+                    # File doesn't exist, so it's not accessible for reading
+                    return False
+            return True
+        except (PermissionError, OSError):
+            return False

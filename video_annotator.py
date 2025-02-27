@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QFrame, QWidget, QVBoxLayout,
     QScrollBar, QMenu, QDialog, QLineEdit, QTextEdit, QMessageBox,
     QAbstractItemView, QFormLayout, QGroupBox, QDialogButtonBox,
     QGridLayout, QApplication, QStackedLayout)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QEvent, QRect
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QEvent, QRect, QSysInfo
 from PyQt6.QtGui import QColor, QPainter, QAction, QScreen
 
 class VideoAnnotator(QFrame):
@@ -17,11 +17,7 @@ class VideoAnnotator(QFrame):
     
     def __init__(self, parent, video_path, session_state_file, behavior_key_file, output_dir):
         super().__init__(parent)
-        
-        # Track states
-        self.dialog_open = False
-        self.pressed_keys = set()
-        
+                
         # Store parameters
         self.parent = parent
         self.video_path = video_path
@@ -29,21 +25,41 @@ class VideoAnnotator(QFrame):
         self.behavior_key_file = behavior_key_file
         self.output_dir = output_dir
         self.floating_windows = []
+        self.progress_timer = None
+        self.current_os = QSysInfo.productType().lower()
+
+        # Track states
+        self.dialog_open = False
+        self.pressed_keys = set()
         
+        self.selected_treeview = None
+        self.selected_item = None 
+        self.selected_index = None
+        self.undo_stack = []
+
         # Initialize core components
-        self.initialize_data_structures()
         self.setup_file_paths()
+        self.initialize_data_structures()
         self.configure_display()
         self.setup_layout_measurements()
         self.setup_layout()
         self.create_video_frame()
         self.create_controls_toggle_buttons()
-        self.initialize_mpv_player()
         self.create_ui_components()
-        self.load_data_and_start()
         self.setup_key_bindings()
-
         self.app.installEventFilter(self)
+        if self.current_os == "windows":
+            self.initialize_mpv_player_Windows()
+        elif self.current_os == "macos":
+            self.initialize_mpv_player_Mac()
+        else:
+            print(f"Unsupported OS '{current_os}'.")
+            self.on_closing
+        #QTimer.singleShot(250, self.load_data_and_start) # optional delay in case errors show that ui componenets aren't loaded yet
+        self.load_data_and_start()
+
+        self.state_annotations_tree.itemSelectionChanged.connect(self.on_state_item_selected)
+        self.point_annotations_tree.itemSelectionChanged.connect(self.on_point_item_selected)
 
     def initialize_data_structures(self):
         """Initialize all data structures for annotations and behaviors"""
@@ -65,25 +81,26 @@ class VideoAnnotator(QFrame):
         self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
 
     def configure_display(self):
-        """Configure display settings and window properties"""
+        """Configure display settings and window properties with proper bounds checking"""
         self.app = QApplication.instance() or QApplication([])
         # Get the primary screen
         self.screen = self.app.primaryScreen()
         self.scaling_factor = self.screen.devicePixelRatio()
         
-        # Get geometry from the primary screen (returns a QRect)
-        geom = self.screen.geometry()
-        self.display_width = geom.width()
-        self.display_height = geom.height()
-        self.display_x = geom.x()
-        self.display_y = geom.y()
+        # Get available geometry (usable space excluding taskbars/docks)
+        avail_geom = self.screen.availableGeometry()
+        self.display_width = avail_geom.width()
+        self.display_height = avail_geom.height()
+        self.display_x = avail_geom.x()
+        self.display_y = avail_geom.y()
         
         # Configure window
         self.parent.setWindowTitle(f"LaserTag  {self.video_path}")
+                
+        # Set window size within available geometry
+        self.parent.setGeometry(avail_geom)
+        # Show maximized to adapt to available space
         self.parent.showMaximized()
-        
-        # Set background color
-        self.setStyleSheet("background-color: black;")
 
     def center_window(self, window, width, height):
         """Center a window on the primary monitor"""
@@ -145,14 +162,13 @@ class VideoAnnotator(QFrame):
 
     def create_video_frame(self):
         self.video_frame = QFrame()
-        self.video_frame.setStyleSheet("background-color: black;")
         self.video_frame.setFixedSize(self.video_width, self.video_height)
         self.left_layout.addWidget(self.video_frame)
 
-    def initialize_mpv_player(self):
-        """Initialize the MPV player"""
+    def initialize_mpv_player_Mac(self):
+        """Initialize the MPV player with modified code to run on MacOS"""
         # Get the window id from the video frame
-        window_id = int(self.video_frame.winId())
+        window_id = int(self.video_frame.winId()) # modify this line
         
         # Create an MPV player with the window id
         self.player = mpv.MPV(wid=str(window_id),
@@ -160,9 +176,39 @@ class VideoAnnotator(QFrame):
                              hwdec="auto-safe",
                              profile="fast",
                              background_color="000000")
-        
         # Start playing the video
         self.player.play(self.video_path)
+
+    def initialize_mpv_player_Windows(self):
+        """Initialize the MPV player"""
+        # Get the window id from the video frame
+        window_id = int(self.video_frame.winId())
+        
+        # Create an MPV player with the window id
+        self.player = mpv.MPV(wid=str(window_id),
+                            keep_open='yes',
+                            log_handler=print,
+                            hwdec="auto-safe",
+                            profile="fast",
+                            background_color="000000")
+
+    def load_data_and_start(self):
+        """Load data and start playback"""
+        # Load behaviors and annotations
+        self.load_behaviors()
+        self.load_annotations()
+        self.update_annotations()
+        self.populate_behavior_treeviews()
+        self.initialize_progress_bar()
+        self.load_session_state()
+        self.auto_save_session_state()
+        # Process all geometry configurations before showing the window
+        self.parent.update()
+        self.parent.show()
+        self.parent.activateWindow()
+        self.parent.raise_()
+        self.player.play(self.video_path)
+        QTimer.singleShot(100, self.scroll_annotations_to_bottom)
 
     def create_ui_components(self):
         """Create and configure UI components"""        
@@ -172,26 +218,22 @@ class VideoAnnotator(QFrame):
         self.create_annotation_panel()
 
     def update_floating_windows_visibility(self):
-        """Update visibility of all floating windows"""
-        windows = [
-            self.behavior_toggle_window,
-            self.controls_window
-        ]
-        
-        if hasattr(self, "floating_controls_window") and self.floating_controls_window:
-            windows.append(self.floating_controls_window)
-        if hasattr(self, "behavior_buttons_window") and self.behavior_buttons_window:
-            windows.append(self.behavior_buttons_window)
-        
-        # Check if main window is minimized
-        is_minimized = self.parent.isMinimized()
-        
-        for window in windows:
-            if window and not window.isDestroyed():
-                if is_minimized:
-                    window.hide()
-                else:
-                    window.show()
+        """Hide/show floating windows depending on whether the main window is active or minimized."""
+        should_hide = (
+            self.parent.windowState() & Qt.WindowState.WindowMinimized
+            or not self.parent.isActiveWindow()
+        )
+
+        for w in self.floating_windows:
+            if w is not None:
+                try:
+                    w.winId()  # Checks if w is already deleted
+                    if should_hide:
+                        w.hide()
+                    else:
+                        w.show()
+                except RuntimeError:
+                    pass
 
     def create_progress_bar(self):
         """Create a custom progress bar with time labels"""
@@ -226,7 +268,7 @@ class VideoAnnotator(QFrame):
                 # Draw progress fill
                 if self.progress > 0:
                     progress_width = int(self.width() * self.progress)
-                    painter.fillRect(0, 0, progress_width, self.height(), QColor(0, 0, 255))
+                    painter.fillRect(0, 0, progress_width, self.height(), QColor(0, 0, 150))
                 
                 # Draw text
                 painter.setPen(QColor(255, 255, 255))  # White text
@@ -311,56 +353,20 @@ class VideoAnnotator(QFrame):
             self.update_right_text(total_time_str)
 
     def poll_progress_bar(self):
-        """Update progress bar periodically and handle video end properly"""
-        # Update the progress bar
-        self.update_progress()
-        
+        """Update progress bar periodically without explicit end-of-video handling."""
+        if not hasattr(self, 'player') or not self.player:
+            return  # Do not schedule further updates if the player doesn't exist
+
         try:
-            total_sec = self.player.duration or 0
-            current_sec = self.player.time_pos
-            
-            # Handle case where time_pos returns None or 0 at high speeds
-            if current_sec is None:
-                print("Warning: Could not get current time position, using last known position")
-                # Schedule next update and return without further processing
-                QTimer.singleShot(200, self.poll_progress_bar)
-                return
-                
-            # At high speeds, MPV might return 0.0 when at end of file
-            # Check if we're at end of file using player property
-            eof_reached = self.player.eof_reached if hasattr(self.player, 'eof_reached') else False
-            at_end = (total_sec > 0 and current_sec >= total_sec - 0.5) or eof_reached
-            
-            if at_end:
-                print(f"Video reached end. Position: {current_sec}/{total_sec}, EOF: {eof_reached}")
-                
-                # Force pause regardless of the specific condition
-                self.player.pause = True
-                
-                try:
-                    # Try to position to just before the end for a clean frame
-                    last_frame_pos = max(0, total_sec - 0.5)
-                    self.player.time_pos = last_frame_pos
-                    print(f"Set position to last frame at {last_frame_pos}")
-                    
-                    # Force a progress update to show the correct position
-                    self.update_progress()
-                except Exception as e:
-                    print(f"Error setting last frame position: {e}")
-                    
-                    # If positioning fails, try restarting the video as a fallback
-                    try:
-                        print("Reloading video as fallback")
-                        # We're using loadfile with replace to maintain the player instance
-                        self.player.command("loadfile", self.video_path, "replace")
-                        self.player.pause = True  # Ensure it's paused
-                    except Exception as reload_error:
-                        print(f"Error reloading video: {reload_error}")
+            self.update_progress()
         except Exception as e:
             print(f"Error in progress bar update: {e}")
-        
+            # Optionally reschedule even on error
+            self.progress_timer = QTimer.singleShot(250, self.poll_progress_bar)
+            return
+
         # Schedule next update
-        QTimer.singleShot(200, self.poll_progress_bar)
+        self.progress_timer = QTimer.singleShot(250, self.poll_progress_bar)
 
     def initialize_progress_bar(self):
         """Initialize the progress bar"""
@@ -398,63 +404,87 @@ class VideoAnnotator(QFrame):
             # Update progress immediately
             self.update_progress()
 
+    def on_state_item_selected(self):
+        self.selected_treeview = self.state_annotations_tree
+        selected_items = self.state_annotations_tree.selectedItems()
+        if selected_items:
+            self.selected_item = selected_items[0]
+            self.selected_index = self.state_annotations_tree.indexOfTopLevelItem(self.selected_item)
+
+    def on_point_item_selected(self):
+        self.selected_treeview = self.point_annotations_tree
+        selected_items = self.point_annotations_tree.selectedItems()
+        if selected_items:
+            self.selected_item = selected_items[0]
+            self.selected_index = self.point_annotations_tree.indexOfTopLevelItem(self.selected_item)
+
     def create_controls_toggle_buttons(self):
-        """Create floating control buttons"""
-        # Create behavior toggle window
-        self.behavior_toggle_window = QWidget(self.parent)
-        self.behavior_toggle_window.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
-        self.behavior_toggle_window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
-        # Create behavior toggle button
-        self.behavior_toggle_button = QPushButton("☰", self.behavior_toggle_window)
-        self.behavior_toggle_button.setFixedSize(30, 30)
-        self.behavior_toggle_button.setStyleSheet("""
-            QPushButton {
-                background-color: lightgrey;
-                border: 1px solid grey;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: grey;
-            }
-        """)
-        self.behavior_toggle_button.clicked.connect(self.toggle_behavior_buttons)
-        
-        # Create controls window
-        self.controls_window = QWidget(self.parent)
-        self.controls_window.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
-        self.controls_window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
-        # Create controls button
-        self.controls_button = QPushButton("⚙", self.controls_window)
-        self.controls_button.setFixedSize(30, 30)
-        self.controls_button.setStyleSheet("""
-            QPushButton {
-                background-color: lightgrey;
-                border: 1px solid grey;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: grey;
-            }
-        """)
-        self.controls_button.clicked.connect(self.toggle_floating_controls)
-        
-        # Position the windows
-        video_pos = self.video_frame.mapToGlobal(QPoint(0, 0))
-        margin = 10
-        self.behavior_toggle_window.move(video_pos.x() + margin, video_pos.y() + margin)
-        self.controls_window.move(video_pos.x() + margin, 
-                                video_pos.y() + self.video_height - 40)
-        
-        # Show the windows
-        self.behavior_toggle_window.show()
-        self.controls_window.show()
-        
-        # Add to floating windows list
-        self.floating_windows.extend([self.behavior_toggle_window, self.controls_window])
+            """Create floating control buttons"""
+            # Create behavior toggle window
+            self.behavior_toggle_window = QWidget(self.parent)
+            self.behavior_toggle_window.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+            self.behavior_toggle_window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            
+            # Create behavior toggle button
+            self.behavior_toggle_button = QPushButton("\u2637", self.behavior_toggle_window)
+            self.behavior_toggle_button.setFixedSize(30, 30)
+            self.behavior_toggle_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #808080;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background-color: #1084D9;
+                }
+                QPushButton:pressed {
+                    background-color: #006CC1;
+                }
+            """)
+            self.behavior_toggle_button.clicked.connect(self.toggle_behavior_buttons)
+            
+            # Create controls window
+            self.controls_window = QWidget(self.parent)
+            self.controls_window.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+            self.controls_window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            
+            # Create controls button
+            self.controls_button = QPushButton("\u23E3", self.controls_window)
+            self.controls_button.setFixedSize(30, 30)
+            self.controls_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #808080;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background-color: #1084D9;
+                }
+                QPushButton:pressed {
+                    background-color: #006CC1;
+                }
+            """)
+            self.controls_button.clicked.connect(self.toggle_floating_controls)
+            
+            # Position the windows
+            video_pos = self.video_frame.mapToGlobal(QPoint(0, 0))
+            margin = 5
+            self.behavior_toggle_window.move(video_pos.x() + margin, video_pos.y() + 20)
+            self.controls_window.move(video_pos.x() + margin, 
+                                    video_pos.y() + self.video_height - 20)
+            
+            # Show the windows
+            self.behavior_toggle_window.show()
+            self.controls_window.show()
+            
+            # Add to floating windows list
+            self.floating_windows.extend([self.behavior_toggle_window, self.controls_window])
 
     def toggle_floating_controls(self):
         """Toggle the floating controls panel"""
@@ -475,22 +505,22 @@ class VideoAnnotator(QFrame):
         
         # Create main layout
         layout = QHBoxLayout(self.floating_controls_window)
-        layout.setSpacing(15)
-        layout.setContentsMargins(15, 0, 15, 0)
+        layout.setSpacing(20)
+        layout.setContentsMargins(20, 0, 20, 0)
         
         # Define button style
         button_style = """
             QPushButton {
-                background-color: lightgrey;
-                color: #202020;
-                border: 2px solid grey;
-                border-radius: 5px;
-                font-size: 12px;
-                min-width: 40px;
-                min-height: 40px;
+                background-color: darkgrey;
+                color: black;
+                border: 1px solid grey;
+                border-radius: 3px;
+                padding: 5px;
+                min-width: 100px;
+                text-align: center;
             }
             QPushButton:hover {
-                background-color: grey;
+                background-color: darkgrey;
                 color: white;
             }
             QPushButton:pressed {
@@ -498,16 +528,15 @@ class VideoAnnotator(QFrame):
                 color: white;
             }
         """
-        
         # Create control buttons with appropriate symbols and callbacks
         buttons = [
-            ("❮❮", lambda: self.seek_relative(-10000)),
-            ("❮", lambda: self.seek_relative(-1000)),
-            ("⏪", lambda: self.change_speed(-1)),
+            ("\u27F8", lambda: self.seek_relative(-10000)),
+            ("\u27F5", lambda: self.seek_relative(-1000)),
+            ("<<", lambda: self.change_speed(-1)),
             ("■", self.toggle_play_pause),
-            ("⏩", lambda: self.change_speed(1)),
-            ("❯", lambda: self.seek_relative(1000)),
-            ("❯❯", lambda: self.seek_relative(10000))
+            (">>", lambda: self.change_speed(1)),
+            ("\u27F6", lambda: self.seek_relative(1000)),
+            ("\u27F9", lambda: self.seek_relative(10000))
         ]
         
         for text, callback in buttons:
@@ -576,43 +605,42 @@ class VideoAnnotator(QFrame):
         # Button styles
         point_style = """
             QPushButton {
-                background-color: lightgrey;
+                background-color: #5B6770;
                 color: black;
                 border: 1px solid grey;
                 border-radius: 3px;
                 padding: 5px;
                 min-width: 100px;
-                text-align: left;
+                text-align: center;
             }
             QPushButton:hover {
-                background-color: grey;
+                background-color: darkgrey;
                 color: white;
             }
             QPushButton:pressed {
                 background-color: #404040;
                 color: white;
             }
-        """
-        
+        """        
         state_style = """
             QPushButton {
-                background-color: darkgrey;
+                background-color: #7B6469;
                 color: black;
                 border: 1px solid grey;
                 border-radius: 3px;
                 padding: 5px;
                 min-width: 100px;
-                text-align: left;
+                text-align: center;
             }
             QPushButton:hover {
-                background-color: grey;
+                background-color: darkgrey;
                 color: white;
             }
             QPushButton:pressed {
                 background-color: #404040;
                 color: white;
             }
-        """
+        """        
         
         # Sort behaviors by type
         point_behaviors = []
@@ -781,37 +809,23 @@ class VideoAnnotator(QFrame):
         # Show dialog
         self.note_dialog.exec()
 
-    def load_data_and_start(self):
-        """Load data and start playback"""
-        # Load behaviors and annotations
-        self.load_behaviors()
-        self.load_annotations()
-        self.update_annotations()
-        self.populate_behavior_treeviews()
-        self.initialize_progress_bar()
-        self.load_session_state()
-        self.auto_save_session_state()
-
-        # Process all geometry configurations before showing the window
-        self.parent.update()
-        self.parent.show()
-        self.parent.activateWindow()
-        self.parent.raise_()
-
     def handle_behavior_key_press(self, key):
-        """Handle behavior key press"""
+        """Handle behavior key press with error handling"""
         behavior_info = self.behavior_map[key]
         current_time = self.player.time_pos or 0
         formatted_time = self.format_time_human_readable(current_time)
         
         if behavior_info["Type"] == "State":
-            self.handle_state_behavior(key, current_time, formatted_time)
+            # For state behaviors, update local data only if file operation succeeds
+            if self.handle_state_behavior(key, current_time, formatted_time):
+                # UI updates are already handled in handle_state_behavior
+                pass
         elif behavior_info["Type"] == "Point":
             # Check for duplicates
             if any(evt["Name"] == behavior_info["Name"] and evt["time"] == formatted_time 
                    for evt in self.point_events):
                 return
-                
+                    
             # Create point annotation
             record = {
                 "Video": self.video_name,
@@ -827,37 +841,33 @@ class VideoAnnotator(QFrame):
                 "Notes": ""
             }
             
-            # Add to records
-            self.append_annotation(record)
-            self.point_events.append({
-                "Name": behavior_info["Name"],
-                "time": formatted_time,
-                "Manual_Edit": False,
-                "Notes": ""
-            })
-            
-            # Handle highlighting
-            self.used_point_behaviors.add(key)
-            QTimer.singleShot(100, lambda: self.used_point_behaviors.discard(key))
-            
-            # Update UI
-            self.update_annotations()
-            self.populate_behavior_treeviews()
+            # Only add to memory and update UI if file write succeeds
+            if self.append_annotation(record):
+                self.point_events.append({
+                    "Name": behavior_info["Name"],
+                    "time": formatted_time,
+                    "Manual_Edit": False,
+                    "Notes": ""
+                })
+                
+                # Handle highlighting
+                self.used_point_behaviors.add(key)
+                QTimer.singleShot(100, lambda: self.used_point_behaviors.discard(key))
+                
+                # Update UI
+                self.update_annotations()
+                self.populate_behavior_treeviews()
 
     def setup_key_bindings(self):
         """Set up all key bindings with dialog blocking"""
-        # Install event filter on parent window to catch key events
         self.parent.installEventFilter(self)
         
-        # Define key handler decorator
         def create_blocked_handler(handler):
-            """Create a handler that only executes if no dialog is open"""
             def blocked_handler(*args, **kwargs):
                 if not self.dialog_open:
                     return handler(*args, **kwargs)
             return blocked_handler
-
-        # Store key bindings for reference - use the same functions as the buttons
+        
         self.key_bindings = {
             # Toggle play/pause
             Qt.Key.Key_Space: create_blocked_handler(self.toggle_play_pause),
@@ -878,7 +888,7 @@ class VideoAnnotator(QFrame):
             Qt.Key.Key_W: create_blocked_handler(lambda: self.seek_relative(10000)),
             Qt.Key.Key_S: create_blocked_handler(lambda: self.seek_relative(-10000)),
 
-            # Speed control - use the same function as the speed buttons
+            # Speed control
             Qt.Key.Key_Equal: create_blocked_handler(lambda: self.change_speed(1)),
             Qt.Key.Key_Plus: create_blocked_handler(lambda: self.change_speed(1)),
             Qt.Key.Key_Minus: create_blocked_handler(lambda: self.change_speed(-1)),
@@ -888,38 +898,62 @@ class VideoAnnotator(QFrame):
             Qt.Key.Key_Backspace: create_blocked_handler(self.reset_speed),
 
             # Other controls
-            Qt.Key.Key_Escape: self.return_to_file_selection,  # Modified to use new method instead of on_closing
+            Qt.Key.Key_Escape: self.return_to_file_selection,
             Qt.Key.Key_Delete: create_blocked_handler(self.delete_annotation),
+            Qt.Key.Key_Z | Qt.KeyboardModifier.ControlModifier: create_blocked_handler(self.undo_delete)
         }
 
-        # Add Control+Z for undo
-        self.key_bindings[Qt.Key.Key_Z | Qt.KeyboardModifier.ControlModifier] = create_blocked_handler(self.undo_delete)
-
     def eventFilter(self, obj, event):
-        """Handle key events"""
+        
+        # ensure floating buttons track and follow window state
+        if obj == self.parent:
+            if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
+                self.update_floating_windows_visibility()
+
+        if event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            modifiers = event.modifiers()
+            combined_key = key | modifiers.value
+            
+            #print(f"Key pressed: {key}, Modifiers: {modifiers.value}, Combined: {combined_key}")
+
+            # Only check for Ctrl+Z when we see key 90 (Z) with modifiers
+            if key == Qt.Key.Key_Z and modifiers & Qt.KeyboardModifier.ControlModifier:
+                ctrl_z_combo = Qt.Key.Key_Z | Qt.KeyboardModifier.ControlModifier
+                if not self.dialog_open:
+                    self.undo_delete()
+                    return True
+                
+        # Handle key press events
         if event.type() == QEvent.Type.KeyPress:
             # Handle special keys defined in key_bindings
             key = event.key()
             modifiers = event.modifiers()
             combined_key = key | modifiers.value
-
-            # Escape key should work even if no dialog is open
-            if key == Qt.Key.Key_Escape and not self.dialog_open:
-                self.return_to_file_selection()
-                return True  # Event handled
                 
-            # Only process if no dialog is open
+            # Only process key presses if no dialog is open
             if not self.dialog_open:
                 # Check if this is a special key combination
                 if combined_key in self.key_bindings:
                     self.key_bindings[combined_key]()
-                    return True  # Event handled
+                    return True
+                
+                # Handle behavior key presses
+                char = event.text().lower()
+                if char and char in self.behavior_map:
+                    self.handle_behavior_key_press(char)
+                    return True
+
+            # Escape key should work even if no dialog is open
+            if key == Qt.Key.Key_Escape and not self.dialog_open:
+                self.return_to_file_selection()
+                return True
 
         elif event.type() == QEvent.Type.KeyRelease:
             char = event.text().lower()
             if char:
                 self.pressed_keys.discard(char)
-                return True  # Event handled
+                return True
 
         # Pass other events to the parent class
         return super().eventFilter(obj, event)
@@ -966,33 +1000,69 @@ class VideoAnnotator(QFrame):
         self.pressed_keys.discard(key)
 
     def save_session_state(self):
-        """Save the current video position to the session state file."""
+        """Save the current video position to the session state file with error handling."""
         try:
             # Get current position before doing anything else
             current_time = self.player.time_pos
             if current_time is None:
                 print("Warning: Could not get current time position")
-                return
-                
+                return False
+                    
             # Ensure we have a valid timestamp
             current_time = float(current_time)
             if current_time <= 0:
                 print("Warning: Invalid timestamp value:", current_time)
-                return
-                
+                return False
+                    
             resume_dir = os.path.join(self.output_dir, "Resume")
             file_path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
             
             # Create session state data
             session_state = {"timestamp_sec": current_time}
             
-            # Save to file
-            with open(file_path, "w") as f:
-                json.dump(session_state, f)
-            print(f"Successfully saved session state: {current_time:.3f} seconds")
-            
+            # Attempt to create a temporary file first to check access
+            temp_file = file_path + ".tmp"
+            try:
+                with open(temp_file, "w") as f:
+                    json.dump(session_state, f)
+                    
+                # If successful, use atomic rename to replace the original file
+                os.replace(temp_file, file_path)
+                print(f"Successfully saved session state: {current_time:.3f} seconds")
+                return True
+                
+            except (PermissionError, OSError) as e:
+                print(f"Error accessing session state file: {e}")
+                # Clean up temp file if it exists
+                if os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except:
+                        pass
+                        
+                # Show error message if this isn't an auto-save operation
+                # We can tell this by checking the call stack or using a flag parameter
+                # For now, we'll just silence the error for auto-saves to avoid interrupt
+                if not hasattr(self, '_auto_saving') or not self._auto_saving:
+                    self.on_write_error("Cannot save session state.\nIs the file open in another application?")
+                return False
+                
         except Exception as e:
             print(f"Error saving session state: {e}")
+            return False
+
+    def auto_save_session_state(self):
+        """Auto-save session state without showing error dialogs."""
+        try:
+            # Set a flag to indicate this is an auto-save
+            self._auto_saving = True
+            self.save_session_state()
+        finally:
+            # Reset the flag
+            self._auto_saving = False
+            
+        # Schedule next auto-save
+        QTimer.singleShot(5000, self.auto_save_session_state)
 
     def schedule_resume(self, timestamp_sec):
         """Schedule resume of video playback"""
@@ -1018,10 +1088,6 @@ class VideoAnnotator(QFrame):
         else:
             print("No session state found.")
 
-    def auto_save_session_state(self):
-        self.save_session_state()
-        # Changed from self.after to QTimer
-        QTimer.singleShot(5000, self.auto_save_session_state)
 
     def create_annotation_panel(self):
             """Create and configure the annotation panel with scrollable trees and proper sizing"""
@@ -1070,7 +1136,7 @@ class VideoAnnotator(QFrame):
                     font-size: """ + tree_font + """;
                 }
                 QTreeWidget::item:selected {
-                    background-color: #0078D7;
+                    background-color: #808080;
                     color: white;
                 }
                 QTreeWidget::item:hover {
@@ -1105,7 +1171,7 @@ class VideoAnnotator(QFrame):
             
             button_style = """
                 QPushButton {
-                    background-color: #0078D7;
+                    background-color: #808080;
                     color: white;
                     border: none;
                     border-radius: 4px;
@@ -1254,7 +1320,7 @@ class VideoAnnotator(QFrame):
             
             button_size_policy = """
                 QPushButton {
-                    background-color: #0078D7;
+                    background-color: #808080;
                     color: white;
                     border: none;
                     border-radius: 4px;
@@ -1282,6 +1348,24 @@ class VideoAnnotator(QFrame):
             buttons_layout.addWidget(summary_button)
             
             main_layout.addWidget(buttons_frame)
+
+
+            # Add selection handlers for tree widgets
+            self.state_annotations_tree.itemClicked.connect(
+                lambda item: self.handle_tree_selection(self.state_annotations_tree, item)
+            )
+            self.point_annotations_tree.itemClicked.connect(
+                lambda item: self.handle_tree_selection(self.point_annotations_tree, item)
+            )
+
+    def handle_tree_selection(self, tree_widget, item):
+        """Handle selection in annotation trees"""
+        self.selected_treeview = tree_widget
+        self.selected_item = item
+        if tree_widget == self.state_annotations_tree:
+            self.selected_index = self.state_annotations_tree.indexOfTopLevelItem(item)
+        else:
+            self.selected_index = self.point_annotations_tree.indexOfTopLevelItem(item)
 
     def load_behaviors(self):
         """Load behaviors from CSV file"""
@@ -1358,15 +1442,6 @@ class VideoAnnotator(QFrame):
             item = QTreeWidgetItem([name, start_time, end_time])
             self.state_annotations_tree.addTopLevelItem(item)
         
-        # Scroll to last item if exists
-        if self.state_annotations_tree.topLevelItemCount() > 0:
-            last_item = self.state_annotations_tree.topLevelItem(
-                self.state_annotations_tree.topLevelItemCount() - 1
-            )
-            self.state_annotations_tree.scrollToItem(
-                last_item, QAbstractItemView.ScrollHint.EnsureVisible
-            )
-
         # Update Point Annotations
         self.point_annotations_tree.clear()
         for event in self.point_events:
@@ -1375,14 +1450,24 @@ class VideoAnnotator(QFrame):
             item = QTreeWidgetItem([name, time_])
             self.point_annotations_tree.addTopLevelItem(item)
         
-        # Scroll to last item if exists
+        # Use QTimer to delay scrolling until after the UI has updated
+        QTimer.singleShot(50, self.scroll_annotations_to_bottom)
+
+    def scroll_annotations_to_bottom(self):
+        """Scroll annotation treeviews to the bottom"""
+        # Scroll to the last item in State Annotations
+        if self.state_annotations_tree.topLevelItemCount() > 0:
+            last_item = self.state_annotations_tree.topLevelItem(
+                self.state_annotations_tree.topLevelItemCount() - 1
+            )
+            self.state_annotations_tree.scrollToItem(last_item, QAbstractItemView.ScrollHint.EnsureVisible)
+        
+        # Scroll to the last item in Point Annotations
         if self.point_annotations_tree.topLevelItemCount() > 0:
             last_item = self.point_annotations_tree.topLevelItem(
                 self.point_annotations_tree.topLevelItemCount() - 1
             )
-            self.point_annotations_tree.scrollToItem(
-                last_item, QAbstractItemView.ScrollHint.EnsureVisible
-            )
+            self.point_annotations_tree.scrollToItem(last_item, QAbstractItemView.ScrollHint.EnsureVisible)
 
     def populate_behavior_treeviews(self):
         """Populate behavior treeviews with current data"""
@@ -1494,18 +1579,21 @@ class VideoAnnotator(QFrame):
         self.populate_behavior_treeviews()
 
     def handle_state_behavior(self, key, frame_timestamp, formatted_timestamp):
-        """Handle state behavior key press"""
+        """Handle state behavior key press with file access verification at both stages"""
         Name = self.state_behaviors.get(key)
         me_group = self.me_groups.get(key, None)
         
-        # Handle mutually exclusive group
-        if me_group:
-            print(f"Key {key} belongs to ME Group {me_group}. Deactivating other behaviors in this group.")
-            self.deactivate_me_group(me_group, frame_timestamp, current_behavior_key=key)
+        # Check if we can access the file before making any changes
+        if not self.check_file_access():
+            # File is inaccessible - pause playback and show error
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+            self.on_write_error()
+            return False
         
         if key in self.active_state_behaviors:
-            # End the active state behavior
-            start_time = self.active_state_behaviors.pop(key)
+            # Ending an active state behavior - need to write to file
+            start_time = self.active_state_behaviors[key]
             duration = frame_timestamp - start_time
             
             # Format timestamps
@@ -1530,19 +1618,33 @@ class VideoAnnotator(QFrame):
                 "Notes": ""
             }
             
-            # Save record
-            self.append_annotation(record)
+            # Try to save record - only update UI if successful
+            if not self.append_annotation(record):
+                # File write failed - don't update UI or change active behaviors
+                return False
+            
+            # Record saved, update state events and UI
+            self.active_state_behaviors.pop(key)
             
             # Update state events
             for event in self.state_events:
                 if event['Name'] == Name and event['end_time'] is None:
                     event['end_time'] = frame_timestamp
                     break
-                    
+            
             # Update UI
             self.update_annotations()
             self.populate_behavior_treeviews()
+            return True
         else:
+            # Starting a new state behavior - file access already verified
+            # Handle mutually exclusive group first to ensure consistent state
+            if me_group:
+                print(f"Key {key} belongs to ME Group {me_group}. Deactivating other behaviors in this group.")
+                if not self.deactivate_me_group(me_group, frame_timestamp, current_behavior_key=key):
+                    # ME group deactivation failed - don't start new state
+                    return False
+            
             # Start a new state behavior
             self.active_state_behaviors[key] = frame_timestamp
             self.state_events.append({
@@ -1557,89 +1659,118 @@ class VideoAnnotator(QFrame):
             # Update UI
             self.update_annotations()
             self.populate_behavior_treeviews()
+            return True
 
     def deactivate_me_group(self, me_group, frame_timestamp, current_behavior_key):
-        """Deactivate behaviors in mutually exclusive group"""
+        """Deactivate behaviors in mutually exclusive group with error handling"""
+        # Skip if no behaviors to deactivate
+        behaviors_to_deactivate = [k for k, _ in self.active_state_behaviors.items() 
+                                   if self.me_groups.get(k) == me_group and k != current_behavior_key]
+        
+        if not behaviors_to_deactivate:
+            return True  # Nothing to deactivate, so "successful"
+        
+        # Re-check file access before attempting any deactivation
+        if not self.check_file_access():
+            # File is inaccessible - pause playback and show error
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+            self.on_write_error("Cannot deactivate mutually exclusive behaviors.\nAnnotations file is inaccessible.")
+            return False
+        
+        # Process each behavior to deactivate
         keys_to_remove = []
+        for key in behaviors_to_deactivate:
+            start_time = self.active_state_behaviors[key]
+            Name = self.state_behaviors.get(key)
+            duration = frame_timestamp - start_time
+            
+            # Format timestamps
+            human_readable_start_time = self.format_time_human_readable(start_time)
+            human_readable_end_time = self.format_time_human_readable(frame_timestamp)
+            machine_readable_start_time = self.format_time_machine_readable(start_time)
+            machine_readable_end_time = self.format_time_machine_readable(frame_timestamp)
+            machine_readable_duration = self.format_time_machine_readable(duration)
+            
+            # Create record
+            record = {
+                "Video": self.video_name,
+                "Name": Name,
+                "Type": "State",
+                "Mutually_Exclusive": "True",
+                "H_Start": human_readable_start_time,
+                "H_End": human_readable_end_time,
+                "Start": machine_readable_start_time,
+                "End": machine_readable_end_time,
+                "Duration": machine_readable_duration,
+                "Manual_Edit": "False",
+                "Notes": ""
+            }
+            
+            # Try to save record
+            if not self.append_annotation(record):
+                # File write failed - don't proceed with any other behaviors
+                return False
+            
+            # Record saved, mark for removal and update state events
+            keys_to_remove.append(key)
+            for event in self.state_events:
+                if event['Name'] == Name and event['end_time'] is None:
+                    event['end_time'] = frame_timestamp
+                    break
         
-        for key, start_time in list(self.active_state_behaviors.items()):
-            if self.me_groups.get(key) == me_group and key != current_behavior_key:
-                Name = self.state_behaviors.get(key)
-                duration = frame_timestamp - start_time
-                
-                # Format timestamps
-                human_readable_start_time = self.format_time_human_readable(start_time)
-                human_readable_end_time = self.format_time_human_readable(frame_timestamp)
-                machine_readable_start_time = self.format_time_machine_readable(start_time)
-                machine_readable_end_time = self.format_time_machine_readable(frame_timestamp)
-                machine_readable_duration = self.format_time_machine_readable(duration)
-                
-                # Create record
-                record = {
-                    "Video": self.video_name,
-                    "Name": Name,
-                    "Type": "State",
-                    "Mutually_Exclusive": "True",
-                    "H_Start": human_readable_start_time,
-                    "H_End": human_readable_end_time,
-                    "Start": machine_readable_start_time,
-                    "End": machine_readable_end_time,
-                    "Duration": machine_readable_duration,
-                    "Manual_Edit": "False",
-                    "Notes": ""
-                }
-                
-                # Save record
-                self.append_annotation(record)
-                
-                # Update state events
-                for event in self.state_events:
-                    if event['Name'] == Name and event['end_time'] is None:
-                        event['end_time'] = frame_timestamp
-                        break
-                        
-                keys_to_remove.append(key)
-        
-        # Remove deactivated behaviors
+        # Remove successfully deactivated behaviors
         for key in keys_to_remove:
             self.active_state_behaviors.pop(key)
         
-        # Update UI
-        self.update_annotations()
-        self.populate_behavior_treeviews()
+        # Only update UI if all operations were successful
+        if keys_to_remove:
+            self.update_annotations()
+            self.populate_behavior_treeviews()
+        
+        return True
 
     def append_annotation(self, annotation_record):
-        """Append annotation record to CSV file"""
-        # Define headers
-        headers = ['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End',
-                  'Start', 'End', 'Duration', 'Manual_Edit', 'Notes']
-        
-        # Read existing rows
-        rows = []
-        if os.path.exists(self.annotations_file):
-            with open(self.annotations_file, 'r', newline="") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    # Ensure Notes field exists
-                    if 'Notes' not in row:
-                        row['Notes'] = ""
-                    rows.append(row)
-        
-        # Ensure Notes field in new record
-        if 'Notes' not in annotation_record:
-            annotation_record['Notes'] = ""
+        """Append annotation record to CSV file with error handling."""
+        try:
+            # Define headers
+            headers = ['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End',
+                      'Start', 'End', 'Duration', 'Manual_Edit', 'Notes']
             
-        # Append new record
-        rows.append(annotation_record)
-        
-        # Write to temporary file and replace original
-        temp_file = self.annotations_file + ".tmp"
-        with open(temp_file, 'w', newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=headers)
-            writer.writeheader()
-            for row in rows:
-                writer.writerow(row)
-        os.replace(temp_file, self.annotations_file)
+            # Read existing rows
+            rows = []
+            if os.path.exists(self.annotations_file):
+                with open(self.annotations_file, 'r', newline="") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        # Ensure Notes field exists
+                        if 'Notes' not in row:
+                            row['Notes'] = ""
+                        rows.append(row)
+            
+            # Ensure Notes field in new record
+            if 'Notes' not in annotation_record:
+                annotation_record['Notes'] = ""
+                
+            # Append new record
+            rows.append(annotation_record)
+            
+            # Write to temporary file and replace original
+            temp_file = self.annotations_file + ".tmp"
+            with open(temp_file, 'w', newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=headers)
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow(row)
+            os.replace(temp_file, self.annotations_file)
+            
+            # Return True to indicate success
+            return True
+            
+        except (PermissionError, OSError) as e:
+            print(f"Error saving annotation: {e}")
+            self.on_write_error()
+            return False
 
     def sort_state_annotations(self):
         self.state_events.sort(key=lambda x: x['start_time'] if x['start_time'] is not None else 0)
@@ -1652,64 +1783,98 @@ class VideoAnnotator(QFrame):
         self.update_annotations()
 
     def save_sorted_annotations(self):
-        """Save annotations to file with proper Manual_Edit handling"""
-        with open(self.annotations_file, 'w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End', 
-                            'Start', 'End', 'Duration', 'Manual_Edit', 'Notes'])
+        """Save annotations to file with proper Manual_Edit handling and error checking"""
+        try:
+            # First check if we can access the file
+            if not self.check_file_access():
+                self.on_write_error()
+                return False
             
-            # Save state events
-            for event in self.state_events:
-                start_time = self.format_time_machine_readable(event['start_time'])
-                end_time = self.format_time_machine_readable(event['end_time']) if event['end_time'] is not None else 'NA'
-                duration = self.format_time_machine_readable(event['end_time'] - event['start_time']) if event['end_time'] is not None else 'NA'
-                H_start = self.format_time_human_readable(event['start_time'])
-                H_end = self.format_time_human_readable(event['end_time']) if event['end_time'] is not None else 'NA'
-                manual_edit = str(event.get('Manual_Edit', False))  # Get Manual_Edit value, default to False
-                notes = event.get('Notes', "")
+            # Use temp file for atomic write
+            temp_file = self.annotations_file + ".tmp"
+            with open(temp_file, 'w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(['Video', 'Name', 'Type', 'Mutually_Exclusive', 'H_Start', 'H_End', 
+                                'Start', 'End', 'Duration', 'Manual_Edit', 'Notes'])
                 
-                writer.writerow([
-                    self.video_name,
-                    event['Name'],
-                    event.get('Type', 'State'),
-                    event.get('Mutually_Exclusive', 'False'),
-                    H_start,
-                    H_end,
-                    start_time,
-                    end_time,
-                    duration,
-                    manual_edit,
-                    notes
-                ])
-                
-            # Save point events
-            for event in self.point_events:
-                time_machine = self.format_time_machine_readable(self.parse_time(event['time']))
-                manual_edit = str(event.get('Manual_Edit', False))  # Get Manual_Edit value, default to False
-                notes = event.get('Notes', "")
-                
-                writer.writerow([
-                    self.video_name,
-                    event['Name'],
-                    event.get('Type', 'Point'),
-                    event.get('Mutually_Exclusive', 'False'),
-                    event['time'],
-                    'NA',
-                    time_machine,
-                    'NA',
-                    'NA',
-                    manual_edit,
-                    notes
-                ])
+                # Save state events
+                for event in self.state_events:
+                    start_time = self.format_time_machine_readable(event['start_time'])
+                    end_time = self.format_time_machine_readable(event['end_time']) if event['end_time'] is not None else 'NA'
+                    duration = self.format_time_machine_readable(event['end_time'] - event['start_time']) if event['end_time'] is not None else 'NA'
+                    H_start = self.format_time_human_readable(event['start_time'])
+                    H_end = self.format_time_human_readable(event['end_time']) if event['end_time'] is not None else 'NA'
+                    manual_edit = str(event.get('Manual_Edit', False))  # Get Manual_Edit value, default to False
+                    notes = event.get('Notes', "")
+                    
+                    writer.writerow([
+                        self.video_name,
+                        event['Name'],
+                        event.get('Type', 'State'),
+                        event.get('Mutually_Exclusive', 'False'),
+                        H_start,
+                        H_end,
+                        start_time,
+                        end_time,
+                        duration,
+                        manual_edit,
+                        notes
+                    ])
+                    
+                # Save point events
+                for event in self.point_events:
+                    time_machine = self.format_time_machine_readable(self.parse_time(event['time']))
+                    manual_edit = str(event.get('Manual_Edit', False))  # Get Manual_Edit value, default to False
+                    notes = event.get('Notes', "")
+                    
+                    writer.writerow([
+                        self.video_name,
+                        event['Name'],
+                        event.get('Type', 'Point'),
+                        event.get('Mutually_Exclusive', 'False'),
+                        event['time'],
+                        'NA',
+                        time_machine,
+                        'NA',
+                        'NA',
+                        manual_edit,
+                        notes
+                    ])
+            
+            # Atomically replace the original file with the temp file
+            os.replace(temp_file, self.annotations_file)
+            return True
+            
+        except (PermissionError, OSError) as e:
+            print(f"Error saving annotations: {e}")
+            # Use the standard error message instead of the exception details
+            self.on_write_error()
+            # Delete temp file if it exists
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+            return False
+
 
     def save_point_annotation(self, new_entries, dialog, selected_annotation, old_start_time):
-        """Saves the edited point annotation."""
+        """Saves the edited point annotation with file access verification."""
+        # Verify file access before proceeding
+        if not self.check_file_access():
+            # File is inaccessible - pause playback and show error
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+            self.on_write_error()
+            dialog.reject()  # Close dialog without saving
+            return False
+        
         new_name = new_entries['Name'].text().strip()
         new_h_start = new_entries['H_Start'].text().strip()
 
         if not new_name or not new_h_start:
-            messagebox.showwarning("Invalid Input", "Both Name and Start Time are required.")
-            return
+            QMessageBox.warning(self.parent, "Invalid Input", "Both Name and Start Time are required.")
+            return False
 
         print(f"Updating point annotation from {selected_annotation} to {{'Name': '{new_name}', 'H_Start': '{new_h_start}'}}")
 
@@ -1727,16 +1892,29 @@ class VideoAnnotator(QFrame):
         
         if not found_and_updated:
             print(f"Warning: Could not find matching annotation to update")
-            return
+            dialog.reject()
+            return False
 
-        self.save_sorted_annotations()
+        # Save updated annotations with error handling
+        if not self.save_sorted_annotations():
+            # If save fails, revert the change
+            for annotation in self.point_events:
+                if annotation['Name'] == new_name and annotation['time'] == new_h_start:
+                    annotation['Name'] = selected_annotation['Name']
+                    annotation['time'] = old_start_time
+                    annotation['Manual_Edit'] = selected_annotation.get('Manual_Edit', False)
+                    break
+            dialog.reject()
+            return False
+        
         self.update_annotations()
         self.dialog_open = False
-        dialog.destroy()
+        dialog.accept()
+        return True
 
     def save_state_annotation(self, new_entries, dialog, selected_annotation, old_start_time):
         """
-        Saves the edited state annotation.
+        Saves the edited state annotation with file access verification.
 
         Parameters:
           new_entries (dict): Contains QLineEdit widgets for 'Name', 'H_Start', and 'H_End'.
@@ -1744,25 +1922,42 @@ class VideoAnnotator(QFrame):
           selected_annotation (dict): The original state annotation that was edited.
           old_start_time (str): The original human-readable start time used to identify the annotation.
         """
+        # Verify file access before proceeding
+        if not self.check_file_access():
+            # File is inaccessible - pause playback and show error
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+            self.on_write_error()
+            dialog.reject()  # Close dialog without saving
+            return False
+        
         new_name = new_entries['Name'].text().strip()
         new_h_start = new_entries['H_Start'].text().strip()
         new_h_end = new_entries['H_End'].text().strip()
 
         if not new_name or not new_h_start or not new_h_end:
-            QMessageBox.warning(self, "Invalid Input", "Name, Start, and End times are required.")
-            return
+            QMessageBox.warning(self.parent, "Invalid Input", "Name, Start, and End times are required.")
+            return False
 
         print(f"Updating state annotation from {selected_annotation} to {{'Name': '{new_name}', 'H_Start': '{new_h_start}', 'H_End': '{new_h_end}'}}")
 
         # Convert human-readable times to machine-readable values (floats)
-        new_start_time = self.parse_time(new_h_start)
-        new_end_time = self.parse_time(new_h_end)
+        try:
+            new_start_time = self.parse_time(new_h_start)
+            new_end_time = self.parse_time(new_h_end)
+        except ValueError:
+            QMessageBox.warning(self.parent, "Invalid Time Format", 
+                              "Could not parse time values. Please check format.")
+            return False
 
-        # Update the matching annotation in the in-memory list.
-        for annotation in self.state_events:
+        # Make a copy of the original annotation before changes for potential rollback
+        original_annotation = None
+        for i, annotation in enumerate(self.state_events):
             # Identify the annotation using the old human-readable start time.
             if (annotation['Name'] == selected_annotation['Name'] and 
                 self.format_time_human_readable(annotation.get('start_time', 0)) == old_start_time):
+                original_annotation = dict(annotation)
+                # Update the annotation
                 annotation['Name'] = new_name
                 annotation['start_time'] = new_start_time
                 annotation['end_time'] = new_end_time
@@ -1772,10 +1967,30 @@ class VideoAnnotator(QFrame):
                     annotation['Notes'] = ""
                 break
 
-        self.save_sorted_annotations()
+        if original_annotation is None:
+            print(f"Warning: Could not find matching annotation to update")
+            dialog.reject()
+            return False
+
+        # Save updated annotations with error handling
+        if not self.save_sorted_annotations():
+            # If save fails, revert the change
+            for i, annotation in enumerate(self.state_events):
+                if (annotation['Name'] == new_name and 
+                    annotation['start_time'] == new_start_time and
+                    annotation['end_time'] == new_end_time):
+                    # Restore original values
+                    for key, value in original_annotation.items():
+                        annotation[key] = value
+                    break
+            dialog.reject()
+            return False
+        
         self.update_annotations()
         self.dialog_open = False
         dialog.accept()
+        return True
+
 
     def format_time_human_readable(self, elapsed_time):
         minutes, seconds = divmod(float(elapsed_time), 60)
@@ -1866,6 +2081,8 @@ class VideoAnnotator(QFrame):
     def on_closing(self):
         """Handle application closing and ensure floating windows are destroyed."""
         try:
+            if hasattr(self, 'progress_timer') and self.progress_timer:
+                self.progress_timer.stop()
             # List of attribute names for floating windows to destroy
             floating_attrs = [
                 'floating_controls_window',
@@ -1999,6 +2216,15 @@ class VideoAnnotator(QFrame):
         
         # Create context menu
         menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu::item {
+                padding: 4px 25px;
+            }
+            QMenu::item:selected {
+                background-color: #808080;
+                color: white;
+            }
+        """)
         menu.addAction("Edit", self.edit_annotation)
         menu.addAction("Add Note", self.add_note_to_annotation)
         menu.addAction("View Details", self.view_annotation_details)
@@ -2135,7 +2361,15 @@ class VideoAnnotator(QFrame):
         self.details_dialog.exec()
 
     def open_comprehensive_edit(self, annotation, annotation_type):
-        """Open a comprehensive edit dialog for both timing and notes."""
+        """Open a comprehensive edit dialog for both timing and notes with file access verification."""
+        # Verify file access before opening the edit dialog
+        if not self.check_file_access():
+            # File is inaccessible - pause playback and show error
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+            self.on_write_error()
+            return
+        
         # Close the details dialog if open
         if hasattr(self, 'details_dialog') and self.details_dialog:
             self.on_details_dialog_close()
@@ -2205,7 +2439,28 @@ class VideoAnnotator(QFrame):
         button_frame = QWidget()
         button_layout = QHBoxLayout(button_frame)
         
+        # Store original values for potential rollback
+        original_values = {
+            'Name': annotation['Name'],
+            'Notes': annotation.get('Notes', "")
+        }
+        
+        if annotation_type == 'State':
+            original_values.update({
+                'start_time': annotation['start_time'],
+                'end_time': annotation['end_time']
+            })
+        else:
+            original_values.update({
+                'time': annotation['time']
+            })
+        
         def save_comprehensive_edit():
+            # Check file access before saving
+            if not self.check_file_access():
+                self.on_write_error()
+                return
+            
             # Get values from entries
             new_values = {field: entry.text().strip() for field, entry in entries.items()}
             new_note = notes_text.toPlainText().strip()
@@ -2215,9 +2470,14 @@ class VideoAnnotator(QFrame):
             
             # Update the annotation
             if annotation_type == 'State':
-                # Convert times to float values
-                new_start = self.parse_time(new_values['H_Start'])
-                new_end = self.parse_time(new_values['H_End'])
+                try:
+                    # Convert times to float values
+                    new_start = self.parse_time(new_values['H_Start'])
+                    new_end = self.parse_time(new_values['H_End'])
+                except ValueError:
+                    QMessageBox.warning(self.parent, "Invalid Time Format", 
+                                      "Could not parse time values. Please check format.")
+                    return
                 
                 # Find and update the annotation in state_events
                 for evt in self.state_events:
@@ -2246,11 +2506,28 @@ class VideoAnnotator(QFrame):
                         evt['Notes'] = new_note
                         break
             
-            # Save changes to file
-            self.save_sorted_annotations()
-            self.update_annotations()
+            # Save changes to file with error handling
+            if not self.save_sorted_annotations():
+                # If save fails, revert changes
+                if annotation_type == 'State':
+                    for evt in self.state_events:
+                        if evt['Name'] == new_values['Name'] and evt['start_time'] == new_start:
+                            evt['Name'] = original_values['Name']
+                            evt['start_time'] = original_values['start_time']
+                            evt['end_time'] = original_values['end_time']
+                            evt['Notes'] = original_values['Notes']
+                            break
+                else:
+                    for evt in self.point_events:
+                        if evt['Name'] == new_values['Name'] and evt['time'] == new_values['H_Start']:
+                            evt['Name'] = original_values['Name']
+                            evt['time'] = original_values['time']
+                            evt['Notes'] = original_values['Notes']
+                            break
+                # Don't close dialog so user can try again
+                return
             
-            # Close dialog
+            self.update_annotations()
             self.dialog_open = False
             edit_dialog.accept()
         
@@ -2277,9 +2554,18 @@ class VideoAnnotator(QFrame):
         edit_dialog.exec()
 
     def save_note_to_annotation(self, annotation):
-        """Save the entered note to the annotation."""
+        """Save the entered note to the annotation with file access verification."""
+        # Verify file access before proceeding
+        if not self.check_file_access():
+            # File is inaccessible - pause playback and show error
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+            self.on_write_error()
+            self.on_note_dialog_close()
+            return False
+        
         if not hasattr(self, 'note_text'):
-            return
+            return False
         
         # Get note text
         note = self.note_text.toPlainText().strip()
@@ -2287,14 +2573,23 @@ class VideoAnnotator(QFrame):
         # Replace newlines with dots for CSV compatibility
         note = note.replace("\n", " . ").replace("\r", " . ")
         
+        # Store the original note in case we need to roll back
+        original_note = annotation.get('Notes', "")
+        
         # Update annotation in memory
         annotation['Notes'] = note
         
-        # Save to file
-        self.save_sorted_annotations()
+        # Save to file with error handling
+        if not self.save_sorted_annotations():
+            # If save fails, restore the original note
+            annotation['Notes'] = original_note
+            # No need to call on_write_error() here as save_sorted_annotations() already calls it
+            self.on_note_dialog_close()
+            return False
         
         # Close dialog
         self.on_note_dialog_close()
+        return True
 
     def on_menu_close(self):
         """Handle menu closing"""
@@ -2332,9 +2627,93 @@ class VideoAnnotator(QFrame):
         else:
             self.edit_point_annotation()
 
-    def edit_state_annotation(self):
-        """Edit a state annotation"""
+    def edit_point_annotation(self):
+        """Edit a point annotation with file access verification"""
+        if self.active_state_behaviors:
+            QMessageBox.warning(self, "Active Annotation", 
+                              "Please end the active state before editing.")
+            return
+
         if self.selected_index is None:
+            return
+        
+        # Verify file access before opening the edit dialog
+        if not self.check_file_access():
+            # File is inaccessible - pause playback and show error
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+            self.on_write_error()
+            return
+            
+        self.dialog_open = True
+        selected_annotation = self.point_events[self.selected_index]
+        print(f"Editing point annotation: {selected_annotation}")
+
+        latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_Start')
+        print(f"Latest annotation data for editing: {latest_annotation}")
+
+        # Create edit dialog
+        edit_dialog = QDialog(self.parent)
+        edit_dialog.setWindowFlags(edit_dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        edit_dialog.setWindowTitle("Edit Point Annotation")
+        edit_dialog.setModal(True)
+        self.center_window(edit_dialog, 275, 250)
+
+        # Create layout
+        layout = QVBoxLayout(edit_dialog)
+
+        # Current annotation section
+        current_group = QGroupBox("Current Annotation")
+        current_layout = QFormLayout()
+        current_layout.addRow("Name:", QLabel(latest_annotation['Name']))
+        current_layout.addRow("Time:", QLabel(latest_annotation['H_Start']))
+        current_group.setLayout(current_layout)
+        layout.addWidget(current_group)
+
+        # New annotation section
+        new_group = QGroupBox("New Annotation")
+        new_layout = QFormLayout()
+        new_entries = {}
+        new_fields = ['Name', 'H_Start']
+        
+        for field in new_fields:
+            entry = QLineEdit()
+            entry.setText(latest_annotation.get(field, ""))
+            new_layout.addRow(field.replace('H_', '') + ':', entry)
+            new_entries[field] = entry
+            
+        new_group.setLayout(new_layout)
+        layout.addWidget(new_group)
+
+        # Button box
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | 
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(
+            lambda: self.save_point_annotation(new_entries, edit_dialog, 
+                                             selected_annotation, latest_annotation['H_Start'])
+        )
+        button_box.rejected.connect(edit_dialog.reject)
+        layout.addWidget(button_box)
+
+        # Handle dialog closing
+        edit_dialog.finished.connect(lambda: self.on_edit_dialog_close())
+        
+        # Show dialog
+        edit_dialog.exec()
+
+    def edit_state_annotation(self):
+        """Edit a state annotation with file access verification"""
+        if self.selected_index is None:
+            return
+        
+        # Verify file access before opening the edit dialog
+        if not self.check_file_access():
+            # File is inaccessible - pause playback and show error
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+            self.on_write_error()
             return
         
         self.dialog_open = True
@@ -2399,74 +2778,6 @@ class VideoAnnotator(QFrame):
         # Show dialog
         edit_dialog.exec()
 
-    def edit_point_annotation(self):
-        """Edit a point annotation"""
-        if self.active_state_behaviors:
-            QMessageBox.warning(self, "Active Annotation", 
-                              "Please end the active state before editing.")
-            return
-
-        if self.selected_index is None:
-            return
-            
-        self.dialog_open = True
-        selected_annotation = self.point_events[self.selected_index]
-        print(f"Editing point annotation: {selected_annotation}")
-
-        latest_annotation = self.load_annotation_data(selected_annotation, 'Name', 'H_Start')
-        print(f"Latest annotation data for editing: {latest_annotation}")
-
-        # Create edit dialog
-        edit_dialog = QDialog(self.parent)
-        edit_dialog.setWindowFlags(edit_dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-        edit_dialog.setWindowTitle("Edit Point Annotation")
-        edit_dialog.setModal(True)
-        self.center_window(edit_dialog, 275, 250)
-
-        # Create layout
-        layout = QVBoxLayout(edit_dialog)
-
-        # Current annotation section
-        current_group = QGroupBox("Current Annotation")
-        current_layout = QFormLayout()
-        current_layout.addRow("Name:", QLabel(latest_annotation['Name']))
-        current_layout.addRow("Time:", QLabel(latest_annotation['H_Start']))
-        current_group.setLayout(current_layout)
-        layout.addWidget(current_group)
-
-        # New annotation section
-        new_group = QGroupBox("New Annotation")
-        new_layout = QFormLayout()
-        new_entries = {}
-        new_fields = ['Name', 'H_Start']
-        
-        for field in new_fields:
-            entry = QLineEdit()
-            entry.setText(latest_annotation.get(field, ""))
-            new_layout.addRow(field.replace('H_', '') + ':', entry)
-            new_entries[field] = entry
-            
-        new_group.setLayout(new_layout)
-        layout.addWidget(new_group)
-
-        # Button box
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | 
-            QDialogButtonBox.StandardButton.Cancel
-        )
-        button_box.accepted.connect(
-            lambda: self.save_point_annotation(new_entries, edit_dialog, 
-                                             selected_annotation, latest_annotation['H_Start'])
-        )
-        button_box.rejected.connect(edit_dialog.reject)
-        layout.addWidget(button_box)
-
-        # Handle dialog closing
-        edit_dialog.finished.connect(lambda: self.on_edit_dialog_close())
-        
-        # Show dialog
-        edit_dialog.exec()
-
     def load_annotation_data(self, annotation, *fields):
         """Load annotation data from file"""
         latest_annotation = {field: "" for field in fields}
@@ -2506,47 +2817,92 @@ class VideoAnnotator(QFrame):
             self.update_progress()
             self.player.pause = True
 
-    def delete_annotation(self):
-        """Delete selected annotation"""
-        # Get selected item
-        if self.selected_treeview == self.state_annotations_tree:
-            deleted_annotation = self.state_events.pop(self.selected_index)
-            self.undo_stack.append(("state", self.selected_index, deleted_annotation))
-        else:
-            deleted_annotation = self.point_events.pop(self.selected_index)
-            self.undo_stack.append(("point", self.selected_index, deleted_annotation))
-        
-        # Update UI
-        self.save_sorted_annotations()
-        self.update_annotations()
-        self.populate_behavior_treeviews()
-
     def delete_annotation_key(self):
         """Handle delete key press"""
-        self.delete_annotation()
+        if self.selected_treeview is None or self.selected_item is None:
+            return
 
-    def undo_delete(self):
-        """Undo last annotation deletion"""
-        if not self.undo_stack:
-            return  # Nothing to undo
-
-        # Get last deleted annotation
-        annotation_type, index, annotation = self.undo_stack.pop()
-
-        # Restore annotation
-        if annotation_type == "state":
-            self.state_events.insert(index, annotation)
+    def delete_annotation(self):
+        """Delete the selected annotation and add it to the undo stack with file access verification"""
+        if self.selected_treeview is None or self.selected_item is None:
+            return  # Nothing selected, so do nothing
+            
+        # Verify file access before attempting to delete
+        if not self.check_file_access():
+            # File is inaccessible - pause playback and show error
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+            self.on_write_error()
+            return False
+            
+        # Save to undo stack before removing
+        if self.selected_treeview == self.state_annotations_tree:
+            # Create a deep copy of the annotation to preserve all attributes
+            deleted_annotation = dict(self.state_events[self.selected_index])
+            self.undo_stack.append(("state", self.selected_index, deleted_annotation))
+            self.state_events.pop(self.selected_index)
         else:
-            self.point_events.insert(index, annotation)
+            # Create a deep copy of the annotation to preserve all attributes
+            deleted_annotation = dict(self.point_events[self.selected_index])
+            self.undo_stack.append(("point", self.selected_index, deleted_annotation))
+            self.point_events.pop(self.selected_index)
+            
+        # Update UI - only attempt to save if file is still accessible
+        if not self.save_sorted_annotations():
+            return False  # Don't continue if save failed
         
-        # Update UI
-        self.save_sorted_annotations()
         self.update_annotations()
         self.populate_behavior_treeviews()
+        
+        # Clear selection
+        self.selected_treeview = None
+        self.selected_item = None
+        self.selected_index = None
+        
+        return True
+
+    def undo_delete(self):
+        """Undo last annotation deletion with file access verification"""
+        if not self.undo_stack:
+            print("No actions to undo")
+            return False
+        
+        # Verify file access before attempting to undo
+        if not self.check_file_access():
+            # File is inaccessible - pause playback and show error
+            if hasattr(self, 'player') and self.player:
+                self.player.pause = True
+            self.on_write_error()
+            return False
+            
+        annotation_type, index, annotation = self.undo_stack.pop()
+        
+        # Safely insert at the original position or at the end if index is out of range
+        if annotation_type == "state":
+            if index >= len(self.state_events):
+                self.state_events.append(annotation)
+            else:
+                self.state_events.insert(index, annotation)
+        else:  # point
+            if index >= len(self.point_events):
+                self.point_events.append(annotation)
+            else:
+                self.point_events.insert(index, annotation)
+        
+        # Update UI - only attempt to save if file is still accessible
+        if not self.save_sorted_annotations():
+            # Restore the undo stack if save failed
+            self.undo_stack.append((annotation_type, index, annotation))
+            return False
+        
+        self.update_annotations() 
+        self.populate_behavior_treeviews()
+        print(f"Restored {annotation_type} annotation: {annotation['Name']}")
+        return True
 
     def return_to_file_selection(self):
         """
-        Save session state, close video annotator, and return to file selection UI.
+        Save session state and restart the entire application.
         """
         try:
             # 1. Save session state
@@ -2554,63 +2910,89 @@ class VideoAnnotator(QFrame):
             
             # 2. Clean up resources
             if hasattr(self, 'player') and self.player:
-                self.player.pause = True
-                self.player.stop()
+                try:
+                    self.player.pause = True
+                    self.player.stop()
+                except Exception as e:
+                    print(f"Error stopping player: {e}")
             
-            # Close floating windows
-            floating_attrs = [
-                'floating_controls_window',
-                'behavior_buttons_window',
-                'behavior_toggle_window',
-                'controls_window',
-                'edit_dialog'
-            ]
+            # 3. Restart the application
+            import sys
+            import os
             
-            for attr in floating_attrs:
-                if hasattr(self, attr):
-                    win = getattr(self, attr)
-                    if win is not None:
-                        win.deleteLater()
-
-            for win in self.floating_windows:
-                if win is not None:
-                    win.deleteLater()
-            self.floating_windows.clear()
+            print("Restarting application...")
+            python = sys.executable
+            os.execv(python, [python] + sys.argv)
             
-            # 3. Create and show new SetupManager
-            from setup_manager import SetupManager
-            from config_manager import ConfigManager
-            
-            config_manager = ConfigManager()
-            setup_dialog = SetupManager(config_manager=config_manager, parent=self.parent)
-            
-            # First remove the video annotator from parent
-            if self.parent:
-                self.parent.setCentralWidget(None)
-                self.deleteLater()
-            
-            # Show the setup dialog
-            setup_dialog.exec()
-            
-            # Check if setup was successful and create new video annotator
-            if setup_dialog.start_video_flag and setup_dialog.video_path and setup_dialog.behavior_key_file:
-                # Initialize new video annotator with new parameters
-                new_video_annotator = VideoAnnotator(
-                    self.parent,
-                    video_path=setup_dialog.video_path,
-                    session_state_file=setup_dialog.session_state_file,
-                    behavior_key_file=setup_dialog.behavior_key_file,
-                    output_dir=setup_dialog.output_dir
-                )
-                
-                # Set as central widget
-                self.parent.setCentralWidget(new_video_annotator)
-            else:
-                # If user cancels, close the application
-                self.parent.close()
-                
         except Exception as e:
             print(f"Error returning to file selection: {e}")
             # If error occurs, close the application
             if self.parent:
                 self.parent.close()
+
+    def remove_destroyed_windows(self):
+        """Remove any windows from self.floating_windows that are already deleted."""
+        valid_windows = []
+        for w in self.floating_windows:
+            if w is not None and not w.isHidden() or w.isVisible():  # or any other checks
+                # Alternatively, just wrap in try-except to see if w still exists:
+                try:
+                    w.winId()  # This raises RuntimeError if deleted
+                    valid_windows.append(w)
+                except RuntimeError:
+                    pass
+        self.floating_windows = valid_windows
+
+    def on_write_error(self, error_message=None):
+        """Handle file write errors with a user-friendly dialog."""
+        # Pause video playback
+        if hasattr(self, 'player') and self.player:
+            self.player.pause = True
+        
+        self.dialog_open = True
+        
+        # Create error dialog
+        error_dialog = QMessageBox(self.parent)
+        error_dialog.setIcon(QMessageBox.Icon.Warning)
+        error_dialog.setWindowTitle("File Access Error")
+        
+        # Set default or custom error message
+        if error_message is None:
+            error_message = "Annotations file is inaccessible.\nIs it open in another application?"
+        error_dialog.setText(error_message)
+        
+        error_dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+        error_dialog.setDefaultButton(QMessageBox.StandardButton.Ok)
+        
+        # Force dialog to stay on top
+        error_dialog.setWindowFlags(error_dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        
+        # Execute dialog and wait for user response
+        error_dialog.exec()
+        
+        # Reset dialog state
+        self.dialog_open = False
+        
+        # Return False to indicate the operation failed
+        return False
+
+    def check_file_access(self):
+        """Check if annotations file is accessible for reading and writing."""
+        try:
+            # Check if we can read the file
+            if os.path.exists(self.annotations_file):
+                with open(self.annotations_file, 'r', newline="") as f:
+                    # Just read a bit to verify access
+                    f.read(1)
+            
+            # Test if we can write to a temporary file in the same directory
+            temp_file = self.annotations_file + ".access_test"
+            with open(temp_file, 'w') as f:
+                f.write("test")
+            # Clean up test file
+            os.remove(temp_file)
+            
+            return True
+        except (PermissionError, OSError) as e:
+            print(f"File access error: {e}")
+            return False
