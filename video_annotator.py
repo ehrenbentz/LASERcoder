@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QFrame, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QTreeWidget, QTreeWidgetItem,
     QScrollBar, QMenu, QDialog, QLineEdit, QTextEdit, QMessageBox,
     QAbstractItemView, QFormLayout, QGroupBox, QDialogButtonBox,
-    QGridLayout, QApplication, QStackedLayout)
+    QGridLayout, QApplication, QStackedLayout, QSizePolicy)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QEvent, QRect, QSysInfo
 from PyQt6.QtGui import QColor, QPainter, QAction, QScreen
 
@@ -217,7 +217,7 @@ class VideoAnnotator(QFrame):
         # Create annotation panel
         self.create_annotation_panel()
 
-    def update_floating_windows_visibility(self):
+    def update_floating_buttons_visibility(self):
         """Hide/show floating windows depending on whether the main window is active or minimized."""
         should_hide = (
             self.parent.windowState() & Qt.WindowState.WindowMinimized
@@ -491,6 +491,8 @@ class VideoAnnotator(QFrame):
         if hasattr(self, 'floating_controls_window') and self.floating_controls_window:
             self.floating_controls_window.deleteLater()
             self.floating_controls_window = None
+            # Clear the play_pause_btn reference when controls are deleted
+            self.play_pause_btn = None
         else:
             self.create_floating_controls()
 
@@ -505,8 +507,8 @@ class VideoAnnotator(QFrame):
         
         # Create main layout
         layout = QHBoxLayout(self.floating_controls_window)
-        layout.setSpacing(20)
-        layout.setContentsMargins(20, 0, 20, 0)
+        layout.setSpacing(40)  # Reduced spacing between buttons
+        layout.setContentsMargins(10, 0, 10, 0)  # Reduced left/right margins
         
         # Define button style
         button_style = """
@@ -515,9 +517,10 @@ class VideoAnnotator(QFrame):
                 color: black;
                 border: 1px solid grey;
                 border-radius: 3px;
-                padding: 5px;
-                min-width: 100px;
+                padding: 0px;
                 text-align: center;
+                font-size: 14px;
+                font-weight: bold;
             }
             QPushButton:hover {
                 background-color: darkgrey;
@@ -541,6 +544,7 @@ class VideoAnnotator(QFrame):
         
         for text, callback in buttons:
             btn = QPushButton(text)
+            btn.setFixedSize(40, 40)  # Set fixed size to 40x40
             btn.setStyleSheet(button_style)
             btn.clicked.connect(callback)
             if text == "■":
@@ -566,8 +570,12 @@ class VideoAnnotator(QFrame):
 
     def update_play_pause_icon(self):
         """Update the play/pause button icon based on current state"""
-        if hasattr(self, 'play_pause_btn'):
-            self.play_pause_btn.setText("▶" if self.player.pause else "■")
+        if hasattr(self, 'play_pause_btn') and self.play_pause_btn and self.play_pause_btn.isVisible():
+            try:
+                self.play_pause_btn.setText("▶" if self.player.pause else "■")
+            except RuntimeError:
+                # Button has been deleted, remove the reference
+                self.play_pause_btn = None
 
     def toggle_behavior_buttons(self):
         """Toggle the behavior buttons panel"""
@@ -578,69 +586,29 @@ class VideoAnnotator(QFrame):
             self.create_behavior_buttons()
 
     def create_behavior_buttons(self):
-        """Create the floating behavior buttons panel"""
-        # Create main window
+        """Create the floating behavior buttons panel with truly independent button sizes"""
+        # Create main window with a flow layout approach
         self.behavior_buttons_window = QWidget(self.parent)
         self.behavior_buttons_window.setWindowFlags(
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
         )
         self.behavior_buttons_window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
-        # Create main layout
-        layout = QVBoxLayout(self.behavior_buttons_window)
-        layout.setSpacing(2)
-        layout.setContentsMargins(0, 5, 0, 5)
+        # Main vertical layout
+        main_layout = QVBoxLayout(self.behavior_buttons_window)
+        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(10, 10, 10, 10)
         
-        # Create frames for point and state behaviors
-        point_frame = QWidget()
-        point_layout = QHBoxLayout(point_frame)
-        point_layout.setSpacing(2)
-        point_layout.setContentsMargins(0, 0, 0, 0)
+        # Create a label for point behaviors
+        point_label = QLabel("Point Behaviors")
+        point_label.setStyleSheet("color: white; background-color: rgba(50, 50, 50, 180); padding: 2px;")
+        main_layout.addWidget(point_label)
         
-        state_frame = QWidget()
-        state_layout = QHBoxLayout(state_frame)
-        state_layout.setSpacing(2)
-        state_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Button styles
-        point_style = """
-            QPushButton {
-                background-color: #5B6770;
-                color: black;
-                border: 1px solid grey;
-                border-radius: 3px;
-                padding: 5px;
-                min-width: 100px;
-                text-align: center;
-            }
-            QPushButton:hover {
-                background-color: darkgrey;
-                color: white;
-            }
-            QPushButton:pressed {
-                background-color: #404040;
-                color: white;
-            }
-        """        
-        state_style = """
-            QPushButton {
-                background-color: #7B6469;
-                color: black;
-                border: 1px solid grey;
-                border-radius: 3px;
-                padding: 5px;
-                min-width: 100px;
-                text-align: center;
-            }
-            QPushButton:hover {
-                background-color: darkgrey;
-                color: white;
-            }
-            QPushButton:pressed {
-                background-color: #404040;
-                color: white;
-            }
-        """        
+        # Create flow layout using multiple horizontal layouts for point behaviors
+        point_behaviors_container = QWidget()
+        point_container_layout = QVBoxLayout(point_behaviors_container)
+        point_container_layout.setSpacing(2)
+        point_container_layout.setContentsMargins(0, 0, 0, 0)
         
         # Sort behaviors by type
         point_behaviors = []
@@ -654,26 +622,120 @@ class VideoAnnotator(QFrame):
                 point_behaviors.append((name, key))
             else:
                 state_behaviors.append((name, key))
+
+        # Button styles
+        point_style = """
+            QPushButton {
+                background-color: #5B6770;
+                color: white;
+                border: 1px solid grey;
+                border-radius: 3px;
+                padding: 5px;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background-color: darkgrey;
+                color: white;
+            }
+            QPushButton:pressed {
+                background-color: #404040;
+                color: white;
+            }
+        """        
+
+        state_style = """
+            QPushButton {
+                background-color: #7B6469;
+                color: white;
+                border: 1px solid grey;
+                border-radius: 3px;
+                padding: 5px;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background-color: darkgrey;
+                color: white;
+            }
+            QPushButton:pressed {
+                background-color: #404040;
+                color: white;
+            }
+        """        
+        # Create point behavior buttons with multiple rows
+        max_buttons_per_row = 4  # Adjust as needed
+        current_row_layout = None
+        buttons_in_current_row = 0
         
-        # Create point behavior buttons
         for name, key in point_behaviors:
+            # Create a new row layout if needed
+            if buttons_in_current_row == 0:
+                current_row_layout = QHBoxLayout()
+                current_row_layout.setSpacing(5)
+                current_row_layout.setContentsMargins(0, 0, 0, 0)
+                point_container_layout.addLayout(current_row_layout)
+            
+            # Create the button
             btn = QPushButton(name)
+            btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet(point_style)
-            # Use lambda with default argument to capture the correct key value
             btn.clicked.connect(lambda checked, k=key: self.add_annotation_for_behavior(k))
-            point_layout.addWidget(btn)
+            current_row_layout.addWidget(btn)
+            
+            # Increment counter and check if we need a new row
+            buttons_in_current_row += 1
+            if buttons_in_current_row >= max_buttons_per_row:
+                buttons_in_current_row = 0
+                # Add stretch to right-align buttons in this row
+                current_row_layout.addStretch()
         
-        # Create state behavior buttons
+        # Add stretch to the last row if it's not complete
+        if buttons_in_current_row > 0 and buttons_in_current_row < max_buttons_per_row:
+            current_row_layout.addStretch()
+        
+        main_layout.addWidget(point_behaviors_container)
+        
+        # Create a label for state behaviors
+        state_label = QLabel("State Behaviors")
+        state_label.setStyleSheet("color: white; background-color: rgba(50, 50, 50, 180); padding: 2px;")
+        main_layout.addWidget(state_label)
+        
+        # Create flow layout for state behaviors
+        state_behaviors_container = QWidget()
+        state_container_layout = QVBoxLayout(state_behaviors_container)
+        state_container_layout.setSpacing(2)
+        state_container_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Create state behavior buttons with multiple rows
+        current_row_layout = None
+        buttons_in_current_row = 0
+        
         for name, key in state_behaviors:
+            # Create a new row layout if needed
+            if buttons_in_current_row == 0:
+                current_row_layout = QHBoxLayout()
+                current_row_layout.setSpacing(5)
+                current_row_layout.setContentsMargins(0, 0, 0, 0)
+                state_container_layout.addLayout(current_row_layout)
+            
+            # Create the button
             btn = QPushButton(name)
+            btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet(state_style)
-            # Use lambda with default argument to capture the correct key value
             btn.clicked.connect(lambda checked, k=key: self.add_annotation_for_behavior(k))
-            state_layout.addWidget(btn)
+            current_row_layout.addWidget(btn)
+            
+            # Increment counter and check if we need a new row
+            buttons_in_current_row += 1
+            if buttons_in_current_row >= max_buttons_per_row:
+                buttons_in_current_row = 0
+                # Add stretch to right-align buttons in this row
+                current_row_layout.addStretch()
         
-        # Add frames to main layout
-        layout.addWidget(point_frame)
-        layout.addWidget(state_frame)
+        # Add stretch to the last row if it's not complete
+        if buttons_in_current_row > 0 and buttons_in_current_row < max_buttons_per_row:
+            current_row_layout.addStretch()
+        
+        main_layout.addWidget(state_behaviors_container)
         
         # Position the window relative to the toggle button
         video_pos = self.video_frame.mapToGlobal(QPoint(0, 0))
@@ -683,6 +745,7 @@ class VideoAnnotator(QFrame):
         y = video_pos.y() + margin
         
         # Show window and set position
+        self.behavior_buttons_window.adjustSize()
         self.behavior_buttons_window.show()
         self.behavior_buttons_window.move(x, y)
         
@@ -908,7 +971,7 @@ class VideoAnnotator(QFrame):
         # ensure floating buttons track and follow window state
         if obj == self.parent:
             if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
-                self.update_floating_windows_visibility()
+                self.update_floating_buttons_visibility()
 
         if event.type() == QEvent.Type.KeyPress:
             key = event.key()
@@ -1054,15 +1117,22 @@ class VideoAnnotator(QFrame):
     def auto_save_session_state(self):
         """Auto-save session state without showing error dialogs."""
         try:
-            # Set a flag to indicate this is an auto-save
-            self._auto_saving = True
-            self.save_session_state()
+            # Check if player still exists and window is still visible
+            if hasattr(self, 'player') and self.player and self.parent and self.parent.isVisible():
+                # Set a flag to indicate this is an auto-save
+                self._auto_saving = True
+                self.save_session_state()
+            else:
+                print("Auto-save skipped: player or parent window no longer available")
+                return  # Don't schedule another auto-save if we're closing
         finally:
             # Reset the flag
-            self._auto_saving = False
-            
-        # Schedule next auto-save
-        QTimer.singleShot(5000, self.auto_save_session_state)
+            if hasattr(self, '_auto_saving'):
+                self._auto_saving = False
+                
+        # Only schedule next auto-save if parent window still exists
+        if hasattr(self, 'parent') and self.parent and self.parent.isVisible():
+            QTimer.singleShot(5000, self.auto_save_session_state)
 
     def schedule_resume(self, timestamp_sec):
         """Schedule resume of video playback"""
@@ -2083,6 +2153,9 @@ class VideoAnnotator(QFrame):
         try:
             if hasattr(self, 'progress_timer') and self.progress_timer:
                 self.progress_timer.stop()
+
+            QTimer.singleShot(0, lambda: None)  # This effectively cancels any pending singleShot timers
+
             # List of attribute names for floating windows to destroy
             floating_attrs = [
                 'floating_controls_window',
