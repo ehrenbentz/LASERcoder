@@ -39,7 +39,7 @@ def generate_summary_statistics(annotations_file):
     
     for behavior in unique_behaviors:
         behavior_df = df[df['Name'] == behavior]
-        behavior_type = behavior_df['Type'].iloc[0]  # Get type (should be consistent for each behavior)
+        behavior_type = behavior_df['Type'].iloc[0]
         
         # Count instances
         count = len(behavior_df)
