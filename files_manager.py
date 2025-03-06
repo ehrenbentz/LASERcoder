@@ -1,12 +1,18 @@
 # files_manager.py
 
 import os
+import sys
 from pathlib import Path
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QListWidget, QFrame,
     QMessageBox, QSplitter, QWidget, QInputDialog, QApplication)
 from PyQt6.QtCore import Qt, QSize, QRect
 from PyQt6.QtGui import QFont
+
+# Add current directory to PATH for importing modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
 
 class FilesManager(QDialog):
     """Dialog for selecting output directory and video file."""
@@ -220,6 +226,17 @@ class FilesManager(QDialog):
         select_dir_btn.clicked.connect(self.select_directory)
         btn_layout.addWidget(select_dir_btn)
         
+        # Summary Statistics button
+        summary_frame = QFrame()
+        summary_layout = QHBoxLayout(summary_frame)
+        summary_layout.setContentsMargins(0, 5, 0, 0)
+
+        summary_btn = QPushButton("Generate Summary Statistics")
+        summary_btn.clicked.connect(self.open_summary_statistics)
+        summary_layout.addWidget(summary_btn)
+
+        layout.addWidget(summary_frame)
+
         layout.addWidget(btn_frame)
         
         # Populate initial directory list
@@ -482,3 +499,29 @@ class FilesManager(QDialog):
         else:
             # Pass other key events to parent
             super().keyPressEvent(event)
+
+    def open_summary_statistics(self):
+        """Open the Summary Statistics Manager dialog."""
+        try:
+            # Import here to avoid circular imports
+            from summary_statistics_manager import SummaryStatisticsManager
+            
+            # Start with the Annotations directory in the currently selected output directory
+            if hasattr(self, 'output_dir') and self.output_dir:
+                annotations_dir = os.path.join(self.output_dir, "Annotations")
+                if os.path.exists(annotations_dir):
+                    start_dir = annotations_dir
+                else:
+                    start_dir = self.output_dir
+            else:
+                start_dir = self.current_output_dir
+            
+            # Create and show the summary statistics manager
+            stats_manager = SummaryStatisticsManager(self, start_dir)
+            stats_manager.exec()
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open Summary Statistics Manager: {str(e)}"
+            )
