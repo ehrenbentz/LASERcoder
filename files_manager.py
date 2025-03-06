@@ -226,7 +226,9 @@ class FilesManager(QDialog):
         select_dir_btn.clicked.connect(self.select_directory)
         btn_layout.addWidget(select_dir_btn)
         
-        # Summary Statistics button
+        layout.addWidget(btn_frame)
+        
+        # Summary Statistics button (moved below the other buttons)
         summary_frame = QFrame()
         summary_layout = QHBoxLayout(summary_frame)
         summary_layout.setContentsMargins(0, 5, 0, 0)
@@ -236,8 +238,6 @@ class FilesManager(QDialog):
         summary_layout.addWidget(summary_btn)
 
         layout.addWidget(summary_frame)
-
-        layout.addWidget(btn_frame)
         
         # Populate initial directory list
         self.populate_dir_list(self.initial_output_dir)
