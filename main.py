@@ -59,7 +59,7 @@ def main():
         # Create Qt Application
         app = QApplication(sys.argv)
         app.setStyleSheet("QWidget { font-size: 12pt; }")  # Global font size change
-        app.setStyle('Fusion')  # Use Fusion style for consistent look
+        app.setStyle('Fusion')
         
         # Create main window
         main_window = MainWindow()

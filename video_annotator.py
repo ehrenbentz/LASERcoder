@@ -2,6 +2,7 @@
 
 import os
 import json
+import types
 import csv
 import mpv
 from PyQt6.QtWidgets import (QFrame, QWidget, QVBoxLayout,
@@ -257,12 +258,20 @@ class VideoAnnotator(QFrame):
                 self.right_text = "Total Time"
                 self.annotator = annotator  # Store reference to VideoAnnotator
                 self.setMouseTracking(True)
+                # Set explicit black background for the widget
+                self.setAutoFillBackground(True)
+                palette = self.palette()
+                palette.setColor(self.backgroundRole(), QColor(0, 0, 0))
+                self.setPalette(palette)
             
             def paintEvent(self, event):
                 painter = QPainter(self)
                 painter.setRenderHint(QPainter.RenderHint.Antialiasing)
                 
-                # Draw background
+                # Fill entire background with black first
+                painter.fillRect(event.rect(), QColor(0, 0, 0))
+                
+                # Draw progress bar background
                 painter.fillRect(0, 0, self.width(), self.height(), QColor(40, 40, 40))
                 
                 # Draw progress fill
@@ -329,6 +338,9 @@ class VideoAnnotator(QFrame):
         # Add to layout
         frame_layout.addWidget(self.progress_bar)
         self.left_layout.addWidget(self.progress_frame)
+        
+        # Ensure the left container has a black background too
+        self.left_container.setStyleSheet("background-color: black;")
 
     def update_progress(self):
         """Update progress bar and labels"""
@@ -929,23 +941,24 @@ class VideoAnnotator(QFrame):
             def blocked_handler(*args, **kwargs):
                 if not self.dialog_open:
                     return handler(*args, **kwargs)
+                return None  # Make sure to return None if dialog is open
             return blocked_handler
         
         self.key_bindings = {
             # Toggle play/pause
             Qt.Key.Key_Space: create_blocked_handler(self.toggle_play_pause),
 
-            # Small skip forward/backward
-            Qt.Key.Key_Right | Qt.KeyboardModifier.ShiftModifier: create_blocked_handler(lambda: self.seek_relative(1000)),
-            Qt.Key.Key_Left | Qt.KeyboardModifier.ShiftModifier: create_blocked_handler(lambda: self.seek_relative(-1000)),
-            Qt.Key.Key_D | Qt.KeyboardModifier.ShiftModifier: create_blocked_handler(lambda: self.seek_relative(1000)),
-            Qt.Key.Key_A | Qt.KeyboardModifier.ShiftModifier: create_blocked_handler(lambda: self.seek_relative(-1000)),
+            # Small skip forward/backward with Shift key
+            (Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier): create_blocked_handler(lambda: self.seek_relative(1000)),
+            (Qt.Key.Key_Left, Qt.KeyboardModifier.ShiftModifier): create_blocked_handler(lambda: self.seek_relative(-1000)),
+            (Qt.Key.Key_D, Qt.KeyboardModifier.ShiftModifier): create_blocked_handler(lambda: self.seek_relative(1000)),
+            (Qt.Key.Key_A, Qt.KeyboardModifier.ShiftModifier): create_blocked_handler(lambda: self.seek_relative(-1000)),
 
-            # Medium skip
-            Qt.Key.Key_Right: create_blocked_handler(lambda: self.seek_relative(5000)),
-            Qt.Key.Key_Left: create_blocked_handler(lambda: self.seek_relative(-5000)),
-            Qt.Key.Key_D: create_blocked_handler(lambda: self.seek_relative(5000)),
-            Qt.Key.Key_A: create_blocked_handler(lambda: self.seek_relative(-5000)),
+            # Medium skip - for keys without modifiers
+            (Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier): create_blocked_handler(lambda: self.seek_relative(5000)),
+            (Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier): create_blocked_handler(lambda: self.seek_relative(-5000)),
+            (Qt.Key.Key_D, Qt.KeyboardModifier.NoModifier): create_blocked_handler(lambda: self.seek_relative(5000)),
+            (Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier): create_blocked_handler(lambda: self.seek_relative(-5000)),
 
             # Large skip
             Qt.Key.Key_W: create_blocked_handler(lambda: self.seek_relative(10000)),
@@ -963,11 +976,11 @@ class VideoAnnotator(QFrame):
             # Other controls
             Qt.Key.Key_Escape: self.return_to_file_selection,
             Qt.Key.Key_Delete: create_blocked_handler(self.delete_annotation),
-            Qt.Key.Key_Z | Qt.KeyboardModifier.ControlModifier: create_blocked_handler(self.undo_delete)
+            (Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier): create_blocked_handler(self.undo_delete)
         }
 
     def eventFilter(self, obj, event):
-        
+        """Enhanced event filter with better key combination detection"""
         # ensure floating buttons track and follow window state
         if obj == self.parent:
             if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
@@ -976,29 +989,28 @@ class VideoAnnotator(QFrame):
         if event.type() == QEvent.Type.KeyPress:
             key = event.key()
             modifiers = event.modifiers()
-            combined_key = key | modifiers.value
             
-            #print(f"Key pressed: {key}, Modifiers: {modifiers.value}, Combined: {combined_key}")
-
-            # Only check for Ctrl+Z when we see key 90 (Z) with modifiers
-            if key == Qt.Key.Key_Z and modifiers & Qt.KeyboardModifier.ControlModifier:
-                ctrl_z_combo = Qt.Key.Key_Z | Qt.KeyboardModifier.ControlModifier
-                if not self.dialog_open:
-                    self.undo_delete()
-                    return True
+            # Only process key presses if no dialog is open or if it's the escape key
+            if key == Qt.Key.Key_Escape and not self.dialog_open:
+                self.return_to_file_selection()
+                return True
                 
-        # Handle key press events
-        if event.type() == QEvent.Type.KeyPress:
-            # Handle special keys defined in key_bindings
-            key = event.key()
-            modifiers = event.modifiers()
-            combined_key = key | modifiers.value
-                
-            # Only process key presses if no dialog is open
             if not self.dialog_open:
-                # Check if this is a special key combination
-                if combined_key in self.key_bindings:
-                    self.key_bindings[combined_key]()
+                # Check for special key combinations that include modifiers
+                key_with_modifiers = (key, modifiers)
+                if key_with_modifiers in self.key_bindings:
+                    handler = self.key_bindings[key_with_modifiers]
+                    result = handler()
+                    if result is not None:
+                        return result
+                    return True
+                    
+                # Check for basic keys without specific modifiers
+                if key in self.key_bindings and isinstance(self.key_bindings[key], types.FunctionType):
+                    handler = self.key_bindings[key]
+                    result = handler()
+                    if result is not None:
+                        return result
                     return True
                 
                 # Handle behavior key presses
@@ -1006,11 +1018,6 @@ class VideoAnnotator(QFrame):
                 if char and char in self.behavior_map:
                     self.handle_behavior_key_press(char)
                     return True
-
-            # Escape key should work even if no dialog is open
-            if key == Qt.Key.Key_Escape and not self.dialog_open:
-                self.return_to_file_selection()
-                return True
 
         elif event.type() == QEvent.Type.KeyRelease:
             char = event.text().lower()
@@ -1412,10 +1419,10 @@ class VideoAnnotator(QFrame):
             visualize_button.clicked.connect(self.visualize_annotations)
             buttons_layout.addWidget(visualize_button)
             
-            summary_button = QPushButton("Summary\nStatistics")
-            summary_button.setStyleSheet(button_size_policy)
-            summary_button.clicked.connect(self.generate_summary_statistics)
-            buttons_layout.addWidget(summary_button)
+            edit_behavior_key_button = QPushButton("Edit\nBehavior Key")
+            edit_behavior_key_button.setStyleSheet(button_size_policy)
+            edit_behavior_key_button.clicked.connect(self.edit_behavior_key)
+            buttons_layout.addWidget(edit_behavior_key_button)
             
             main_layout.addWidget(buttons_frame)
 
@@ -2221,45 +2228,97 @@ class VideoAnnotator(QFrame):
         # Show dialog
         dialog.exec()
 
-    def generate_summary_statistics(self):
-        """Show summary statistics dialog"""
-        self.dialog_open = True
+    def edit_behavior_key(self):
+        """Open the behavior key editor to modify the current behavior key file."""
+        # Pause the video
+        was_playing = False
+        if hasattr(self, 'player') and self.player:
+            was_playing = not self.player.pause
+            self.player.pause = True
         
-        # Create dialog
-        dialog = QDialog(self.parent)
-        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-        dialog.setWindowTitle("Summary Statistics")
-        dialog.setModal(True)
+        # Save current state
+        self.save_session_state()
         
-        # Center dialog
-        self.center_window(dialog, 300, 150)
+        # Temporarily hide floating windows
+        for window in self.floating_windows:
+            if window and window.isVisible():
+                window.hide()
         
-        # Create layout
-        layout = QVBoxLayout(dialog)
-        
-        # Add label
-        label = QLabel("Generating summary statistics is\ncurrently under development")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
-        
-        # Add OK button
-        button = QPushButton("OK")
-        button.clicked.connect(lambda: self.on_summary_close(dialog))
-        layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignCenter)
-        
-        # Set up close handling
-        dialog.finished.connect(lambda: self.on_summary_close(dialog))
-        
-        # Show dialog
-        dialog.exec()
+        try:
+            # Import needed for the editor
+            from behavior_key_editor import BehaviorKeyEditor
+            from config_manager import ConfigManager
+            
+            # Get the output directory (parent of the behavior key file)
+            behavior_key_dir = os.path.dirname(self.behavior_key_file)
+            
+            # Create config manager for the editor
+            config_manager = ConfigManager()
+            
+            # Define callback for when the editor closes
+            def on_editor_close(behavior_key_file):
+                # Only reload if the file was saved
+                if behavior_key_file and os.path.exists(behavior_key_file):
+                    # Reload behaviors
+                    self.behavior_key_file = behavior_key_file
+                    
+                    # Reset behavior data structures
+                    self.initialize_data_structures()
+                    
+                    # Load the updated behaviors
+                    self.load_behaviors()
+                    
+                    # Reload all annotations from file to ensure consistency
+                    self.load_annotations()
+                    
+                    # Update UI components
+                    self.update_annotations()
+                    self.populate_behavior_treeviews()
+                    
+                    # Recreate behavior buttons if they exist
+                    if hasattr(self, "behavior_buttons_window") and self.behavior_buttons_window:
+                        self.behavior_buttons_window.deleteLater()
+                        self.behavior_buttons_window = None
+                        self.create_behavior_buttons()
+                    
+                    # Scroll annotations to make everything visible
+                    QTimer.singleShot(100, self.scroll_annotations_to_bottom)
+            
+            # Create and show the editor dialog
+            self.dialog_open = True
+            editor = BehaviorKeyEditor(
+                self.parent,
+                behavior_key_dir,
+                on_start_video=on_editor_close,
+                on_cancel=lambda: None,  # Do nothing on cancel
+                config_manager=config_manager
+            )
+            
+            # Center the editor window
+            self.center_window(editor, int(self.display_width * 0.5), int(self.display_height * 0.8))
+            
+            # Show the editor modal dialog
+            editor.exec()
+            
+            # Reset dialog state
+            self.dialog_open = False
+            
+        except Exception as e:
+            print(f"Error opening behavior key editor: {e}")
+            QMessageBox.critical(self.parent, "Error", 
+                               f"Failed to open behavior key editor: {str(e)}")
+        finally:
+            # Show floating windows again
+            for window in self.floating_windows:
+                if window and not window.isVisible():
+                    window.show()
+            
+            # Resume playback if it was playing before
+            if hasattr(self, 'player') and self.player and was_playing:
+                self.player.pause = False
 
     def on_visualization_close(self, dialog):
         """Handle visualization dialog closing"""
-        self.dialog_open = False
-        dialog.accept()
-
-    def on_summary_close(self, dialog):
-        """Handle summary dialog closing"""
         self.dialog_open = False
         dialog.accept()
 
@@ -3069,3 +3128,112 @@ class VideoAnnotator(QFrame):
         except (PermissionError, OSError) as e:
             print(f"File access error: {e}")
             return False
+
+    def visualize_annotations(self):
+        """Show visualization of annotations with timeline display and export options."""
+        # Pause the video
+        was_playing = False
+        if hasattr(self, 'player') and self.player:
+            was_playing = not self.player.pause
+            self.player.pause = True
+        
+        # Set dialog flag
+        self.dialog_open = True
+        
+        try:
+            # Import the visualization module
+            from annotations_visualizer import show_visualization_dialog
+            
+            # Load all annotations from file
+            state_annotations = []
+            point_annotations = []
+            
+            if os.path.exists(self.annotations_file):
+                try:
+                    with open(self.annotations_file, 'r', newline='') as csvfile:
+                        reader = csv.DictReader(csvfile)
+                        for row in reader:
+                            annotation_type = row.get('Type', '').strip().lower()
+                            if annotation_type == 'state':
+                                # Convert time strings to numeric values
+                                start_time = 0
+                                end_time = None
+                                try:
+                                    start = row.get('Start', '').strip()
+                                    if start and start != 'NA':
+                                        start_time = float(start)
+                                    
+                                    end = row.get('End', '').strip()
+                                    if end and end != 'NA':
+                                        end_time = float(end)
+                                except ValueError:
+                                    # If conversion fails, try parsing from human-readable format
+                                    h_start = row.get('H_Start', '').strip()
+                                    h_end = row.get('H_End', '').strip()
+                                    
+                                    if h_start and h_start != 'NA':
+                                        start_time = self.parse_time(h_start)
+                                    
+                                    if h_end and h_end != 'NA':
+                                        end_time = self.parse_time(h_end)
+                                
+                                state_annotations.append({
+                                    'Name': row.get('Name', '').strip(),
+                                    'start_time': start_time,
+                                    'end_time': end_time,
+                                    'Type': 'State',
+                                    'Mutually_Exclusive': row.get('Mutually_Exclusive', 'False'),
+                                    'Notes': row.get('Notes', '')
+                                })
+                                
+                            elif annotation_type == 'point':
+                                point_annotations.append({
+                                    'Name': row.get('Name', '').strip(),
+                                    'time': row.get('H_Start', '').strip(),
+                                    'raw_time': float(row.get('Start', '0').strip()) if row.get('Start', '') and row.get('Start', '') != 'NA' else 0,
+                                    'Manual_Edit': row.get('Manual_Edit', 'False'),
+                                    'Notes': row.get('Notes', '')
+                                })
+                except Exception as e:
+                    print(f"Error reading annotations file: {e}")
+                    # If file read fails, fall back to in-memory data
+                    state_annotations = self.state_events.copy()
+                    point_annotations = self.point_events.copy()
+            else:
+                # If file doesn't exist, use in-memory data
+                state_annotations = self.state_events.copy() 
+                point_annotations = self.point_events.copy()
+            
+            # Show the visualization dialog
+            show_visualization_dialog(
+                parent=self.parent,
+                video_name=self.video_name,
+                state_events=state_annotations,
+                point_events=point_annotations,
+                video_duration=self.player.duration or 0,
+                parse_time_func=self.parse_time,
+                center_window_func=self.center_window,
+                output_dir=self.output_dir
+            )
+            
+        except ImportError as e:
+            print(f"Error importing visualization module: {e}")
+            QMessageBox.warning(
+                self.parent,
+                "Visualization Module Error",
+                "Could not load the visualization module. Please ensure the file 'annotations_visualizer.py' is in the same directory."
+            )
+        except Exception as e:
+            print(f"Error in visualization: {e}")
+            QMessageBox.critical(
+                self.parent,
+                "Visualization Error",
+                f"Failed to create visualization: {str(e)}"
+            )
+        finally:
+            # Reset dialog open flag
+            self.dialog_open = False
+            
+            # Resume playback if it was playing before
+            if hasattr(self, 'player') and self.player and was_playing:
+                self.player.pause = False

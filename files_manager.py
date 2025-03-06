@@ -1,11 +1,10 @@
-# files_manager.py
-
 import os
 import sys
 from pathlib import Path
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QListWidget, QFrame,
-    QMessageBox, QSplitter, QWidget, QInputDialog, QApplication)
+    QMessageBox, QSplitter, QWidget, QInputDialog, QApplication,
+    QFileDialog)
 from PyQt6.QtCore import Qt, QSize, QRect
 from PyQt6.QtGui import QFont
 
@@ -50,7 +49,7 @@ class FilesManager(QDialog):
         dialog_width = int(self.display_width * 0.8)
         dialog_height = int(self.display_height * 0.8)
         self.center_window(dialog_width, dialog_height)
-        
+
     def configure_display(self):
         """Configure display settings and window properties"""
         self.app = QApplication.instance() or QApplication([])
@@ -109,6 +108,11 @@ class FilesManager(QDialog):
         self.video_dir_entry = QLineEdit(self.initial_video_dir)
         self.video_dir_entry.returnPressed.connect(self.on_video_dir_update)
         nav_layout.addWidget(self.video_dir_entry)
+        
+        # Browse button
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self.browse_video_dir)
+        nav_layout.addWidget(browse_btn)
         
         layout.addWidget(nav_frame)
         
@@ -195,6 +199,11 @@ class FilesManager(QDialog):
         self.output_dir_entry.returnPressed.connect(self.on_output_dir_update)
         nav_layout.addWidget(self.output_dir_entry)
         
+        # Browse button
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self.browse_output_dir)
+        nav_layout.addWidget(browse_btn)
+        
         layout.addWidget(nav_frame)
         
         # Directory list
@@ -241,6 +250,38 @@ class FilesManager(QDialog):
         
         # Populate initial directory list
         self.populate_dir_list(self.initial_output_dir)
+
+    def browse_output_dir(self):
+        """Open file dialog to browse for output directory."""
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Directory",
+            self.current_output_dir,
+            QFileDialog.Option.ShowDirsOnly
+        )
+        
+        if directory:
+            self.current_output_dir = directory
+            self.output_dir_entry.setText(directory)
+            self.populate_dir_list(directory)
+            # Update selected directory
+            self.output_dir = directory
+            self.dir_selected_label.setText(f"Selected Output Directory: {self.output_dir}")
+
+    def browse_video_dir(self):
+        """Open file dialog to browse for video directory."""
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Video Directory",
+            self.current_video_dir,
+            QFileDialog.Option.ShowDirsOnly
+        )
+        
+        if directory:
+            self.current_video_dir = directory
+            self.video_dir_entry.setText(directory)
+            self.populate_video_dir_list(directory)
+            self.populate_file_list(directory)
 
     def go_up(self, panel_type):
         """Navigate up one directory level."""

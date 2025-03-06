@@ -124,10 +124,10 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
     
     # Create output filename
     if custom_output_file is None:
-        # First, determine whether we need to put it in a Summary_Statistics folder
+        # First, determine whether we need to put it in a Summary folder
         parent_dir = os.path.dirname(annotations_file)
         base_dir = os.path.dirname(parent_dir)
-        summary_dir = os.path.join(base_dir, "Summary_Statistics")
+        summary_dir = os.path.join(base_dir, "Summary")
         
         # Create the directory if it doesn't exist
         os.makedirs(summary_dir, exist_ok=True)
