@@ -1065,11 +1065,17 @@ class VideoAnnotator(QFrame):
         if obj == self.parent:
             if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
                 self.update_floating_buttons_visibility()
-
         if event.type() == QEvent.Type.KeyPress:
             key = event.key()
             modifiers = event.modifiers()
             
+            # Check if it's an autorepeat event
+            is_autorepeat = event.isAutoRepeat()
+            
+            # Block autorepeat events except for up/down arrow keys
+            if is_autorepeat and key not in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                return True
+                
             # Only process key presses if no dialog is open or if it's the escape key
             if key == Qt.Key.Key_Escape and not self.dialog_open:
                 self.return_to_file_selection()
@@ -1098,13 +1104,11 @@ class VideoAnnotator(QFrame):
                 if char and char in self.behavior_map:
                     self.handle_behavior_key_press(char)
                     return True
-
         elif event.type() == QEvent.Type.KeyRelease:
             char = event.text().lower()
             if char:
                 self.pressed_keys.discard(char)
                 return True
-
         # Pass other events to the parent class
         return super().eventFilter(obj, event)
 
