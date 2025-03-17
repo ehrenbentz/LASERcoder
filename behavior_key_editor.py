@@ -257,9 +257,9 @@ class BehaviorKeyEditor(QDialog):
         delete_btn.clicked.connect(self.delete_behavior_key)
         layout.addWidget(delete_btn)
         
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.on_cancel)
-        layout.addWidget(cancel_btn)
+        back_btn = QPushButton("Back")  # Changed from "Cancel" to "Back"
+        back_btn.clicked.connect(self.on_cancel)
+        layout.addWidget(back_btn)
         
         # Right-aligned Start Video button
         layout.addStretch()
@@ -699,8 +699,9 @@ class BehaviorKeyEditor(QDialog):
 
     def closeEvent(self, event):
         """Handle window close events."""
-        # Pass the event on for normal handling
-        event.accept()
+        # Instead of just accepting, invoke the cancel handler
+        event.ignore()  # Prevent default closing
+        self.on_closing()  # Delegate to our closing handler
 
     def on_behavior_key_changed(self, text):
         """Handle behavior key selection changes."""
@@ -711,8 +712,8 @@ class BehaviorKeyEditor(QDialog):
             self.update_behavior_entries()
             self.config_manager.update_last_behavior_key(filename)
 
-    def on_closing(self):
-        """Handle window closing by cleaning up dialogs and calling cancel."""
+    def on_cancel(self):
+        """Handle cancellation by returning to files manager."""
         # Close any active dialogs
         for dialog in self.active_dialogs[:]:
             try:
@@ -723,58 +724,74 @@ class BehaviorKeyEditor(QDialog):
                 if dialog in self.active_dialogs:
                     self.active_dialogs.remove(dialog)
         
-        # Call cancel handler without recursion
+        # Check for unsaved changes
+        current_behaviors = []
+        for i in range(30):
+            behavior = [
+                self.name_entries[i].text(),
+                self.key_entries[i].text(),
+                "state" if self.type_groups[i].buttons()[1].isChecked() else "point",
+                self.me_group_entries[i].text()
+            ]
+            current_behaviors.append(behavior)
+            
+        if current_behaviors != self.behaviors:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Unsaved Changes")
+            msg_box.setText("You have unsaved changes. Do you want to save before going back?")
+            msg_box.setStandardButtons(
+                QMessageBox.StandardButton.Save | 
+                QMessageBox.StandardButton.Discard | 
+                QMessageBox.StandardButton.Cancel
+            )
+            msg_box.setDefaultButton(QMessageBox.StandardButton.Save)
+            msg_box.setWindowFlags(msg_box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+            
+            # Set dialog position
+            self.center_window(msg_box, 400, 150)
+            
+            # Store dialog in active_dialogs list
+            self.active_dialogs.append(msg_box)
+            
+            reply = msg_box.exec()
+            
+            # Remove dialog from active_dialogs
+            if msg_box in self.active_dialogs:
+                self.active_dialogs.remove(msg_box)
+            
+            if reply == QMessageBox.StandardButton.Save:
+                if not self.save_behaviors():
+                    # If save fails, don't proceed with cancellation
+                    return
+            elif reply == QMessageBox.StandardButton.Cancel:
+                # User canceled the operation, don't proceed
+                return
+        
+        # Clear the start_video_flag to ensure we don't proceed to video
+        self.start_video_flag = False
+        
+        # IMPORTANT: Hide the window first before notifying the parent
+        self.hide()
+        
+        # Signal acceptance before calling callback
+        self.done(QDialog.DialogCode.Rejected)
+        
+        # Call the callback to return to files manager
+        self.on_cancel_callback()
+        
+        # Force immediate cleanup
+        self.deleteLater()
+
+    def on_closing(self):
+        """Handle window closing by cleaning up dialogs and calling cancel."""
+        # Use the on_cancel method which has the save/discard/cancel logic
+        # and will handle the return to files manager
         if not self._initializing:  # Prevent recursion during initialization
             self._initializing = True
             try:
-                # Check for unsaved changes
-                current_behaviors = []
-                for i in range(30):  # Changed from 20 to 30
-                    behavior = [
-                        self.name_entries[i].text(),
-                        self.key_entries[i].text(),
-                        "state" if self.type_groups[i].buttons()[1].isChecked() else "point",
-                        self.me_group_entries[i].text()
-                    ]
-                    current_behaviors.append(behavior)
-                    
-                if current_behaviors != self.behaviors:
-                    msg_box = QMessageBox(self)
-                    msg_box.setWindowTitle("Unsaved Changes")
-                    msg_box.setText("You have unsaved changes. Do you want to save before closing?")
-                    msg_box.setStandardButtons(
-                        QMessageBox.StandardButton.Save | 
-                        QMessageBox.StandardButton.Discard | 
-                        QMessageBox.StandardButton.Cancel
-                    )
-                    msg_box.setDefaultButton(QMessageBox.StandardButton.Save)
-                    msg_box.setWindowFlags(msg_box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-                    
-                    # Set dialog position
-                    self.center_window(msg_box, 300, 150)
-                    
-                    # Store dialog in active_dialogs list
-                    self.active_dialogs.append(msg_box)
-                    
-                    reply = msg_box.exec()
-                    
-                    # Remove dialog from active_dialogs
-                    if msg_box in self.active_dialogs:
-                        self.active_dialogs.remove(msg_box)
-                    
-                    if reply == QMessageBox.StandardButton.Save:
-                        if self.save_behaviors():
-                            self.done(QDialog.DialogCode.Rejected)
-                    elif reply == QMessageBox.StandardButton.Discard:
-                        self.done(QDialog.DialogCode.Rejected)
-                else:
-                    self.done(QDialog.DialogCode.Rejected)
+                self.on_cancel()
             finally:
                 self._initializing = False
-
-    def on_cancel(self):
-        """Handle cancellation."""
-        self.on_closing()
 
     def setup_window_close(self):
         """Setup window closing behavior and keyboard shortcuts."""

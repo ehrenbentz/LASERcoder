@@ -3,6 +3,7 @@
 import pandas as pd
 import sys
 import os
+import json
 from collections import defaultdict
 
 def generate_summary_statistics(annotations_file, custom_output_file=None):
@@ -18,7 +19,7 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
         
     Returns:
     --------
-    Path to the created summary file
+    Path to the created summary file or None if the file is empty
     """
     # Extract video file name from annotations filename
     base_name = os.path.basename(annotations_file)
@@ -27,9 +28,9 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
     # Read annotation data
     df = pd.read_csv(annotations_file)
     
-    # Skip empty files
+    # Skip empty files - make sure we return None to indicate empty file
     if df.empty:
-        print(f"Warning: {annotations_file} is empty. Skipping.")
+        print(f"Warning: {video_name} contained no observations. Skipping.")
         return None
     
     # Calculate total video duration (max timestamp in the data)
@@ -39,10 +40,45 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
             df['Start'].dropna().max() if not df['Start'].dropna().empty else 0
         )
     except:
-        print(f"Warning: Could not determine duration for {annotations_file}. Using 0.")
+        print(f"Warning: Could not determine duration for {video_name}. Using 0.")
         total_duration_seconds = 0
     
-    total_duration_minutes = total_duration_seconds / 60
+    # Check for coding start/duration from the session state file
+    coding_start = 0
+    coding_duration = None
+    
+    # Determine directories for the session state file
+    annotations_dir = os.path.dirname(annotations_file)
+    base_dir = os.path.dirname(annotations_dir)
+    resume_dir = os.path.join(base_dir, "Resume")
+    session_state_file = os.path.join(resume_dir, f"{video_name}_session_state.json")
+    
+    # Load coding parameters if available
+    if os.path.exists(session_state_file):
+        try:
+            with open(session_state_file, "r") as f:
+                session_state = json.load(f)
+                coding_start = float(session_state.get("coding_start", 0))
+                
+                # Try to get coding duration from the file
+                if "coding_duration" in session_state and session_state["coding_duration"] is not None:
+                    coding_duration = float(session_state["coding_duration"])
+                # If no coding_duration but we have coding_end, calculate it
+                elif "coding_end" in session_state and session_state["coding_end"] is not None:
+                    coding_end = float(session_state["coding_end"])
+                    coding_duration = coding_end - coding_start
+                    
+            print(f"Loaded coding parameters: start={coding_start}, duration={coding_duration}")
+        except Exception as e:
+            print(f"Warning: Error loading session state: {e}")
+    
+    # Determine what time range to use for calculations
+    analysis_duration = total_duration_seconds
+    if coding_duration is not None and coding_duration > 0:
+        analysis_duration = coding_duration
+        print(f"Using coding duration {analysis_duration} seconds for percentage calculations")
+    
+    total_duration_minutes = analysis_duration / 60
     
     # Group behaviors by Name
     behaviors = {}
@@ -66,7 +102,7 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
         # Count instances
         count = len(behavior_df)
         
-        # Calculate frequency (instances per minute)
+        # Calculate frequency (Observations per minute)
         frequency = count / total_duration_minutes if total_duration_minutes > 0 else 0
         
         if behavior_type == 'State':
@@ -77,12 +113,28 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
                 else:
                     # Try to calculate duration from Start and End
                     total_duration = 0
+                    
+                    # Filter for behaviors that fall within coding period if it exists
                     for _, row in behavior_df.iterrows():
                         if pd.notnull(row.get('Start')) and pd.notnull(row.get('End')):
-                            total_duration += (row['End'] - row['Start'])
+                            start_time = row['Start']
+                            end_time = row['End']
+                            
+                            # If coding period defined, adjust state behavior times
+                            if coding_duration is not None:
+                                # Skip behaviors that end before coding start or start after coding end
+                                if end_time < coding_start or start_time > coding_start + coding_duration:
+                                    continue
+                                    
+                                # Clip start and end times to the coding period
+                                start_time = max(start_time, coding_start)
+                                end_time = min(end_time, coding_start + coding_duration)
+                            
+                            # Add the (potentially adjusted) duration
+                            total_duration += (end_time - start_time)
                 
-                # Calculate percentage of total time
-                percent_time = (total_duration / total_duration_seconds) * 100 if total_duration_seconds > 0 else 0
+                # Calculate percentage of total time based on analysis duration
+                percent_time = (total_duration / analysis_duration) * 100 if analysis_duration > 0 else 0
             except Exception as e:
                 print(f"Warning: Error calculating durations for {behavior}: {e}")
                 total_duration = 0
@@ -112,7 +164,7 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
             'Behavior': behavior,
             'Type': stats['Type'],
             'Count': stats['Count'],
-            'Frequency_per_minute': round(stats['Frequency'], 3),
+            'Observations_per_minute': round(stats['Frequency'], 3),
             'Total_Duration_seconds': round(stats['Total_Duration'], 3) if stats['Total_Duration'] is not None else None,
             'Percent_Time': round(stats['Percent_Time'], 3) if stats['Percent_Time'] is not None else None
         })
@@ -139,8 +191,14 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
     # Write summary to CSV
     summary_df.to_csv(output_file, index=False, float_format='%.3f')
     
-    print(f"Summary statistics saved to {output_file}")
-    print(f"Video duration: {total_duration_seconds:.2f} seconds ({total_duration_minutes:.2f} minutes)")
+    # Include coding information in the console output
+    if coding_duration is not None:
+        print(f"Summary statistics saved to {output_file}")
+        print(f"Video duration: {total_duration_seconds:.2f} seconds ({total_duration_seconds/60:.2f} minutes)")
+        print(f"Coding period: {coding_start:.2f} to {coding_start + coding_duration:.2f} seconds ({coding_duration:.2f} seconds, {coding_duration/60:.2f} minutes)")
+    else:
+        print(f"Summary statistics saved to {output_file}")
+        print(f"Video duration: {total_duration_seconds:.2f} seconds ({total_duration_minutes:.2f} minutes)")
     
     return output_file
 
@@ -186,7 +244,7 @@ def combine_summaries(summary_files, output_file):
             'Behavior': behavior,
             'Type': btype,
             'Count': group['Count'].sum(),
-            'Average_Count_per_video': round(group['Count'].mean(), 3),
+            'Mean_Count_per_video': round(group['Count'].mean(), 3),
             'Total_videos': len(group)
         }
         
@@ -195,12 +253,12 @@ def combine_summaries(summary_files, output_file):
             # For state behaviors, we aggregate durations and percentages
             data.update({
                 'Total_Duration_seconds': round(group['Total_Duration_seconds'].sum(), 3),
-                'Average_Duration_per_video': round(group['Total_Duration_seconds'].mean(), 3),
-                'Average_Percent_Time': round(group['Percent_Time'].mean(), 3)
+                'Mean_Duration_per_video': round(group['Total_Duration_seconds'].mean(), 3),
+                'Mean_Percent_Time': round(group['Percent_Time'].mean(), 3)
             })
         
         # Add frequency data
-        data['Average_Frequency_per_minute'] = round(group['Frequency_per_minute'].mean(), 3)
+        data['Mean_Observations_per_minute'] = round(group['Observations_per_minute'].mean(), 3)
         
         summary_data.append(data)
     

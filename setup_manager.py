@@ -45,6 +45,10 @@ class SetupManager(QDialog):
         self.annotations_file = ""
         self.session_state_file = ""
         
+        # Keep track of open dialogs
+        self.behavior_editor = None
+        self.files_manager = None
+        
         # Set window properties
         self.setWindowTitle("LaserTAG")
         
@@ -92,27 +96,39 @@ class SetupManager(QDialog):
         
     def start_setup(self):
         """Initial setup process to get the output directory and video file."""
+        self.show_files_manager()
+            
+    def show_files_manager(self):
+        """Show the files manager dialog and handle its result."""
         try:
-            files_manager = FilesManager(
+            # Make sure any open behavior editor is closed first
+            if self.behavior_editor:
+                self.behavior_editor.close()
+                self.behavior_editor = None
+            
+            self.files_manager = FilesManager(
                 self,
                 initial_output_dir=self.config_manager.get_output_dir(),
                 initial_video_dir=self.config_manager.get_video_dir()
             )
             
             # Execute the files manager dialog
-            files_manager_result = files_manager.exec()
+            files_manager_result = self.files_manager.exec()
             
             if files_manager_result == QDialog.DialogCode.Accepted:
                 # Check if files were selected
-                if files_manager.output_dir and files_manager.selected_video_file:
+                if self.files_manager.output_dir and self.files_manager.selected_video_file:
                     # Update configuration with new directories
-                    self.config_manager.update_output_dir(files_manager.output_dir)
-                    self.config_manager.update_video_dir(files_manager.selected_video_file)
+                    self.config_manager.update_output_dir(self.files_manager.output_dir)
+                    self.config_manager.update_video_dir(self.files_manager.selected_video_file)
                     
-                    self.output_dir = files_manager.output_dir
-                    self.video_path = files_manager.selected_video_file
+                    self.output_dir = self.files_manager.output_dir
+                    self.video_path = self.files_manager.selected_video_file
                     # Handle multiple dots in filename
                     self.video_name = Path(self.video_path).stem
+                    
+                    # Clean up the files_manager reference
+                    self.files_manager = None
                     
                     self.initialize_output_dir()
                     self.initialize_file_paths()
@@ -181,7 +197,7 @@ class SetupManager(QDialog):
                 
                 QMessageBox.critical(self, "Error", 
                                   "Cannot create annotations file.\nIs it open in another application?")
-                self.done(QDialog.DialogCode.Rejected)
+                self.show_files_manager()  # Return to files manager instead of closing
                 return False
                 
             # Create empty session state file with timestamp in seconds
@@ -189,7 +205,16 @@ class SetupManager(QDialog):
                 # First check if we can write to the file location by using a temp file
                 temp_session_state_file = self.session_state_file + ".tmp"
                 with open(temp_session_state_file, 'w') as f:
-                    json.dump({"timestamp_sec": 0, "current_frame": 0}, f)
+                    # Use the saved_state if it exists, otherwise create a default state
+                    state_data = self.saved_state if self.saved_state else {
+                        "timestamp_sec": 0.0,
+                        "current_frame": 0,
+                        "coding_start": 0.0,
+                        "coding_duration": None,
+                        "coding_end": None,
+                        "coding_end_reached": False
+                    }
+                    json.dump(state_data, f)
                 
                 # If successful, replace the actual file
                 os.replace(temp_session_state_file, self.session_state_file)
@@ -203,14 +228,14 @@ class SetupManager(QDialog):
                 
                 QMessageBox.critical(self, "Error", 
                                   "Cannot create session state file.\nIs it open in another application?")
-                self.done(QDialog.DialogCode.Rejected)
+                self.show_files_manager()  # Return to files manager instead of closing
                 return False
                 
             return True
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error creating files: {str(e)}")
-            self.done(QDialog.DialogCode.Rejected)
+            self.show_files_manager()  # Return to files manager instead of closing
             return False
             
     def check_existing_session(self):
@@ -234,14 +259,14 @@ class SetupManager(QDialog):
                         except (PermissionError, OSError):
                             QMessageBox.critical(self, "Error", 
                                               "Cannot access annotations file.\nIs it open in another application?")
-                            self.done(QDialog.DialogCode.Rejected)
+                            self.show_files_manager()  # Return to files manager instead of closing
                             return
                     
                     self.show_resume_dialog()
                 except (PermissionError, OSError):
                     QMessageBox.critical(self, "Error", 
                                       "Cannot access session state file.\nIs it open in another application?")
-                    self.done(QDialog.DialogCode.Rejected)
+                    self.show_files_manager()  # Return to files manager instead of closing
                     return
                 except json.JSONDecodeError:
                     QMessageBox.warning(self, "Warning", 
@@ -255,7 +280,7 @@ class SetupManager(QDialog):
                     self.show_behavior_key_editor()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error checking existing session: {str(e)}")
-            self.done(QDialog.DialogCode.Rejected)
+            self.show_files_manager()  # Return to files manager instead of closing
             
     def confirm_start_over(self):
         """Show confirmation dialog for starting over with error handling."""
@@ -298,7 +323,14 @@ class SetupManager(QDialog):
             
             # Reset state
             self.start_frame = 0
-            self.saved_state = None
+            self.saved_state = {
+                "timestamp_sec": 0.0,
+                "coding_start": 0.0, 
+                "coding_duration": None,
+                "coding_end": None,
+                "coding_end_reached": False,
+                "current_frame": 0
+            }
             
             # Create new empty files
             if self.create_empty_files():
@@ -313,7 +345,7 @@ class SetupManager(QDialog):
         dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         layout = QVBoxLayout(dialog)
         
-        # Add message with custom font
+        # Add message
         message = QLabel(f"A previous session was found for {self.video_name}.\n\nWhat would you like to do?")
         font = QFont()
         message.setFont(font)
@@ -349,24 +381,31 @@ class SetupManager(QDialog):
         button_layout.addWidget(start_over_btn)
         button_layout.addWidget(cancel_btn)
         
-        layout.addSpacing(20)  # Add some spacing between message and buttons
+        layout.addSpacing(20)
         layout.addLayout(button_layout)
         
-        # Center dialog on screen
-        self.center_window(dialog, 500, 250)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        
+        dialog.rejected.connect(lambda: self.handle_resume_choice("cancel", dialog))
         
         dialog.exec()
-        
+   
     def handle_resume_choice(self, choice, dialog):
         """Handle the user's choice from the resume dialog."""
-        dialog.close()
+        try:
+            dialog.rejected.disconnect()
+        except:
+            pass
         
+        dialog.accept()
+        
+        # Now process the choice
         if choice == "resume":
             self.resume_session()
         elif choice == "start_over":
             self.confirm_start_over()
         else:  # cancel
-            self.done(QDialog.DialogCode.Rejected)
+            self.show_files_manager()
 
     def resume_session(self):
         """Resume the previous session."""
@@ -385,28 +424,34 @@ class SetupManager(QDialog):
     def show_behavior_key_editor(self):
         """Show the behavior key editor dialog."""
         try:
-            behavior_editor = BehaviorKeyEditor(
+            # Clean up any existing behavior editor
+            if self.behavior_editor:
+                self.behavior_editor.close()
+                self.behavior_editor = None
+                
+            # Create a new behavior editor
+            self.behavior_editor = BehaviorKeyEditor(
                 self,
                 self.behavior_key_dir,
                 on_start_video=self.on_start_video,
-                on_cancel=self.on_cancel,
+                on_cancel=self.on_behavior_key_cancel,
                 config_manager=self.config_manager
             )
             
             # Execute the dialog
-            result = behavior_editor.exec()
+            result = self.behavior_editor.exec()
             
             # Check if the start_video_flag is set - BehaviorKeyEditor will handle its own validation
-            if behavior_editor.start_video_flag:
+            if self.behavior_editor and self.behavior_editor.start_video_flag:
                 self.start_video_flag = True
-                self.behavior_key_file = behavior_editor.behavior_key_file
+                self.behavior_key_file = self.behavior_editor.behavior_key_file
+                self.behavior_editor = None  # Clear the reference
                 self.done(QDialog.DialogCode.Accepted)
-            else:
-                self.done(QDialog.DialogCode.Rejected)
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error showing behavior key editor: {str(e)}")
-            self.done(QDialog.DialogCode.Rejected)
+            self.behavior_editor = None  # Clear the reference on error
+            self.show_files_manager()  # Return to files manager instead of closing
             
     def on_start_video(self, behavior_key_file):
         """Handle starting the video."""
@@ -414,9 +459,23 @@ class SetupManager(QDialog):
         self.start_video_flag = True
         
     def on_cancel(self):
-        """Handle cancellation."""
+        """Handle cancellation from the main flow."""
         self.start_video_flag = False
         self.done(QDialog.DialogCode.Rejected)
+        
+    def on_behavior_key_cancel(self):
+        """Handle cancellation from the behavior key editor by returning to files manager."""
+        # Save the reference to the editor so we can properly close it
+        behavior_editor_to_close = self.behavior_editor
+        
+        # Clear our reference to the editor
+        self.behavior_editor = None
+        
+        # Clear the start_video_flag
+        self.start_video_flag = False
+        
+        # Show the files manager (which will properly close the behavior editor in its setup)
+        self.show_files_manager()
 
     def check_behavior_key_file_access(self, behavior_key_file):
         """
@@ -443,3 +502,43 @@ class SetupManager(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error accessing behavior key file: {str(e)}")
             return False
+
+    def keyPressEvent(self, event):
+        """Handle key press events in the SetupManager dialog."""
+        from PyQt6.QtCore import Qt
+        
+        # If ESC key is pressed, close the application
+        if event.key() == Qt.Key.Key_Escape:
+            print("ESC pressed in SetupManager - closing application")
+            
+            # Reject the dialog 
+            self.reject()
+            
+            # Set start_video_flag to False to signal we're exiting
+            self.start_video_flag = False
+            
+            # Close the parent application directly
+            if self.parent():
+                # Use QTimer to ensure this happens after event processing
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, self.parent().close)
+            else:
+                # If no parent, use QApplication to exit
+                from PyQt6.QtWidgets import QApplication
+                QTimer.singleShot(0, QApplication.quit)
+        else:
+            # For other keys, use default handling
+            super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        """Handle window close events (X button)."""
+        # Accept the close event for this dialog
+        event.accept()
+        
+        # Close the entire application
+        if self.parent():
+            self.parent().close()
+        else:
+            # If no parent, use QApplication to exit
+            from PyQt6.QtWidgets import QApplication
+            QApplication.quit()

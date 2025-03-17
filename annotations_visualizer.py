@@ -1,3 +1,5 @@
+# annotations_visualizer.py
+
 import os
 import csv
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
@@ -11,13 +13,44 @@ from PyQt6.QtGui import (QPainter, QColor, QPen, QBrush, QFont,
 class AnnotationsVisualizer(QFrame):
     """Timeline visualization widget for displaying state and point annotations"""
     
-    def __init__(self, parent, video_name, state_events, point_events, video_duration, parse_time_func):
+    def __init__(self, parent, video_name, state_events, point_events, video_duration, parse_time_func, bounds=None):
         super().__init__(parent)
         self.video_name = video_name
-        self.state_events = state_events
-        self.point_events = point_events
-        self.video_duration = video_duration
         self.parse_time_func = parse_time_func
+        
+        # Process bounds information
+        self.bounds = bounds or {"has_bounds": False, "whole_video": True}
+        self.has_bounds = self.bounds.get("has_bounds", False)
+        self.whole_video = self.bounds.get("whole_video", True)
+        self.start_bound = self.bounds.get("start", 0) if self.has_bounds else 0
+        self.end_bound = self.bounds.get("end") if self.has_bounds else None
+        
+        # Determine effective visualization range
+        if self.has_bounds and not self.whole_video:
+            # Only visualize the coded segment
+            self.effective_start = self.start_bound
+            self.effective_end = self.end_bound
+            
+            # Filter events to only include those within the bounds
+            self.state_events = self.filter_state_events(state_events)
+            self.point_events = self.filter_point_events(point_events)
+            
+            # Set effective visualization duration
+            if self.effective_end is not None:
+                self.effective_duration = self.effective_end - self.effective_start
+            else:
+                self.effective_duration = video_duration - self.effective_start
+        else:
+            # Visualize the entire video
+            self.effective_start = 0
+            self.effective_end = None
+            self.effective_duration = video_duration
+            self.state_events = state_events
+            self.point_events = point_events
+            
+        self.video_duration = self.effective_duration  # Use this for the timeline visualization
+        
+        # Set up display
         self.setMinimumHeight(500)
         self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Sunken)
         self.setStyleSheet("background-color: white;")
@@ -41,6 +74,81 @@ class AnnotationsVisualizer(QFrame):
         # Calculate space needed for tracks
         self.state_behaviors, self.point_behaviors = self.get_unique_behaviors_by_type()
         self.calculate_height()
+    
+    def filter_state_events(self, events):
+        """Filter state events to only include those within the effective bounds"""
+        if not (self.has_bounds and not self.whole_video):
+            return events
+            
+        filtered_events = []
+        for event in events:
+            start_time = event.get('start_time')
+            end_time = event.get('end_time')
+            
+            # Skip events that are entirely before the effective_start
+            if end_time is not None and end_time < self.effective_start:
+                continue
+                
+            # Skip events that are entirely after the effective_end (if set)
+            if self.effective_end is not None and start_time > self.effective_end:
+                continue
+                
+            # For events that overlap with bounds, adjust the times
+            adjusted_event = event.copy()
+            
+            # Adjust start_time if before effective_start
+            if start_time < self.effective_start:
+                adjusted_event['start_time'] = self.effective_start
+                
+            # Adjust end_time if after effective_end
+            if end_time is not None and self.effective_end is not None and end_time > self.effective_end:
+                adjusted_event['end_time'] = self.effective_end
+                
+            # Adjust times relative to effective_start for visualization
+            adjusted_event['start_time'] -= self.effective_start
+            if adjusted_event['end_time'] is not None:
+                adjusted_event['end_time'] -= self.effective_start
+                
+            filtered_events.append(adjusted_event)
+            
+        return filtered_events
+        
+    def filter_point_events(self, events):
+        """Filter point events to only include those within the effective bounds"""
+        if not (self.has_bounds and not self.whole_video):
+            return events
+            
+        filtered_events = []
+        for event in events:
+            # Get the time value either from raw_time or by parsing the time string
+            if 'raw_time' in event and event['raw_time'] is not None:
+                time_value = event['raw_time']
+            else:
+                time_str = event['time']
+                time_value = self.parse_time_func(time_str)
+                
+            # Skip events outside the bounds
+            if time_value < self.effective_start:
+                continue
+                
+            if self.effective_end is not None and time_value > self.effective_end:
+                continue
+                
+            # Adjust the event time relative to effective_start
+            adjusted_event = event.copy()
+            adjusted_event['raw_time'] = time_value - self.effective_start
+            
+            # Also update the human-readable time string if needed
+            if 'time' in adjusted_event:
+                original_time = self.parse_time_func(adjusted_event['time'])
+                adjusted_time = original_time - self.effective_start
+                minutes = int(adjusted_time / 60)
+                seconds = adjusted_time % 60
+                adjusted_event['time'] = f"{minutes}m{seconds:.2f}s"
+                
+            filtered_events.append(adjusted_event)
+            
+        return filtered_events
     
     def get_unique_behaviors_by_type(self):
         """Collects unique behavior names separated by type"""
@@ -101,14 +209,24 @@ class AnnotationsVisualizer(QFrame):
         # Fill background
         painter.fillRect(event.rect(), QColor(255, 255, 255))
         
-        # Draw title
+        # Draw title with bounds information if applicable
         painter.setPen(self.text_color)
         title_font = QFont("Arial", 14, QFont.Weight.Bold)
         painter.setFont(title_font)
+        
+        title_text = f"Annotation Timeline for {self.video_name}"
+        if self.has_bounds and not self.whole_video:
+            # Add bounds information to title
+            if self.effective_end is not None:
+                bounds_text = f" (Segment: {self.format_time(self.start_bound)} - {self.format_time(self.end_bound)})"
+            else:
+                bounds_text = f" (From: {self.format_time(self.start_bound)})"
+            title_text += bounds_text
+            
         painter.drawText(
             QRectF(0, 0, self.width(), self.header_height),
             Qt.AlignmentFlag.AlignCenter,
-            f"Annotation Timeline for {self.video_name}"
+            title_text
         )
         
         # Setup for tracks
@@ -127,8 +245,15 @@ class AnnotationsVisualizer(QFrame):
         time_points = 5  # Number of time points to show
         for i in range(time_points + 1):
             x_pos = self.margin_left + (axis_width * i / time_points)
+            # Adjust time values based on effective start time
             time_value = (self.video_duration * i / time_points)
-            time_str = self.format_time(time_value)
+            
+            # Format time considering the offset
+            if self.has_bounds and not self.whole_video:
+                display_time = time_value + self.effective_start
+                time_str = self.format_time(display_time)
+            else:
+                time_str = self.format_time(time_value)
             
             painter.drawLine(
                 int(x_pos), int(axis_y - 3), 
@@ -339,9 +464,8 @@ class AnnotationsVisualizer(QFrame):
         
         return image, None
 
-
 def show_visualization_dialog(parent, video_name, state_events, point_events, video_duration, 
-                             parse_time_func, center_window_func, output_dir):
+                             parse_time_func, center_window_func, output_dir, bounds=None):
     """
     Create and show the visualization dialog for annotations.
     
@@ -354,6 +478,13 @@ def show_visualization_dialog(parent, video_name, state_events, point_events, vi
         parse_time_func: Function to parse time strings into seconds
         center_window_func: Function to center the dialog on screen
         output_dir: Output directory for saved files
+        bounds: Dictionary with visualization bounds information:
+               {
+                   "has_bounds": bool,
+                   "start": float or None,
+                   "end": float or None,
+                   "whole_video": bool
+               }
     
     Returns:
         True if visualization was shown successfully, False otherwise
@@ -361,7 +492,21 @@ def show_visualization_dialog(parent, video_name, state_events, point_events, vi
     try:
         # Create visualization dialog
         viz_dialog = QDialog(parent)
-        viz_dialog.setWindowTitle(f"Annotation Visualization - {video_name}")
+        
+        # Set title based on visualization mode
+        title_suffix = ""
+        if bounds and bounds.get("has_bounds") and not bounds.get("whole_video"):
+            start_time = bounds.get("start", 0)
+            end_time = bounds.get("end")
+            
+            if start_time > 0 and end_time is not None:
+                title_suffix = f" (Segment {start_time:.2f}s - {end_time:.2f}s)"
+            elif start_time > 0:
+                title_suffix = f" (From {start_time:.2f}s)"
+            elif end_time is not None:
+                title_suffix = f" (Until {end_time:.2f}s)"
+                
+        viz_dialog.setWindowTitle(f"Annotation Visualization - {video_name}{title_suffix}")
         viz_dialog.setModal(True)
         
         # Calculate 90% of screen dimensions
@@ -384,7 +529,8 @@ def show_visualization_dialog(parent, video_name, state_events, point_events, vi
             state_events, 
             point_events,
             video_duration,
-            parse_time_func
+            parse_time_func,
+            bounds=bounds
         )
         main_layout.addWidget(timeline_widget, 1)  # Add with stretch
         
@@ -442,8 +588,22 @@ def show_visualization_dialog(parent, video_name, state_events, point_events, vi
                 file_ext = ".png"
                 file_filter = "PNG Images (*.png)"
             
+            # Create filename based on visualization mode
+            filename_suffix = ""
+            if bounds and bounds.get("has_bounds") and not bounds.get("whole_video"):
+                start_time = bounds.get("start", 0)
+                end_time = bounds.get("end")
+                
+                if start_time > 0 and end_time is not None:
+                    filename_suffix = f"_segment_{int(start_time)}-{int(end_time)}"
+                elif start_time > 0:
+                    filename_suffix = f"_from_{int(start_time)}"
+                elif end_time is not None:
+                    filename_suffix = f"_until_{int(end_time)}"
+                    
+            default_name = f"{video_name}_annotations{filename_suffix}{file_ext}"
+            
             # Ask for save location
-            default_name = f"{video_name}_annotations{file_ext}"
             file_path, _ = QFileDialog.getSaveFileName(
                 viz_dialog,
                 "Save Visualization",

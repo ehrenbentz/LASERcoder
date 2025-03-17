@@ -526,19 +526,25 @@ class FilesManager(QDialog):
             self.video_file_listbox.parentWidget().setMinimumWidth(width)
 
     def keyPressEvent(self, event):
-        """Handle key press events."""
-        if event.key() == Qt.Key.Key_Return:
-            # Handle Enter key for video selection
-            if self.video_file_listbox.hasFocus():
-                self.select_video_file()
-            # Handle Enter key for directory navigation
-            elif self.output_dir_listbox.hasFocus():
-                self.select_directory()
-        elif event.key() == Qt.Key.Key_Escape:
-            # Simply close with rejection
-            self.done(QDialog.DialogCode.Rejected)
+        """Handle key press events in the FilesManager dialog."""
+        from PyQt6.QtCore import Qt
+        
+        # If ESC key is pressed, close the application
+        if event.key() == Qt.Key.Key_Escape:
+            # Reject the dialog
+            self.reject()
+            
+            # Check if we have a parent window
+            if self.parent():
+                # Use QTimer to ensure this happens after event processing
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, self.parent().close)
+            else:
+                # If no parent, use QApplication to exit
+                from PyQt6.QtWidgets import QApplication
+                QTimer.singleShot(0, QApplication.quit)
         else:
-            # Pass other key events to parent
+            # For other keys, use default handling
             super().keyPressEvent(event)
 
     def open_summary_statistics(self):

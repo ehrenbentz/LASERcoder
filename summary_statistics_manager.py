@@ -56,7 +56,7 @@ except ImportError:
                 'Behavior': behavior,
                 'Type': btype,
                 'Count': group['Count'].sum(),
-                'Average_Count_per_video': group['Count'].mean(),
+                'Mean_Count_per_video': group['Count'].mean(),
                 'Total_videos': len(group)
             }
             
@@ -65,12 +65,12 @@ except ImportError:
                 # For state behaviors, we aggregate durations and percentages
                 data.update({
                     'Total_Duration_seconds': group['Total_Duration_seconds'].sum(),
-                    'Average_Duration_per_video': group['Total_Duration_seconds'].mean(),
-                    'Average_Percent_Time': group['Percent_Time'].mean()
+                    'Mean_Duration_per_video': group['Total_Duration_seconds'].mean(),
+                    'Mean_Percent_Time': group['Percent_Time'].mean()
                 })
             
             # Add frequency data
-            data['Average_Frequency_per_minute'] = group['Frequency_per_minute'].mean()
+            data['Mean_Frequency_per_minute'] = group['Frequency_per_minute'].mean()
             
             summary_data.append(data)
         
@@ -379,6 +379,7 @@ class SummaryStatisticsManager(QDialog):
         # Process each selected file
         success_count = 0
         failed_files = []
+        empty_files = []
         
         # Process the files without dialogs
         for file_path in selected_files:
@@ -389,26 +390,39 @@ class SummaryStatisticsManager(QDialog):
                 output_file = generate_summary_statistics(file_path, custom_output)
                 if output_file:
                     success_count += 1
+                else:
+                    # No output file usually means the file was empty
+                    empty_files.append(video_name)
             except Exception as e:
                 failed_files.append((os.path.basename(file_path), str(e)))
         
         # Show completion message
+        message = f"Successfully generated {success_count} summary files"
+        
+        if empty_files:
+            message += "\n\nThe following files contained no observations:"
+            for file_name in empty_files:
+                message += f"\n• {file_name}"
+        
         if failed_files:
-            error_message = "The following files could not be processed:\n\n"
+            error_message = "\n\nThe following files could not be processed:\n\n"
             for file_name, error in failed_files:
-                error_message += f"• {file_name}: {error}\n"
+                file_base = file_name.replace("_Annotations.csv", "")
+                error_message += f"• {file_base}: {error}\n"
             
             QMessageBox.warning(
                 self, 
                 "Processing Completed with Errors", 
-                f"Successfully generated {success_count} summary files.\n\n{error_message}"
+                f"{message}{error_message}"
             )
         else:
             QMessageBox.information(
                 self, 
                 "Processing Complete", 
-                f"Successfully generated {success_count} summary files   "
+                message
             )
+        
+        return success_count, empty_files, failed_files
 
     def generate_combined_summary(self):
         """Generate only a combined summary for all selected files."""
@@ -425,16 +439,30 @@ class SummaryStatisticsManager(QDialog):
         if not summary_dir:
             return
             
-        # Create ONLY the Combined_summaries subdirectory
-        combined_dir = os.path.join(summary_dir, "Combined_summaries")
+        # Create the Combined_summaries subdirectory for summary files
+        combined_summaries_dir = os.path.join(summary_dir, "Combined_summaries")
         try:
-            os.makedirs(combined_dir, exist_ok=True)
+            os.makedirs(combined_summaries_dir, exist_ok=True)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not create Combined_summaries directory: {str(e)}")
+            return
+        
+        # Create the Combined_Annotations subdirectory for combined annotation files
+        combined_annotations_dir = os.path.join(summary_dir, "Combined_Annotations")
+        try:
+            os.makedirs(combined_annotations_dir, exist_ok=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not create Combined_Annotations directory: {str(e)}")
             return
             
         # Define the individual summaries directory path (but don't create it)
         individual_dir = os.path.join(summary_dir, "Individual_summaries")
+        # Create it if it doesn't exist (for generating missing summaries)
+        try:
+            os.makedirs(individual_dir, exist_ok=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not create Individual_summaries directory: {str(e)}")
+            return
         
         # Prompt user for an experiment name
         experiment_name, ok = QInputDialog.getText(
@@ -470,7 +498,7 @@ class SummaryStatisticsManager(QDialog):
                 missing_summaries.append((file_path, video_name))
         
         # If there are missing summaries, ask the user if they want to generate them first
-        if missing_summaries and existing_summaries:
+        if missing_summaries:
             missing_names = [name for _, name in missing_summaries]
             response = QMessageBox.question(
                 self,
@@ -483,13 +511,49 @@ class SummaryStatisticsManager(QDialog):
             if response == QMessageBox.StandardButton.Cancel:
                 return
             elif response == QMessageBox.StandardButton.Yes:
-                QMessageBox.information(
-                    self,
-                    "Generate Individual Summaries",
-                    "Please use the 'Generate Individual Summaries' button first, then try again."
-                )
-                return
-            # If No, continue with only existing summaries
+                # Generate the missing summaries immediately
+                empty_files = []
+                failed_files = []
+                success_count = 0
+                
+                for file_path, video_name in missing_summaries:
+                    try:
+                        # Generate summary statistics with custom output path in Individual_summaries directory
+                        custom_output = os.path.join(individual_dir, f"{video_name}_Summary.csv")
+                        output_file = generate_summary_statistics(file_path, custom_output)
+                        if output_file:
+                            existing_summaries.append(output_file)
+                            success_count += 1
+                        else:
+                            # No output file usually means the file was empty
+                            empty_files.append(video_name)
+                    except Exception as e:
+                        failed_files.append((video_name, str(e)))
+                
+                # Show results of generating individual summaries
+                if empty_files or failed_files:
+                    message = f"Generated {success_count} out of {len(missing_summaries)} missing summary files."
+                    
+                    if empty_files:
+                        message += "\n\nThe following files contained no observations:"
+                        for file_name in empty_files:
+                            message += f"\n• {file_name}"
+                    
+                    if failed_files:
+                        message += "\n\nThe following files could not be processed:"
+                        for file_name, error in failed_files:
+                            message += f"\n• {file_name}: {error}"
+                    
+                    response = QMessageBox.question(
+                        self,
+                        "Some Files Could Not Be Processed",
+                        f"{message}\n\nDo you want to continue with the combined summary using the available files?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    
+                    if response == QMessageBox.StandardButton.No:
+                        return
+                # If No response earlier, continue with only existing summaries
         
         # If no summary files exist at all, inform the user
         if not existing_summaries:
@@ -501,18 +565,23 @@ class SummaryStatisticsManager(QDialog):
             return
         
         try:
-            # Create the combined annotations file in the Combined_summaries directory
-            combined_annotations = self.combine_annotation_files(selected_files, experiment_name, combined_dir)
+            # Create the combined annotations file in the Combined_Annotations directory
+            # We're passing combined_summaries_dir but the modified combine_annotation_files will ignore it
+            combined_annotations = self.combine_annotation_files(selected_files, experiment_name, combined_summaries_dir)
             
-            # Generate the meta-summary from existing individual summaries
-            combined_summary_path = os.path.join(combined_dir, f"{experiment_name}_Combined_Summary.csv   ")
+            # Generate the meta-summary from existing individual summaries and put it in Combined_summaries
+            combined_summary_path = os.path.join(combined_summaries_dir, f"{experiment_name}_Combined_Summary.csv")
             combine_summaries(existing_summaries, combined_summary_path)
             
-            # Success message
+            # Success message - mention both files that were created
+            annotations_filename = os.path.basename(combined_annotations) if combined_annotations else "Could not be created"
+            summary_filename = os.path.basename(combined_summary_path)
+            
             QMessageBox.information(
                 self, 
                 "Combined Analysis", 
-                f"Combined Summary:\n{os.path.basename(combined_summary_path)}\n\n"
+                f"Combined Summary:\n{summary_filename}\n\n"
+                f"Combined Annotations:\n{annotations_filename}"
             )
         except Exception as e:
             QMessageBox.critical(
@@ -529,12 +598,24 @@ class SummaryStatisticsManager(QDialog):
             file_paths: List of paths to annotation files
             experiment_name: Name for the combined file
             combined_dir: Directory to save combined results
-            
+                
         Returns:
             Path to the combined annotations file
         """
-        # Place the combined file in the Combined_summaries directory
-        combined_file_path = os.path.join(combined_dir, f"{experiment_name}_Annotations_Combined.csv")
+        # Get the base directory (should be the same as where the summary directory is)
+        base_dir = os.path.dirname(os.path.dirname(file_paths[0]))
+        summary_dir = os.path.join(base_dir, "Summary")
+        
+        # Create the Combined_Annotations directory inside the Summary directory
+        combined_annotations_dir = os.path.join(summary_dir, "Combined_Annotations")
+        try:
+            os.makedirs(combined_annotations_dir, exist_ok=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not create Combined_Annotations directory: {str(e)}")
+            return None
+        
+        # Place the combined file in the Combined_Annotations directory
+        combined_file_path = os.path.join(combined_annotations_dir, f"{experiment_name}_Annotations_Combined.csv")
         
         # Check if file already exists
         if os.path.exists(combined_file_path):
@@ -583,19 +664,7 @@ class SummaryStatisticsManager(QDialog):
                 dataframes.append(df)
             except Exception as e:
                 failed_files.append((os.path.basename(file_path), str(e)))
-        
-        # Show warning for failed files
-        if failed_files:
-            warning_message = "The following files could not be processed and will be skipped:\n\n"
-            for file_name, reason in failed_files:
-                warning_message += f"• {file_name}: {reason}\n"
-            
-            QMessageBox.warning(
-                self,
-                "File Processing Warnings",
-                warning_message
-            )
-        
+                
         if not dataframes:
             QMessageBox.critical(self, "Error", "No valid annotation files could be read.")
             return None

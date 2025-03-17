@@ -9,17 +9,18 @@ from PyQt6.QtWidgets import (QFrame, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QTreeWidget, QTreeWidgetItem,
     QScrollBar, QMenu, QDialog, QLineEdit, QTextEdit, QMessageBox,
     QAbstractItemView, QFormLayout, QGroupBox, QDialogButtonBox,
-    QGridLayout, QApplication, QStackedLayout, QSizePolicy)
+    QGridLayout, QApplication, QStackedLayout, QSizePolicy, QRadioButton,
+    QStackedWidget)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPoint, QEvent, QRect, QSysInfo
-from PyQt6.QtGui import QColor, QPainter, QAction, QScreen
+from PyQt6.QtGui import QColor, QPainter, QAction, QScreen, QPen
 
 class VideoAnnotator(QFrame):
-    """Main video annotator class using PyQt6"""
+    """Main video annotator class"""
     
     def __init__(self, parent, video_path, session_state_file, behavior_key_file, output_dir):
         super().__init__(parent)
                 
-        # Store parameters
+        # Initialize a bunch of variables
         self.parent = parent
         self.video_path = video_path
         self.session_state_file = session_state_file
@@ -32,7 +33,6 @@ class VideoAnnotator(QFrame):
         # Track states
         self.dialog_open = False
         self.pressed_keys = set()
-        
         self.selected_treeview = None
         self.selected_item = None 
         self.selected_index = None
@@ -49,14 +49,7 @@ class VideoAnnotator(QFrame):
         self.create_ui_components()
         self.setup_key_bindings()
         self.app.installEventFilter(self)
-        if self.current_os == "windows":
-            self.initialize_mpv_player_Windows()
-        elif self.current_os == "macos":
-            self.initialize_mpv_player_Mac()
-        else:
-            print(f"Unsupported OS '{current_os}'.")
-            self.on_closing
-        #QTimer.singleShot(250, self.load_data_and_start) # optional delay in case errors show that ui componenets aren't loaded yet
+        self.initialize_mpv_player()
         self.load_data_and_start()
 
         self.state_annotations_tree.itemSelectionChanged.connect(self.on_state_item_selected)
@@ -74,6 +67,10 @@ class VideoAnnotator(QFrame):
         self.behavior_map = {}  # key -> {Name, Type}
         self.used_point_behaviors = set()  # For highlighting point behaviors
         self.undo_stack = []  # Stack for undo functionality
+        # Initialize coding parameters explicitly
+        self.coding_start = 0
+        self.coding_duration = None
+        self.coding_end_reached = False
 
     def setup_file_paths(self):
         """Set up all necessary file paths based on the chosen output directory"""
@@ -82,7 +79,7 @@ class VideoAnnotator(QFrame):
         self.annotations_file = os.path.join(self.annotations_dir, f'{self.video_name}_Annotations.csv')
 
     def configure_display(self):
-        """Configure display settings and window properties with proper bounds checking"""
+        """Configure display settings and window properties"""
         self.app = QApplication.instance() or QApplication([])
         # Get the primary screen
         self.screen = self.app.primaryScreen()
@@ -95,12 +92,13 @@ class VideoAnnotator(QFrame):
         self.display_x = avail_geom.x()
         self.display_y = avail_geom.y()
         
-        # Configure window
+        # Configure window title
         self.parent.setWindowTitle(f"LaserTag  {self.video_path}")
                 
         # Set window size within available geometry
         self.parent.setGeometry(avail_geom)
-        # Show maximized to adapt to available space
+
+        # ShowMaximized to fit the available space
         self.parent.showMaximized()
 
     def center_window(self, window, width, height):
@@ -125,7 +123,7 @@ class VideoAnnotator(QFrame):
         self.video_width = int(self.display_width) - int(self.panel_width)
         self.video_height = int(self.panel_height)  
         self.progress_bar_width = int(self.video_width)
-
+        # Report layout measurements for debugging
         print(f"Monitor height: {self.display_height}")
         print(f"Monitor width: {self.display_width}")
         print(f"Panel Height: {self.panel_height}")
@@ -166,22 +164,8 @@ class VideoAnnotator(QFrame):
         self.video_frame.setFixedSize(self.video_width, self.video_height)
         self.left_layout.addWidget(self.video_frame)
 
-    def initialize_mpv_player_Mac(self):
-        """Initialize the MPV player with modified code to run on MacOS"""
-        # Get the window id from the video frame
-        window_id = int(self.video_frame.winId()) # modify this line
-        
-        # Create an MPV player with the window id
-        self.player = mpv.MPV(wid=str(window_id),
-                             log_handler=print,
-                             hwdec="auto-safe",
-                             profile="fast",
-                             background_color="000000")
-        # Start playing the video
-        self.player.play(self.video_path)
-
-    def initialize_mpv_player_Windows(self):
-        """Initialize the MPV player"""
+    def initialize_mpv_player(self):
+        """Initialize the MPV player (Windows)"""
         # Get the window id from the video frame
         window_id = int(self.video_frame.winId())
         
@@ -203,7 +187,7 @@ class VideoAnnotator(QFrame):
         self.initialize_progress_bar()
         self.load_session_state()
         self.auto_save_session_state()
-        # Process all geometry configurations before showing the window
+        # Update geometry, then start video
         self.parent.update()
         self.parent.show()
         self.parent.activateWindow()
@@ -219,12 +203,11 @@ class VideoAnnotator(QFrame):
         self.create_annotation_panel()
 
     def update_floating_buttons_visibility(self):
-        """Hide/show floating windows depending on whether the main window is active or minimized."""
+        """Hide/show floating buttons depending on whether the main window is active or minimized."""
         should_hide = (
             self.parent.windowState() & Qt.WindowState.WindowMinimized
             or not self.parent.isActiveWindow()
         )
-
         for w in self.floating_windows:
             if w is not None:
                 try:
@@ -238,15 +221,22 @@ class VideoAnnotator(QFrame):
 
     def create_progress_bar(self):
         """Create a custom progress bar with time labels"""
-        # Create a frame to hold the progress bar
+        # Create a frame to hold the progress bar and coding segment info
         self.progress_frame = QFrame()
         self.progress_frame.setStyleSheet("background-color: black;")
-        self.progress_frame.setFixedSize(self.progress_bar_width, self.progress_bar_height)
+        self.progress_frame.setFixedSize(self.progress_bar_width, self.progress_bar_height + 20)  # Added height for coding info
         
         # Create a single layout for the frame
         frame_layout = QVBoxLayout(self.progress_frame)
         frame_layout.setContentsMargins(0, 0, 0, 0)
         frame_layout.setSpacing(0)
+        
+        # Create coding segment info label (initially empty)
+        self.coding_info_label = QLabel()
+        self.coding_info_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.coding_info_label.setStyleSheet("color: white; font-size: 10px; padding-right: 10px; margin: 0;")
+        self.coding_info_label.setFixedHeight(20)
+        frame_layout.addWidget(self.coding_info_label)
         
         # Create a custom widget that handles both progress display and text
         class ProgressBarWithText(QWidget):
@@ -278,6 +268,15 @@ class VideoAnnotator(QFrame):
                 if self.progress > 0:
                     progress_width = int(self.width() * self.progress)
                     painter.fillRect(0, 0, progress_width, self.height(), QColor(0, 0, 150))
+                
+                # Draw coding end indicator if available
+                if hasattr(self.annotator, 'coding_end') and self.annotator.coding_end is not None and self.annotator.player.duration > 0:
+                    coding_end_ratio = self.annotator.coding_end / self.annotator.player.duration
+                    if 0 <= coding_end_ratio <= 1:
+                        coding_end_x = int(self.width() * coding_end_ratio)
+                        # Draw a white tick mark
+                        painter.setPen(QPen(QColor(255, 255, 255), 2))
+                        painter.drawLine(coding_end_x, 0, coding_end_x, self.height())
                 
                 # Draw text
                 painter.setPen(QColor(255, 255, 255))  # White text
@@ -339,11 +338,14 @@ class VideoAnnotator(QFrame):
         frame_layout.addWidget(self.progress_bar)
         self.left_layout.addWidget(self.progress_frame)
         
-        # Ensure the left container has a black background too
+        # Give the progress bar container a black background
         self.left_container.setStyleSheet("background-color: black;")
+        
+        # Initialize coding info display
+        self.update_coding_info_display()
 
     def update_progress(self):
-        """Update progress bar and labels"""
+        """Update progress bar and labels, checking for coding duration"""
         total_sec = self.player.duration or 0
         current_sec = self.player.time_pos or 0
 
@@ -360,9 +362,46 @@ class VideoAnnotator(QFrame):
             current_speed = self.player.speed
             self.update_center_text(f"({current_speed:.1f}x)")
             
-            # Make sure the total time is also displayed
+            # Display total time
             total_time_str = self.format_time_human_readable(total_sec)
             self.update_right_text(total_time_str)
+            
+            # Check if we've reached the coding end time
+            if (self.coding_duration is not None and 
+                self.coding_start is not None and 
+                current_sec >= (self.coding_start + self.coding_duration) and
+                not self.coding_end_reached and
+                not self.player.pause):
+                
+                self.coding_end_reached = True
+                self.player.pause = True
+                
+                # Save session state to preserve coding parameters
+                self._auto_saving = True
+                self.save_session_state()
+                self._auto_saving = False
+                
+                # Check if there are active state behaviors
+                if self.active_state_behaviors:
+                    response = QMessageBox.question(
+                        self.parent,
+                        "Coding Duration Reached",
+                        "Coding duration reached\nDo you wish to end the active state behaviors?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    
+                    if response == QMessageBox.StandardButton.Yes:
+                        # End all active state behaviors
+                        current_active_behaviors = self.active_state_behaviors.copy()
+                        for key in current_active_behaviors:
+                            self.handle_state_behavior(key, current_sec, self.format_time_human_readable(current_sec))
+                else:
+                    QMessageBox.information(
+                        self.parent,
+                        "Coding Duration Reached",
+                        "Coding duration reached"
+                    )
+
 
     def poll_progress_bar(self):
         """Update progress bar periodically without explicit end-of-video handling."""
@@ -381,7 +420,8 @@ class VideoAnnotator(QFrame):
         self.progress_timer = QTimer.singleShot(250, self.poll_progress_bar)
 
     def initialize_progress_bar(self):
-        """Initialize the progress bar"""
+        """Initialize the progress bar with awareness of coding parameters"""
+        print("Initializing progress bar...")
         total_sec = self.player.duration or 0
         if total_sec <= 0:
             # Media not yet loaded; try again in 250ms
@@ -395,6 +435,46 @@ class VideoAnnotator(QFrame):
         # Set total time
         total_time_str = self.format_time_human_readable(total_sec)
         self.update_right_text(total_time_str)
+        
+        # Apply coding duration boundaries if set
+        if self.coding_duration is not None and self.coding_duration > 0:
+            end_time = self.coding_start + self.coding_duration
+            print(f"Progress bar initialized with coding bounds: Start={self.coding_start:.2f}s, " +
+                  f"Duration={self.coding_duration}s, End={end_time:.2f}s")
+            
+            # If current position is beyond coding duration, enforce pause
+            current_pos = self.player.time_pos or 0
+            if current_pos >= end_time:
+                print(f"Current position ({current_pos:.2f}s) is beyond coding end ({end_time:.2f}s) - enforcing pause")
+                self.player.pause = True
+                self.coding_end_reached = True
+                
+                # Show the coding ended dialog after a short delay
+                def show_coding_ended_dialog():
+                    if self.active_state_behaviors:
+                        response = QMessageBox.question(
+                            self.parent,
+                            "Coding Duration Reached",
+                            "Coding duration reached\nDo you wish to end the active state behaviors?",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                        )
+                        
+                        if response == QMessageBox.StandardButton.Yes:
+                            # End all active state behaviors
+                            current_active_behaviors = self.active_state_behaviors.copy()
+                            for key in current_active_behaviors:
+                                current_time = self.player.time_pos or 0
+                                self.handle_state_behavior(key, current_time, 
+                                                         self.format_time_human_readable(current_time))
+                    else:
+                        QMessageBox.information(
+                            self.parent,
+                            "Coding Duration Reached",
+                            "Coding duration reached"
+                        )
+                
+                # Show dialog after a short delay to ensure UI is fully loaded
+                QTimer.singleShot(500, show_coding_ended_dialog)
         
         # Start progress polling
         self.poll_progress_bar()
@@ -548,7 +628,7 @@ class VideoAnnotator(QFrame):
             ("\u27F8", lambda: self.seek_relative(-10000)),
             ("\u27F5", lambda: self.seek_relative(-1000)),
             ("<<", lambda: self.change_speed(-1)),
-            ("■", self.toggle_play_pause),
+            ("\u23F8", self.toggle_play_pause),
             (">>", lambda: self.change_speed(1)),
             ("\u27F6", lambda: self.seek_relative(1000)),
             ("\u27F9", lambda: self.seek_relative(10000))
@@ -559,7 +639,7 @@ class VideoAnnotator(QFrame):
             btn.setFixedSize(40, 40)  # Set fixed size to 40x40
             btn.setStyleSheet(button_style)
             btn.clicked.connect(callback)
-            if text == "■":
+            if text == "\u23F8":
                 self.play_pause_btn = btn
             layout.addWidget(btn)
         
@@ -584,7 +664,7 @@ class VideoAnnotator(QFrame):
         """Update the play/pause button icon based on current state"""
         if hasattr(self, 'play_pause_btn') and self.play_pause_btn and self.play_pause_btn.isVisible():
             try:
-                self.play_pause_btn.setText("▶" if self.player.pause else "■")
+                self.play_pause_btn.setText("▶" if self.player.pause else "\u23F8")
             except RuntimeError:
                 # Button has been deleted, remove the reference
                 self.play_pause_btn = None
@@ -1070,7 +1150,7 @@ class VideoAnnotator(QFrame):
         self.pressed_keys.discard(key)
 
     def save_session_state(self):
-        """Save the current video position to the session state file with error handling."""
+        """Save the current video position and coding parameters to the session state file with error handling."""
         try:
             # Get current position before doing anything else
             current_time = self.player.time_pos
@@ -1084,11 +1164,19 @@ class VideoAnnotator(QFrame):
                 print("Warning: Invalid timestamp value:", current_time)
                 return False
                     
+            # Ensure resume directory exists
             resume_dir = os.path.join(self.output_dir, "Resume")
+            os.makedirs(resume_dir, exist_ok=True)
             file_path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
             
-            # Create session state data
-            session_state = {"timestamp_sec": current_time}
+            # Create comprehensive session state data with coding parameters
+            session_state = {
+                "timestamp_sec": current_time,
+                "coding_start": self.coding_start,
+                "coding_duration": self.coding_duration,
+                "coding_end": self.coding_end,  # Explicitly save coding_end
+                "coding_end_reached": self.coding_end_reached
+            }
             
             # Attempt to create a temporary file first to check access
             temp_file = file_path + ".tmp"
@@ -1098,7 +1186,7 @@ class VideoAnnotator(QFrame):
                     
                 # If successful, use atomic rename to replace the original file
                 os.replace(temp_file, file_path)
-                print(f"Successfully saved session state: {current_time:.3f} seconds")
+                print(f"Successfully saved session state: {current_time:.3f} seconds (coding_start: {self.coding_start}, coding_end: {self.coding_end})")
                 return True
                 
             except (PermissionError, OSError) as e:
@@ -1111,8 +1199,6 @@ class VideoAnnotator(QFrame):
                         pass
                         
                 # Show error message if this isn't an auto-save operation
-                # We can tell this by checking the call stack or using a flag parameter
-                # For now, we'll just silence the error for auto-saves to avoid interrupt
                 if not hasattr(self, '_auto_saving') or not self._auto_saving:
                     self.on_write_error("Cannot save session state.\nIs the file open in another application?")
                 return False
@@ -1120,6 +1206,102 @@ class VideoAnnotator(QFrame):
         except Exception as e:
             print(f"Error saving session state: {e}")
             return False
+
+    def load_session_state(self):
+        """Load video position and coding parameters from session state file."""
+        print("Loading session state...")
+        resume_dir = os.path.join(self.output_dir, "Resume")
+        file_path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
+        
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, "r") as f:
+                    session_state = json.load(f)
+                    print(f"Raw loaded session state: {session_state}")
+                    
+                    # Support both old (ms) and new (sec) format for timestamp
+                    if 'timestamp_ms' in session_state:
+                        timestamp_sec = session_state.get("timestamp_ms", 0) / 1000.0
+                    else:
+                        timestamp_sec = session_state.get("timestamp_sec", 0)
+                    
+                    # Load coding parameters with robust error handling
+                    try:
+                        coding_start_value = session_state.get("coding_start")
+                        if coding_start_value is not None:
+                            self.coding_start = float(coding_start_value)
+                        else:
+                            self.coding_start = 0
+                    except (ValueError, TypeError):
+                        print("Error converting coding_start to float, using default")
+                        self.coding_start = 0
+                    
+                    # Handle duration with special attention to None values
+                    try:
+                        coding_duration_value = session_state.get("coding_duration")
+                        if coding_duration_value is not None and coding_duration_value != "null":
+                            self.coding_duration = float(coding_duration_value)
+                        else:
+                            self.coding_duration = None
+                    except (ValueError, TypeError):
+                        print("Error converting coding_duration to float, using None")
+                        self.coding_duration = None
+                    
+                    # Load explicit coding_end value
+                    try:
+                        coding_end_value = session_state.get("coding_end")
+                        if coding_end_value is not None and coding_end_value != "null":
+                            self.coding_end = float(coding_end_value)
+                        else:
+                            # If no explicit coding_end but we have start and duration, calculate it
+                            if self.coding_start is not None and self.coding_duration is not None:
+                                self.coding_end = self.coding_start + self.coding_duration
+                            else:
+                                self.coding_end = None
+                    except (ValueError, TypeError):
+                        print("Error converting coding_end to float, using calculated value")
+                        if self.coding_start is not None and self.coding_duration is not None:
+                            self.coding_end = self.coding_start + self.coding_duration
+                        else:
+                            self.coding_end = None
+                        
+                    # Boolean value for end reached flag
+                    try:
+                        self.coding_end_reached = bool(session_state.get("coding_end_reached", False))
+                    except (ValueError, TypeError):
+                        print("Error converting coding_end_reached to bool, using False")
+                        self.coding_end_reached = False
+                    
+                    print(f"Loaded session state - Position: {timestamp_sec:.2f}s")
+                    print(f"Coding parameters - Start: {self.coding_start:.2f}s, " +
+                          f"Duration: {self.coding_duration if self.coding_duration is not None else 'None'}, " +
+                          f"End: {self.coding_end if self.coding_end is not None else 'None'}, " +
+                          f"End reached: {self.coding_end_reached}")
+                    
+                    # Update the coding info display
+                    self.update_coding_info_display()
+                    
+                    # Schedule resuming the video
+                    self.schedule_resume(timestamp_sec)
+                    
+                    # If we're loading at a position beyond the coding boundary, ensure flag is set correctly
+                    if (self.coding_end is not None and 
+                        timestamp_sec >= self.coding_end):
+                        print("Loaded position is beyond coding boundary - setting flag")
+                        self.coding_end_reached = True
+                        
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
+                print(f"Error loading session state: {e}")
+                # Initialize with defaults if file is corrupted
+                self.coding_start = 0
+                self.coding_duration = None
+                self.coding_end = None
+                self.coding_end_reached = False
+        else:
+            print("No session state found.")
+        
+        # Update the coding info display even if there's no file
+        self.update_coding_info_display()
 
     def auto_save_session_state(self):
         """Auto-save session state without showing error dialogs."""
@@ -1142,29 +1324,23 @@ class VideoAnnotator(QFrame):
             QTimer.singleShot(5000, self.auto_save_session_state)
 
     def schedule_resume(self, timestamp_sec):
-        """Schedule resume of video playback"""
+        """Schedule resume of video playback with proper respect for coding parameters"""
         if (self.player.duration or 0) > 0:
+            # Set the position to the saved timestamp
             self.player.time_pos = timestamp_sec
+            
+            # If we're resuming after the coding duration has ended, ensure proper state
+            if (self.coding_duration is not None and 
+                self.coding_start is not None and 
+                timestamp_sec >= (self.coding_start + self.coding_duration)):
+                # Ensure the video is paused if we're loading at a position beyond the coding duration
+                self.player.pause = True
+                
             print(f"Resumed session state at {timestamp_sec:.2f} sec.")
+            print(f"Coding parameters: Start={self.coding_start:.2f}, Duration={self.coding_duration}")
         else:
             # Use QTimer instead of after()
             QTimer.singleShot(200, lambda: self.schedule_resume(timestamp_sec))
-
-    def load_session_state(self):
-        resume_dir = os.path.join(self.output_dir, "Resume")
-        file_path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
-        if os.path.exists(file_path):
-            with open(file_path, "r") as f:
-                session_state = json.load(f)
-                # Support both old (ms) and new (sec) format
-                if 'timestamp_ms' in session_state:
-                    timestamp_sec = session_state.get("timestamp_ms", 0) / 1000.0
-                else:
-                    timestamp_sec = session_state.get("timestamp_sec", 0)
-                self.schedule_resume(timestamp_sec)
-        else:
-            print("No session state found.")
-
 
     def create_annotation_panel(self):
             """Create and configure the annotation panel with scrollable trees and proper sizing"""
@@ -1413,7 +1589,11 @@ class VideoAnnotator(QFrame):
                     background-color: #006CC1;
                 }
             """
-            
+            set_coding_start_button = QPushButton("Set\nCoding Start")
+            set_coding_start_button.setStyleSheet(button_size_policy)
+            set_coding_start_button.clicked.connect(self.set_coding_start)
+            buttons_layout.addWidget(set_coding_start_button)
+
             visualize_button = QPushButton("Visualize\nAnnotations")
             visualize_button.setStyleSheet(button_size_policy)
             visualize_button.clicked.connect(self.visualize_annotations)
@@ -1435,6 +1615,480 @@ class VideoAnnotator(QFrame):
                 lambda item: self.handle_tree_selection(self.point_annotations_tree, item)
             )
 
+    def update_coding_info_display(self):
+        """Update the coding information display label"""
+        if not hasattr(self, 'coding_info_label'):
+            return
+            
+        # Only show if we have coding parameters set
+        if hasattr(self, 'coding_start') and self.coding_start is not None and self.coding_start > 0:
+            start_str = self.format_time_human_readable(self.coding_start)
+            
+            # Check if we have a duration
+            if hasattr(self, 'coding_duration') and self.coding_duration is not None and self.coding_duration > 0:
+                duration_str = self.format_time_human_readable(self.coding_duration)
+                end_time = self.coding_start + self.coding_duration
+                end_str = self.format_time_human_readable(end_time)
+                
+                # Display all three values
+                info_text = f"Coding Start: {start_str} | Duration: {duration_str} | End: {end_str}"
+            else:
+                # Only display start time if no duration
+                info_text = f"Coding Start: {start_str}"
+                
+            self.coding_info_label.setText(info_text)
+            self.coding_info_label.setVisible(True)
+        else:
+            # Hide label if no coding parameters
+            self.coding_info_label.setVisible(False)
+
+    def load_session_state(self):
+        """Load video position and coding parameters from session state file."""
+        print("Loading session state...")
+        resume_dir = os.path.join(self.output_dir, "Resume")
+        file_path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
+        
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, "r") as f:
+                    session_state = json.load(f)
+                    print(f"Raw loaded session state: {session_state}")
+                    
+                    # Support both old (ms) and new (sec) format for timestamp
+                    if 'timestamp_ms' in session_state:
+                        timestamp_sec = session_state.get("timestamp_ms", 0) / 1000.0
+                    else:
+                        timestamp_sec = session_state.get("timestamp_sec", 0)
+                    
+                    # Load coding parameters with robust error handling
+                    try:
+                        coding_start_value = session_state.get("coding_start")
+                        if coding_start_value is not None:
+                            self.coding_start = float(coding_start_value)
+                        else:
+                            self.coding_start = 0
+                    except (ValueError, TypeError):
+                        print("Error converting coding_start to float, using default")
+                        self.coding_start = 0
+                    
+                    # Handle duration with special attention to None values
+                    try:
+                        coding_duration_value = session_state.get("coding_duration")
+                        if coding_duration_value is not None and coding_duration_value != "null":
+                            self.coding_duration = float(coding_duration_value)
+                        else:
+                            self.coding_duration = None
+                    except (ValueError, TypeError):
+                        print("Error converting coding_duration to float, using None")
+                        self.coding_duration = None
+                    
+                    # Load explicit coding_end value
+                    try:
+                        coding_end_value = session_state.get("coding_end")
+                        if coding_end_value is not None and coding_end_value != "null":
+                            self.coding_end = float(coding_end_value)
+                        else:
+                            # If no explicit coding_end but we have start and duration, calculate it
+                            if self.coding_start is not None and self.coding_duration is not None:
+                                self.coding_end = self.coding_start + self.coding_duration
+                            else:
+                                self.coding_end = None
+                    except (ValueError, TypeError):
+                        print("Error converting coding_end to float, using calculated value")
+                        if self.coding_start is not None and self.coding_duration is not None:
+                            self.coding_end = self.coding_start + self.coding_duration
+                        else:
+                            self.coding_end = None
+                        
+                    # Boolean value for end reached flag
+                    try:
+                        self.coding_end_reached = bool(session_state.get("coding_end_reached", False))
+                    except (ValueError, TypeError):
+                        print("Error converting coding_end_reached to bool, using False")
+                        self.coding_end_reached = False
+                    
+                    print(f"Loaded session state - Position: {timestamp_sec:.2f}s")
+                    print(f"Coding parameters - Start: {self.coding_start:.2f}s, " +
+                          f"Duration: {self.coding_duration if self.coding_duration is not None else 'None'}, " +
+                          f"End: {self.coding_end if self.coding_end is not None else 'None'}, " +
+                          f"End reached: {self.coding_end_reached}")
+                    
+                    # Update the coding info display
+                    self.update_coding_info_display()
+                    
+                    # Schedule resuming the video
+                    self.schedule_resume(timestamp_sec)
+                    
+                    # If we're loading at a position beyond the coding boundary, ensure flag is set correctly
+                    if (self.coding_end is not None and 
+                        timestamp_sec >= self.coding_end):
+                        print("Loaded position is beyond coding boundary - setting flag")
+                        self.coding_end_reached = True
+                        
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
+                print(f"Error loading session state: {e}")
+                # Initialize with defaults if file is corrupted
+                self.coding_start = 0
+                self.coding_duration = None
+                self.coding_end = None
+                self.coding_end_reached = False
+        else:
+            print("No session state found.")
+        
+        # Update the coding info display even if there's no file
+        self.update_coding_info_display()
+
+    def set_coding_start(self):
+        """Set the coding start time and duration"""
+        # Debug prints to check current state
+        print(f"Opening dialog - Current coding_start: {getattr(self, 'coding_start', None)}")
+        print(f"Opening dialog - Current coding_duration: {getattr(self, 'coding_duration', None)}")
+        print(f"Opening dialog - Current coding_end: {getattr(self, 'coding_end', None)}")
+        
+        # Pause the video
+        was_playing = False
+        if hasattr(self, 'player') and self.player:
+            was_playing = not self.player.pause
+            self.player.pause = True
+        
+        # Create dialog
+        self.dialog_open = True
+        
+        dialog = QDialog(self.parent)
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        dialog.setWindowTitle("Set Coding Start and Duration")
+        dialog.setModal(True)
+        
+        # Center dialog
+        self.center_window(dialog, 400, 300)  # Made dialog a bit taller
+        
+        # Create main layout
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(10)
+        
+        # Current position section - only shows time, no button
+        current_group = QGroupBox("Current Position")
+        current_layout = QVBoxLayout(current_group)
+        
+        current_time = self.player.time_pos or 0
+        formatted_time = self.format_time_human_readable(current_time)
+        
+        current_time_label = QLabel(f"Current Time: {formatted_time}")
+        current_layout.addWidget(current_time_label)
+        
+        layout.addWidget(current_group)
+        
+        # Coding method selection
+        method_group = QGroupBox("Coding Method")
+        method_layout = QVBoxLayout(method_group)
+        
+        duration_radio = QRadioButton("Set Start Time and Duration")
+        end_time_radio = QRadioButton("Set Start Time and End Time")
+        
+        # Check if we already have a coding_end value (for selecting default radio button)
+        has_end_time = hasattr(self, 'coding_end') and self.coding_end is not None
+        has_duration = hasattr(self, 'coding_duration') and self.coding_duration is not None
+        
+        # Set default selection based on existing values
+        if has_end_time and not has_duration:
+            end_time_radio.setChecked(True)
+        else:
+            duration_radio.setChecked(True)
+        
+        method_layout.addWidget(duration_radio)
+        method_layout.addWidget(end_time_radio)
+        
+        layout.addWidget(method_group)
+        
+        # Coding parameters section
+        coding_group = QGroupBox("Coding Parameters")
+        coding_layout = QGridLayout(coding_group)
+        coding_layout.setColumnStretch(2, 1)  # Make the third column stretch
+        
+        # Row 0: Start Time (common to both modes)
+        coding_layout.addWidget(QLabel("Start Time:"), 0, 0, Qt.AlignmentFlag.AlignLeft)
+        
+        coding_start_input = QLineEdit()
+        if hasattr(self, 'coding_start') and self.coding_start is not None and self.coding_start > 0:
+            start_time_formatted = self.format_time_human_readable(self.coding_start)
+            print(f"Setting coding_start_input to: {start_time_formatted}")
+            coding_start_input.setText(start_time_formatted)
+        
+        coding_layout.addWidget(coding_start_input, 0, 1)
+        
+        # Add button to use current position for start time
+        use_current_start_btn = QPushButton("Use Current Position")
+        use_current_start_btn.clicked.connect(lambda: coding_start_input.setText(formatted_time))
+        coding_layout.addWidget(use_current_start_btn, 0, 2)
+        
+        # --- DURATION MODE WIDGETS ---
+        
+        # Row 1: Duration inputs (for duration mode)
+        duration_label = QLabel("Duration:")
+        coding_layout.addWidget(duration_label, 1, 0, Qt.AlignmentFlag.AlignLeft)
+        
+        duration_widget = QWidget()
+        duration_layout = QHBoxLayout(duration_widget)
+        duration_layout.setContentsMargins(0, 0, 0, 0)
+        
+        hours_input = QLineEdit()
+        hours_input.setFixedWidth(40)
+        hours_input.setPlaceholderText("HH")
+        
+        minutes_input = QLineEdit()
+        minutes_input.setFixedWidth(40)
+        minutes_input.setPlaceholderText("MM")
+        
+        seconds_input = QLineEdit()
+        seconds_input.setFixedWidth(40)
+        seconds_input.setPlaceholderText("SS")
+        
+        # Explicitly check for the duration attribute
+        if hasattr(self, 'coding_duration') and self.coding_duration is not None and self.coding_duration > 0:
+            total_seconds = int(self.coding_duration)
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            
+            print(f"Setting duration inputs: {hours}h {minutes}m {seconds}s from {total_seconds} seconds")
+            
+            hours_input.setText(str(hours))
+            minutes_input.setText(str(minutes))
+            seconds_input.setText(str(seconds))
+        
+        duration_layout.addWidget(QLabel("Hours:"))
+        duration_layout.addWidget(hours_input)
+        duration_layout.addWidget(QLabel("Minutes:"))
+        duration_layout.addWidget(minutes_input)
+        duration_layout.addWidget(QLabel("Seconds:"))
+        duration_layout.addWidget(seconds_input)
+        duration_layout.addStretch()
+        
+        coding_layout.addWidget(duration_widget, 1, 1, 1, 2)
+        
+        # Row 2: End Time (calculated for duration mode)
+        duration_end_label = QLabel("End Time:")
+        coding_layout.addWidget(duration_end_label, 2, 0, Qt.AlignmentFlag.AlignLeft)
+        
+        duration_end_time_value = QLabel("Not set")
+        if hasattr(self, 'coding_start') and self.coding_start is not None and hasattr(self, 'coding_duration') and self.coding_duration is not None:
+            end_time = self.coding_start + self.coding_duration
+            duration_end_time_value.setText(self.format_time_human_readable(end_time))
+        
+        coding_layout.addWidget(duration_end_time_value, 2, 1, 1, 2, Qt.AlignmentFlag.AlignLeft)
+        
+        # --- END TIME MODE WIDGETS ---
+        
+        # Row 3: End Time input (for end time mode)
+        end_time_label = QLabel("End Time:")
+        coding_layout.addWidget(end_time_label, 3, 0, Qt.AlignmentFlag.AlignLeft)
+        
+        end_time_input = QLineEdit()
+        if hasattr(self, 'coding_end') and self.coding_end is not None and self.coding_end > 0:
+            end_time_formatted = self.format_time_human_readable(self.coding_end)
+            end_time_input.setText(end_time_formatted)
+        
+        coding_layout.addWidget(end_time_input, 3, 1)
+        
+        # Button to use current position as end time
+        use_current_end_btn = QPushButton("Use Current Position")
+        use_current_end_btn.clicked.connect(lambda: end_time_input.setText(formatted_time))
+        coding_layout.addWidget(use_current_end_btn, 3, 2)
+        
+        # Row 4: Duration calculated (for end time mode)
+        end_time_duration_label = QLabel("Duration:")
+        coding_layout.addWidget(end_time_duration_label, 4, 0, Qt.AlignmentFlag.AlignLeft)
+        
+        end_time_duration_value = QLabel("Not set")
+        coding_layout.addWidget(end_time_duration_value, 4, 1, 1, 2, Qt.AlignmentFlag.AlignLeft)
+        
+        # Add a clear button to reset all coding parameters
+        clear_settings_btn = QPushButton("Clear Coding Settings")
+        clear_settings_btn.clicked.connect(lambda: self.clear_coding_parameters(
+            coding_start_input, hours_input, minutes_input, seconds_input, 
+            duration_end_time_value, end_time_input, end_time_duration_value))
+        
+        coding_layout.addWidget(clear_settings_btn, 5, 0, 1, 3)
+        
+        layout.addWidget(coding_group)
+        
+        # Function to update widget visibility based on selected mode
+        def update_widget_visibility():
+            duration_mode = duration_radio.isChecked()
+            
+            # Duration mode widgets
+            duration_label.setVisible(duration_mode)
+            duration_widget.setVisible(duration_mode)
+            duration_end_label.setVisible(duration_mode)
+            duration_end_time_value.setVisible(duration_mode)
+            
+            # End time mode widgets
+            end_time_label.setVisible(not duration_mode)
+            end_time_input.setVisible(not duration_mode)
+            use_current_end_btn.setVisible(not duration_mode)
+            end_time_duration_label.setVisible(not duration_mode)
+            end_time_duration_value.setVisible(not duration_mode)
+        
+        # Connect radio buttons to update visibility
+        duration_radio.toggled.connect(update_widget_visibility)
+        end_time_radio.toggled.connect(update_widget_visibility)
+        
+        # Initial visibility update
+        update_widget_visibility()
+        
+        # Button box
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | 
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        # Find the Cancel button and change its text to "Close"
+        close_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        close_button.setText("Close")
+
+        def save_coding_parameters():
+            try:
+                # Parse coding start time
+                start_time_str = coding_start_input.text().strip()
+                if start_time_str:
+                    self.coding_start = self.parse_time(start_time_str)
+                else:
+                    self.coding_start = 0
+                
+                # Check which method is selected
+                if duration_radio.isChecked():
+                    # Using duration method
+                    h = int(hours_input.text() or 0)
+                    m = int(minutes_input.text() or 0)
+                    s = int(seconds_input.text() or 0)
+                    
+                    if h or m or s:
+                        self.coding_duration = h * 3600 + m * 60 + s
+                        # Calculate coding_end based on start + duration
+                        self.coding_end = self.coding_start + self.coding_duration
+                    else:
+                        self.coding_duration = None
+                        self.coding_end = None
+                else:
+                    # Using end time method
+                    end_time_str = end_time_input.text().strip()
+                    if end_time_str:
+                        self.coding_end = self.parse_time(end_time_str)
+                        # Calculate duration based on end - start
+                        if self.coding_start is not None and self.coding_end > self.coding_start:
+                            self.coding_duration = self.coding_end - self.coding_start
+                        else:
+                            raise ValueError("End time must be greater than start time")
+                    else:
+                        self.coding_end = None
+                        self.coding_duration = None
+                
+                # Reset coding end reached flag
+                self.coding_end_reached = False
+                
+                # Debug print to verify values being saved
+                print(f"Saving coding parameters - Start: {self.coding_start}, Duration: {self.coding_duration}, End: {self.coding_end}")
+                
+                # Update coding info display
+                self.update_coding_info_display()
+                
+                # Seek to coding start position
+                if self.coding_start > 0:
+                    self.player.time_pos = self.coding_start
+                    self.update_progress()
+                    
+                # Update the session state immediately to persist these changes
+                self.save_session_state()
+                
+                dialog.accept()
+            except ValueError as e:
+                QMessageBox.warning(dialog, "Invalid Input", 
+                                  f"Please check your input values: {str(e)}")
+        
+        # Update end time/duration labels when inputs change
+        def update_calculations():
+            try:
+                start_time_str = coding_start_input.text().strip()
+                start_time = self.parse_time(start_time_str) if start_time_str else 0
+                
+                # Update duration-based end time
+                if duration_radio.isChecked():
+                    h = int(hours_input.text() or 0)
+                    m = int(minutes_input.text() or 0)
+                    s = int(seconds_input.text() or 0)
+                    
+                    if h or m or s:
+                        duration = h * 3600 + m * 60 + s
+                        end_time = start_time + duration
+                        duration_end_time_value.setText(self.format_time_human_readable(end_time))
+                    else:
+                        duration_end_time_value.setText("Not set")
+                
+                # Update end-time-based duration
+                if end_time_radio.isChecked():
+                    end_time_str = end_time_input.text().strip()
+                    if end_time_str and start_time_str:
+                        end_time = self.parse_time(end_time_str)
+                        if end_time > start_time:
+                            duration = end_time - start_time
+                            hours = duration // 3600
+                            minutes = (duration % 3600) // 60
+                            seconds = duration % 60
+                            end_time_duration_value.setText(
+                                f"{hours}h {minutes}m {seconds}s")
+                        else:
+                            end_time_duration_value.setText("Invalid (end <= start)")
+                    else:
+                        end_time_duration_value.setText("Not set")
+                        
+            except (ValueError, Exception) as e:
+                if duration_radio.isChecked():
+                    duration_end_time_value.setText("Invalid input")
+                else:
+                    end_time_duration_value.setText("Invalid input")
+        
+        # Connect change signals to update calculations
+        coding_start_input.textChanged.connect(update_calculations)
+        hours_input.textChanged.connect(update_calculations)
+        minutes_input.textChanged.connect(update_calculations)
+        seconds_input.textChanged.connect(update_calculations)
+        end_time_input.textChanged.connect(update_calculations)
+        
+        button_box.accepted.connect(save_coding_parameters)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        # Handle dialog closing
+        dialog.finished.connect(lambda: setattr(self, 'dialog_open', False))
+        
+        # Show dialog
+        dialog.exec()
+        
+        # Resume playback if it was playing before
+        if hasattr(self, 'player') and self.player and was_playing:
+            self.player.pause = False
+
+    def clear_coding_parameters(self, coding_start_input, hours_input, minutes_input, seconds_input, 
+                               duration_end_time_label, end_time_input, end_time_duration_label):
+        """Clear all coding parameters and reset to default values"""
+        # Clear all input fields
+        coding_start_input.clear()
+        hours_input.clear()
+        minutes_input.clear()
+        seconds_input.clear()
+        end_time_input.clear()
+        
+        # Update labels
+        duration_end_time_label.setText("Not set")
+        end_time_duration_label.setText("Not set")
+        
+        # Reset parameters once applied
+        self.coding_start = 0
+        self.coding_duration = None
+        self.coding_end = None
+        
+        # Update display
+        self.update_coding_info_display()
+        
     def handle_tree_selection(self, tree_widget, item):
         """Handle selection in annotation trees"""
         self.selected_treeview = tree_widget
@@ -2121,8 +2775,32 @@ class VideoAnnotator(QFrame):
             new_time = max(0, new_time)  # Ensure we don't go below 0
             self.player.time_pos = new_time
         
+        # Reset coding_end_reached flag if applicable
+        self.reset_coding_end_flag()
+        
         # Update progress bar immediately to reflect new position
         self.update_progress()
+
+    def on_progress_click(self, ratio):
+        """Handle progress bar clicks with end-of-video handling"""
+        total_sec = self.player.duration or 0
+        if total_sec > 0:
+            target_sec = ratio * total_sec
+            
+            # Check if clicking near/at the end of the video
+            if target_sec >= total_sec - 0.1:
+                # Set to just before the end and pause
+                self.player.time_pos = total_sec - 0.5
+                self.player.pause = True
+            else:
+                self.player.time_pos = target_sec
+            
+            # Always reset coding_end_reached flag when user clicks on progress bar
+            # This allows users to go back and continue coding if they click back in the timeline
+            self.coding_end_reached = False
+            
+            # Update progress immediately
+            self.update_progress()
 
     def change_speed(self, delta):
         """Change playback speed"""
@@ -2191,8 +2869,9 @@ class VideoAnnotator(QFrame):
                 self.save_session_state()
                 self.player.pause = True
                 self.player.stop()
-            
+
             # Close main window
+            print("Application closed cleanly")            
             self.parent.close()
             
         except Exception as e:
@@ -2236,8 +2915,12 @@ class VideoAnnotator(QFrame):
             was_playing = not self.player.pause
             self.player.pause = True
         
-        # Save current state
+        # Save and store current coding parameters
         self.save_session_state()
+        stored_coding_start = self.coding_start
+        stored_coding_duration = self.coding_duration
+        stored_coding_end = getattr(self, 'coding_end', None)
+        stored_coding_end_reached = self.coding_end_reached
         
         # Temporarily hide floating windows
         for window in self.floating_windows:
@@ -2283,6 +2966,18 @@ class VideoAnnotator(QFrame):
                     
                     # Scroll annotations to make everything visible
                     QTimer.singleShot(100, self.scroll_annotations_to_bottom)
+                    
+                    # Restore coding parameters
+                    self.coding_start = stored_coding_start
+                    self.coding_duration = stored_coding_duration
+                    self.coding_end = stored_coding_end
+                    self.coding_end_reached = stored_coding_end_reached
+                    
+                    # Update the display
+                    self.update_coding_info_display()
+                    
+                    # Explicitly save the restored session state
+                    self.save_session_state()
             
             # Create and show the editor dialog
             self.dialog_open = True
@@ -3034,11 +3729,28 @@ class VideoAnnotator(QFrame):
 
     def return_to_file_selection(self):
         """
-        Save session state and restart the entire application.
+        Save session state and return to the file selection interface.
+        This function removes the current VideoAnnotator instance from the main window
+        and creates a new SetupManager dialog, effectively returning to the file selection stage.
         """
+        # Check if we're already processing a return (handles as force close)
+        if hasattr(self, '_returning_to_files') and self._returning_to_files:
+            print("Duplicate return to files manager detected - force closing application")
+            # Force quit the application immediately
+            from PyQt6.QtWidgets import QApplication
+            QApplication.exit(0)  # Exit with success code
+            return
+            
+        # Set flag to prevent recursion
+        self._returning_to_files = True
+            
         try:
-            # 1. Save session state
-            self.save_session_state()
+            # 1. Save session state only if player exists
+            if hasattr(self, 'player') and self.player:
+                try:
+                    self.save_session_state()
+                except Exception as e:
+                    print(f"Error saving session state: {e}")
             
             # 2. Clean up resources
             if hasattr(self, 'player') and self.player:
@@ -3047,20 +3759,97 @@ class VideoAnnotator(QFrame):
                     self.player.stop()
                 except Exception as e:
                     print(f"Error stopping player: {e}")
+                # Clear player reference after stopping
+                self.player = None
             
-            # 3. Restart the application
-            import sys
-            import os
+            # 3. Clean up floating windows - with more careful checking
+            if hasattr(self, 'floating_windows'):
+                for window in list(self.floating_windows):  # Use a copy of the list
+                    if window is not None:
+                        try:
+                            window.hide()
+                            window.deleteLater()
+                        except Exception as e:
+                            print(f"Error cleaning up window: {e}")
+                # Clear the list after processing
+                self.floating_windows.clear()
             
-            print("Restarting application...")
-            python = sys.executable
-            os.execv(python, [python] + sys.argv)
-            
+            # 4. Return to files manager
+            if hasattr(self, 'parent') and self.parent:
+                print("Returning to file selection interface...")
+                
+                # Get the MainWindow instance
+                main_window = self.parent
+                
+                # Import required classes
+                from setup_manager import SetupManager
+                from config_manager import ConfigManager
+                
+                # Create a new config manager
+                config_manager = ConfigManager()
+                
+                # Remove the current VideoAnnotator from the main window
+                if hasattr(main_window, 'video_annotator'):
+                    # Store reference to self for cleanup
+                    old_annotator = main_window.video_annotator
+                    
+                    # Remove reference in main window
+                    main_window.video_annotator = None
+                    
+                    # Hide and schedule for deletion
+                    if old_annotator:
+                        try:
+                            old_annotator.hide()
+                            old_annotator.deleteLater()
+                        except Exception as e:
+                            print(f"Error closing old annotator: {e}")
+                
+                # Create and show a new SetupManager dialog
+                setup_dialog = SetupManager(config_manager=config_manager)
+                
+                # Use a try-except block to handle potential exceptions during execution
+                try:
+                    # This will show the setup dialog without destroying the main window
+                    result = setup_dialog.exec()
+                    
+                    # If the setup was completed and user chose to start video
+                    if setup_dialog.start_video_flag and setup_dialog.video_path and setup_dialog.behavior_key_file:
+                        # Initialize a new video annotator with the chosen configuration
+                        main_window.init_video_annotator(
+                            video_path=setup_dialog.video_path,
+                            session_state_file=setup_dialog.session_state_file,
+                            behavior_file=setup_dialog.behavior_key_file,
+                            output_dir=setup_dialog.output_dir
+                        )
+                        
+                        # Show the main window with new annotator
+                        main_window.show()
+                    else:
+                        # User canceled - close the application
+                        main_window.close()
+                except Exception as e:
+                    print(f"Error during SetupManager execution: {e}")
+                    main_window.close()
+            else:
+                print("Cannot locate parent window for returning to file selection")
+                from PyQt6.QtWidgets import QApplication
+                QApplication.quit()
+                
         except Exception as e:
             print(f"Error returning to file selection: {e}")
-            # If error occurs, close the application
-            if self.parent:
+            # If error occurs, try to close gracefully
+            if hasattr(self, 'parent') and self.parent:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.critical(
+                    self.parent,
+                    "Error",
+                    f"An error occurred when trying to return to file selection: {str(e)}"
+                )
+                # Try to close the application gracefully
                 self.parent.close()
+        finally:
+            # Reset the recursion prevention flag
+            self._returning_to_files = False
 
     def remove_destroyed_windows(self):
         """Remove any windows from self.floating_windows that are already deleted."""
@@ -3130,7 +3919,7 @@ class VideoAnnotator(QFrame):
             return False
 
     def visualize_annotations(self):
-        """Show visualization of annotations with timeline display and export options."""
+        """Show visualization of annotations with timeline display and export options, respecting coding bounds."""
         # Pause the video
         was_playing = False
         if hasattr(self, 'player') and self.player:
@@ -3167,7 +3956,7 @@ class VideoAnnotator(QFrame):
                                     if end and end != 'NA':
                                         end_time = float(end)
                                 except ValueError:
-                                    # If conversion fails, try parsing from human-readable format
+                                    # If conversion fails due to incorrect user editing, try parsing from human-readable format
                                     h_start = row.get('H_Start', '').strip()
                                     h_end = row.get('H_End', '').strip()
                                     
@@ -3204,7 +3993,94 @@ class VideoAnnotator(QFrame):
                 state_annotations = self.state_events.copy() 
                 point_annotations = self.point_events.copy()
             
-            # Show the visualization dialog
+            # Check if coding bounds are set
+            has_coding_bounds = False
+            coding_start = getattr(self, 'coding_start', 0)
+            coding_end = getattr(self, 'coding_end', None)
+            
+            if coding_start > 0 or (coding_end is not None and coding_end > 0):
+                has_coding_bounds = True
+            
+            # Create bounds dictionary to pass to visualization
+            visualization_bounds = {
+                "has_bounds": has_coding_bounds,
+                "start": coding_start if coding_start is not None else 0,
+                "end": coding_end,
+                "whole_video": True  # Default to showing whole video
+            }
+            
+            # If coding bounds exist, ask user which range to visualize
+            if has_coding_bounds:
+                coded_time_range = ""
+                if coding_start > 0:
+                    start_str = self.format_time_human_readable(coding_start)
+                    coded_time_range += f"Start: {start_str}"
+                
+                if coding_end is not None:
+                    end_str = self.format_time_human_readable(coding_end)
+                    if coded_time_range:
+                        coded_time_range += f", End: {end_str}"
+                    else:
+                        coded_time_range += f"End: {end_str}"
+                
+                # Create a custom dialog
+                from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QHBoxLayout, QPushButton
+                
+                dialog = QDialog(self.parent)
+                dialog.setWindowTitle("Select Visualization Range")
+                dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+                dialog.setModal(True)
+                
+                # Create the layout
+                layout = QVBoxLayout(dialog)
+                
+                # Add the message text
+                message = QLabel(f"Coding bounds detected:\n{coded_time_range}\n\nWhat would you like to visualize?")
+                message.setWordWrap(True)
+                layout.addWidget(message)
+                
+                # Create button layout with even spacing
+                button_layout = QHBoxLayout()
+                button_layout.addStretch(1)  # Add stretch before buttons for even spacing
+                
+                # Create buttons
+                whole_btn = QPushButton("Whole Video")
+                coded_btn = QPushButton("Coded Segment Only")
+                cancel_btn = QPushButton("Cancel")
+                
+                # Connect buttons to actions
+                whole_btn.clicked.connect(lambda: dialog.done(1))  # Custom return code for whole video
+                coded_btn.clicked.connect(lambda: dialog.done(2))  # Custom return code for coded segment
+                cancel_btn.clicked.connect(lambda: dialog.done(0))  # 0 for cancel
+                
+                # Set the default button
+                coded_btn.setDefault(True)
+                coded_btn.setFocus()
+                
+                # Add buttons to layout with spacing between them
+                button_layout.addWidget(whole_btn)
+                button_layout.addSpacing(10)  # Add space between buttons
+                button_layout.addWidget(coded_btn)
+                button_layout.addSpacing(10)  # Add space between buttons
+                button_layout.addWidget(cancel_btn)
+                button_layout.addStretch(1)  # Add stretch after buttons for even spacing
+                
+                # Add button layout to main layout
+                layout.addLayout(button_layout)
+                
+                # Show the dialog
+                result = dialog.exec()
+                
+                # Handle the result
+                if result == 0:  # Cancel
+                    self.dialog_open = False
+                    return
+                elif result == 1:  # Whole Video
+                    visualization_bounds["whole_video"] = True
+                else:  # Coded Segment Only
+                    visualization_bounds["whole_video"] = False
+            
+            # Show the visualization dialog with the specified bounds
             show_visualization_dialog(
                 parent=self.parent,
                 video_name=self.video_name,
@@ -3213,7 +4089,8 @@ class VideoAnnotator(QFrame):
                 video_duration=self.player.duration or 0,
                 parse_time_func=self.parse_time,
                 center_window_func=self.center_window,
-                output_dir=self.output_dir
+                output_dir=self.output_dir,
+                bounds=visualization_bounds
             )
             
         except ImportError as e:
@@ -3237,3 +4114,14 @@ class VideoAnnotator(QFrame):
             # Resume playback if it was playing before
             if hasattr(self, 'player') and self.player and was_playing:
                 self.player.pause = False
+
+    def reset_coding_end_flag(self):
+        """Reset the coding end reached flag when seeking within the valid range"""
+        current_sec = self.player.time_pos or 0
+        if (self.coding_duration is not None and 
+            self.coding_start is not None and 
+            current_sec < (self.coding_start + self.coding_duration - 0.5)):  # Add a small buffer
+            if self.coding_end_reached:
+                print(f"Resetting coding_end_reached flag: current_pos={current_sec}, " +
+                      f"end_pos={self.coding_start + self.coding_duration}")
+                self.coding_end_reached = False

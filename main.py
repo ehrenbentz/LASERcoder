@@ -67,38 +67,50 @@ def main():
         # Initialize config manager
         config_manager = ConfigManager()
         
-        # Create and show SetupManager dialog
-        setup_dialog = SetupManager(config_manager=config_manager)
-        
-        # Let the setup dialog run - it will handle all validation internally
-        setup_dialog.exec()
-        
-        # Check if setup requirements are met to start video
-        if setup_dialog.start_video_flag and setup_dialog.video_path and setup_dialog.behavior_key_file:
-            # Get configuration values
-            video_path = setup_dialog.video_path
-            session_state_file = setup_dialog.session_state_file
-            behavior_file = setup_dialog.behavior_key_file
-            output_dir = setup_dialog.output_dir
+        while True:  # Create a loop to allow returning to setup
+            # Create and show SetupManager dialog
+            setup_dialog = SetupManager(config_manager=config_manager)
             
-            # Update configuration
-            config_manager.update_output_dir(output_dir)
-            config_manager.update_video_dir(video_path)
+            # Let the setup dialog run - it will handle all validation internally
+            setup_result = setup_dialog.exec()
             
-            # Initialize video annotator
-            if main_window.init_video_annotator(
-                video_path=video_path,
-                session_state_file=session_state_file,
-                behavior_file=behavior_file,
-                output_dir=output_dir
-            ):
-                main_window.show()
-                return app.exec()
+            # Check if user completely canceled out of the setup
+            if setup_result == QDialog.DialogCode.Rejected and not setup_dialog.start_video_flag:
+                # User canceled out of the entire process
+                break
+            
+            # Check if setup requirements are met to start video
+            if setup_dialog.start_video_flag and setup_dialog.video_path and setup_dialog.behavior_key_file:
+                # Get configuration values
+                video_path = setup_dialog.video_path
+                session_state_file = setup_dialog.session_state_file
+                behavior_file = setup_dialog.behavior_key_file
+                output_dir = setup_dialog.output_dir
+                
+                # Update configuration
+                config_manager.update_output_dir(output_dir)
+                config_manager.update_video_dir(video_path)
+                
+                # Initialize video annotator
+                if main_window.init_video_annotator(
+                    video_path=video_path,
+                    session_state_file=session_state_file,
+                    behavior_file=behavior_file,
+                    output_dir=output_dir
+                ):
+                    main_window.show()
+                    return app.exec()  # Start the event loop and show video annotator
+                else:
+                    print("Failed to initialize video annotator")
+                    # Continue loop to allow user to try again
             else:
-                print("Failed to initialize video annotator")
-                return 1
-        else:
-            return 0
+                # User canceled after reaching a certain point in setup or there was an error
+                # If start_video_flag is False but setup_result is Accepted, we continue the loop
+                if not setup_dialog.start_video_flag and setup_result == QDialog.DialogCode.Rejected:
+                    # User fully canceled - exit the app
+                    break
+        
+        return 0
             
     except Exception as e:
         print(f"An unhandled error occurred: {e}")
