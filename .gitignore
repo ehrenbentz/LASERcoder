@@ -1,0 +1,29 @@
+# Build output
+output/
+*.app/
+*.build/
+*.dist/
+*.dmg
+*.exe
+*.zip
+
+# Bundled libraries (too large, platform-specific)
+libs/
+libmpv-2.dll
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Certificates
+*.pfx
+*.p12

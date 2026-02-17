@@ -2,16 +2,16 @@
 
 import os
 import csv
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QComboBox, QLabel, QSpinBox, QFileDialog, QFrame, 
                             QMessageBox)
-from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import (QPainter, QColor, QPen, QBrush, QFont, 
+from PySide6.QtCore import Qt, QRectF, QPointF
+from PySide6.QtGui import (QPainter, QColor, QPen, QBrush, QFont, 
                         QLinearGradient, QPainterPath, QImage, QPdfWriter, QPageSize,
                         QPageLayout)
 
 class AnnotationsVisualizer(QFrame):
-    """Timeline visualization widget for displaying state and point annotations"""
+    """Timeline visualization widget for displaying annotations"""
     
     def __init__(self, parent, video_name, state_events, point_events, video_duration, parse_time_func, bounds=None):
         super().__init__(parent)
@@ -48,7 +48,7 @@ class AnnotationsVisualizer(QFrame):
             self.state_events = state_events
             self.point_events = point_events
             
-        self.video_duration = self.effective_duration  # Use this for the timeline visualization
+        self.video_duration = self.effective_duration
         
         # Set up display
         self.setMinimumHeight(500)
@@ -348,7 +348,7 @@ class AnnotationsVisualizer(QFrame):
             
             # Add extra spacing after state behaviors section
             if self.point_behaviors:
-                y_position += section_spacing - self.track_spacing  # Adjust for already added track spacing
+                y_position += section_spacing - self.track_spacing
         
         # Draw Point Behaviors Section
         if self.point_behaviors:
@@ -469,25 +469,6 @@ def show_visualization_dialog(parent, video_name, state_events, point_events, vi
     """
     Create and show the visualization dialog for annotations.
     
-    Parameters:
-        parent: The parent window
-        video_name: Name of the video being annotated
-        state_events: List of state annotation events
-        point_events: List of point annotation events
-        video_duration: Duration of the video in seconds
-        parse_time_func: Function to parse time strings into seconds
-        center_window_func: Function to center the dialog on screen
-        output_dir: Output directory for saved files
-        bounds: Dictionary with visualization bounds information:
-               {
-                   "has_bounds": bool,
-                   "start": float or None,
-                   "end": float or None,
-                   "whole_video": bool
-               }
-    
-    Returns:
-        True if visualization was shown successfully, False otherwise
     """
     try:
         # Create visualization dialog
@@ -532,7 +513,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events, vi
             parse_time_func,
             bounds=bounds
         )
-        main_layout.addWidget(timeline_widget, 1)  # Add with stretch
+        main_layout.addWidget(timeline_widget, 1)
         
         # Create export options frame
         export_frame = QFrame()
@@ -543,7 +524,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events, vi
         export_layout.addWidget(format_label)
 
         format_combo = QComboBox()
-        format_combo.addItems(["PNG", "JPEG"])  # Removed PDF option
+        format_combo.addItems(["PNG", "JPEG"])
         export_layout.addWidget(format_combo)
 
         # DPI selection

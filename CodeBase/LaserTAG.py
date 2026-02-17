@@ -1,16 +1,44 @@
 # main.py
 
+import locale
+locale.setlocale(locale.LC_NUMERIC, "C")
 import os
 import sys
-import platform
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QMainWindow, QDialog
-from pathlib import Path
+import ctypes
 
-# Add the current directory to PATH for loading dependencies before importing mpv
-current_dir = os.path.dirname(os.path.abspath(__file__))
-os.environ["PATH"] = current_dir + os.pathsep + os.environ["PATH"]
+os.environ["LC_NUMERIC"] = "C"
+
+# Resolve the application directory (works both interpreted and Nuitka-compiled)
+if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
+    current_dir = os.path.dirname(sys.executable)
+elif "__compiled__" in dir():
+    current_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+else:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# MacOS
+if sys.platform == "darwin":
+    libs_dir = os.path.join(current_dir, "libs")
+    libmpv_path = os.path.join(libs_dir, "libmpv.2.dylib")
+    if os.path.exists(libmpv_path):
+        import ctypes.util
+        _original_find_library = ctypes.util.find_library
+        def _patched_find_library(name):
+            if name == "mpv":
+                return libmpv_path
+            return _original_find_library(name)
+        ctypes.util.find_library = _patched_find_library
+
+# Windows
+if sys.platform == "win32":
+    os.environ["PATH"] = current_dir + os.pathsep + os.environ.get("PATH", "")
+
 import mpv
+
+import platform
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QMainWindow, QDialog
+from pathlib import Path
 
 # Import modules
 from setup_manager import SetupManager
@@ -58,7 +86,7 @@ def main():
     try:        
         # Create Qt Application
         app = QApplication(sys.argv)
-        app.setStyleSheet("QWidget { font-size: 12pt; }")  # Global font size change
+        app.setStyleSheet("QWidget { font-size: 12pt; }")
         app.setStyle('Fusion')
         
         # Create main window
@@ -71,7 +99,7 @@ def main():
             # Create and show SetupManager dialog
             setup_dialog = SetupManager(config_manager=config_manager)
             
-            # Let the setup dialog run - it will handle all validation internally
+            # Let the setup dialog run
             setup_result = setup_dialog.exec()
             
             # Check if user completely canceled out of the setup

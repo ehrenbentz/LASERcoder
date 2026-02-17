@@ -3,19 +3,18 @@
 import os
 import json
 from pathlib import Path
-from PyQt6.QtCore import QStandardPaths, QDir
+from PySide6.QtCore import QStandardPaths, QDir
 
 class ConfigManager:
-    """Manages LaserTAG configuration settings.
+    """
+    Manages LaserTAG configuration settings.
 
-    This class handles loading, saving, and updating configuration settings
-    for the LaserTAG application, with specific support for PyQt6.
     """
     
     def __init__(self):
         """Initialize the configuration manager with default settings."""
         self.home_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.HomeLocation)
-        self.config_file = os.path.join(self.home_dir, '.lasertag_conf')
+        self.config_file = os.path.join(self.home_dir, '.lasertag.conf')
         self.config = None
         self.load_config()
         
