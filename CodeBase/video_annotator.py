@@ -12,7 +12,7 @@ from mpv import MpvRenderContext
 
 import ctypes
 
-# Define at module level, above the class
+# Define above the class
 _GL_GET_PROC_ADDR = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p)
 
 import mpv
@@ -131,6 +131,11 @@ class VideoAnnotator(QFrame):
         self.progress_timer = None
         self.current_os = QSysInfo.productType().lower()
 
+        # Zoom state
+        self.zoom_active = False
+        self._zoom_pan_x = 0.0
+        self._zoom_pan_y = 0.0
+
         # UI selection state
         self.dialog_open = False
         self.pressed_keys = set()
@@ -171,7 +176,12 @@ class VideoAnnotator(QFrame):
         self.parent.setWindowTitle(f"LaserTag  {video_path}")
         self.parent.setGeometry(
             screen["x"], screen["y"], screen["width"], screen["height"])
-        self.parent.showMaximized()
+
+        if sys.platform == "darwin":
+            # Show the window at full available size without native fullscreen
+            self.parent.show()
+        else:
+            self.parent.showMaximized()
 
         # Layout measurements
         self.panel_width = int(self.display_width * 0.2)
@@ -188,6 +198,8 @@ class VideoAnnotator(QFrame):
         self._create_progress_bar()
         self._create_annotation_panel()
         self._setup_key_bindings()
+        self.gl_widget.setMouseTracking(True)
+        self.gl_widget.installEventFilter(self)
         self.app.installEventFilter(self)
         self._init_mpv_player()
         self._load_data_and_start()
@@ -376,7 +388,7 @@ class VideoAnnotator(QFrame):
             vo="libmpv",
             keep_open="yes",
             log_handler=print,
-            hwdec="auto",
+            hwdec="auto-copy",
             profile="fast",
         )
         self.gl_widget.init_mpv_render(self.player)
@@ -725,6 +737,15 @@ class VideoAnnotator(QFrame):
 
     def eventFilter(self, obj, event):
         if obj == self.parent:
+            if event.type() == QEvent.Type.WindowStateChange:
+                if sys.platform == "darwin":
+                    # Prevent native macOS fullscreen (green button)
+                    # which moves the window to a new Space and freezes the app
+                    if self.parent.windowState() & Qt.WindowState.WindowFullScreen:
+                        QTimer.singleShot(0, lambda: self.parent.setWindowState(
+                            Qt.WindowState.WindowMaximized))
+                        return True
+
             if event.type() in (QEvent.Type.ActivationChange,
                                 QEvent.Type.WindowStateChange):
                 if sys.platform == "darwin":
@@ -740,6 +761,51 @@ class VideoAnnotator(QFrame):
                             w.setVisible(any_active and self.parent.isVisible())
                 else:
                     update_floating_visibility(self)
+
+        if (obj == self.gl_widget
+                and self.zoom_active
+                and hasattr(self, "player") and self.player):
+            if event.type() == QEvent.Type.MouseButtonPress:
+                pos = event.position() if hasattr(event, "position") else event.pos()
+                click_x = pos.x() / self.gl_widget.width()
+                click_y = pos.y() / self.gl_widget.height()
+
+                cur_zoom = self.player.video_zoom or 0
+                if cur_zoom == 0:
+                    # First click: zoom in centered on click location
+                    self._zoom_pan_x = 0.5 - click_x
+                    self._zoom_pan_y = 0.5 - click_y
+                    self.player.video_zoom = 1
+                    self.player.video_pan_x = self._zoom_pan_x
+                    self.player.video_pan_y = self._zoom_pan_y
+                else:
+                    # Already zoomed: start drag
+                    self._drag_start_x = pos.x()
+                    self._drag_start_y = pos.y()
+                    self._drag_pan_start_x = self._zoom_pan_x
+                    self._drag_pan_start_y = self._zoom_pan_y
+                return True
+
+            if event.type() == QEvent.Type.MouseMove and (self.player.video_zoom or 0) > 0:
+                if hasattr(self, "_drag_start_x"):
+                    pos = event.position() if hasattr(event, "position") else event.pos()
+                    w = self.gl_widget.width()
+                    vid_w = self.player.width or 1
+                    vid_h = self.player.height or 1
+                    displayed_h = w * vid_h / vid_w
+                    dx = (pos.x() - self._drag_start_x) / w
+                    dy = (pos.y() - self._drag_start_y) / displayed_h
+                    self._zoom_pan_x = self._drag_pan_start_x + dx / 2.0
+                    self._zoom_pan_y = self._drag_pan_start_y + dy / 2.0
+                    self.player.video_pan_x = self._zoom_pan_x
+                    self.player.video_pan_y = self._zoom_pan_y
+                    return True
+
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                if hasattr(self, "_drag_start_x"):
+                    del self._drag_start_x
+                    del self._drag_start_y
+                return True
 
         if event.type() == QEvent.Type.KeyPress:
             key = event.key()
@@ -1496,7 +1562,7 @@ class VideoAnnotator(QFrame):
 
             for attr in ("floating_controls_window", "behavior_buttons_window",
                          "behavior_toggle_window", "controls_window",
-                         "edit_dialog"):
+                         "zoom_toggle_window", "edit_dialog"):
                 w = getattr(self, attr, None)
                 if w is not None:
                     w.deleteLater()

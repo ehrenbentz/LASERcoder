@@ -104,13 +104,64 @@ def create_toggle_buttons(annotator):
         video_pos.x() + margin,
         video_pos.y() + annotator.video_height - 20)
 
+    # Zoom toggle (upper-right corner)
+    annotator.zoom_toggle_window = QWidget(parent)
+    annotator.zoom_toggle_window.setWindowFlags(
+        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+    annotator.zoom_toggle_window.setAttribute(
+        Qt.WidgetAttribute.WA_TranslucentBackground)
+
+    annotator.zoom_toggle_button = QPushButton(
+        "\u2315", annotator.zoom_toggle_window)
+    annotator.zoom_toggle_button.setFixedSize(30, 30)
+    annotator.zoom_toggle_button.setStyleSheet(_TOGGLE_BTN_STYLE)
+    annotator.zoom_toggle_button.clicked.connect(
+        lambda: toggle_zoom_mode(annotator))
+
+    annotator.zoom_toggle_window.move(
+        video_pos.x() + annotator.video_width - 40 - margin,
+        video_pos.y() + 20)
+
     annotator.behavior_toggle_window.show()
     annotator.controls_window.show()
+    annotator.zoom_toggle_window.show()
 
     annotator.floating_windows.extend([
         annotator.behavior_toggle_window,
         annotator.controls_window,
+        annotator.zoom_toggle_window,
     ])
+
+
+_ZOOM_ACTIVE_STYLE = """
+    QPushButton {
+        background-color: #1084D9;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 4px;
+        font-size: 12px;
+    }
+    QPushButton:hover { background-color: #3399E6; }
+    QPushButton:pressed { background-color: #006CC1; }
+"""
+
+
+def toggle_zoom_mode(annotator):
+    """Toggle video zoom mode on/off."""
+    annotator.zoom_active = not annotator.zoom_active
+
+    if annotator.zoom_active:
+        annotator.zoom_toggle_button.setStyleSheet(_ZOOM_ACTIVE_STYLE)
+    else:
+        annotator.zoom_toggle_button.setStyleSheet(_TOGGLE_BTN_STYLE)
+        annotator._zoom_pan_x = 0.0
+        annotator._zoom_pan_y = 0.0
+        # Reset zoom
+        if hasattr(annotator, "player") and annotator.player:
+            annotator.player.video_zoom = 0
+            annotator.player.video_pan_x = 0
+            annotator.player.video_pan_y = 0
 
 
 def toggle_floating_controls(annotator):
