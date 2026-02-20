@@ -9,7 +9,7 @@
 #       output/          Created by this script: .build, .dist, .app, .dmg
 #
 # Prerequisites:
-#   brew install mpv          (only needed if libs/ directory does not exist yet)
+#   brew install mpv (only needed if libs/ directory does not exist yet)
 #   pip install nuitka PySide6 python-mpv
 #
 # Usage:
@@ -24,9 +24,9 @@ CODBASE_DIR="../CodeBase"
 LIBS_DIR="./libs"
 OUTPUT_DIR="./output"
 
-# =====================================================================
+# ==================================================================
 # Verify directory structure
-# =====================================================================
+# ==================================================================
 if [ ! -d "$CODBASE_DIR" ]; then
     echo "ERROR: CodeBase directory not found at $CODBASE_DIR"
     echo "Run this script from inside LaserTAG/build_MacOS/"
@@ -43,11 +43,16 @@ if [ ! -f "laser.ico" ]; then
     exit 1
 fi
 
-# =====================================================================
-# STEP 1: Collect dylibs (only if libs/ does not exist)
-# =====================================================================
+if [ ! -f "Info.plist" ]; then
+    echo "ERROR: Info.plist not found in current directory."
+    exit 1
+fi
+
+# ==================================================================
+# Collect dylibs (only if libs/ does not exist)
+# ==================================================================
 if [ ! -d "$LIBS_DIR" ] || [ -z "$(ls "$LIBS_DIR"/*.dylib 2>/dev/null)" ]; then
-    echo "=== Step 1: Collecting dylibs from Homebrew mpv ==="
+    echo "Collecting dylibs from Homebrew mpv..."
 
     LIBMPV_PATH="/opt/homebrew/lib/libmpv.2.dylib"
     if [ ! -f "$LIBMPV_PATH" ]; then
@@ -64,7 +69,7 @@ if [ ! -d "$LIBS_DIR" ] || [ -z "$(ls "$LIBS_DIR"/*.dylib 2>/dev/null)" ]; then
     ./collect_dylibs.sh "$LIBMPV_PATH" "$LIBS_DIR"
 
     echo ""
-    echo "=== Step 2: Removing problematic libraries ==="
+    echo "Removing problematic libraries..."
 
     rm -f "$LIBS_DIR/Python"
     echo "Removed: Python"
@@ -73,7 +78,7 @@ if [ ! -d "$LIBS_DIR" ] || [ -z "$(ls "$LIBS_DIR"/*.dylib 2>/dev/null)" ]; then
     echo "Removed: libvapoursynth-script.0.dylib"
 
     echo ""
-    echo "=== Step 3: Creating vapoursynth stub ==="
+    echo "Creating vapoursynth stub..."
 
     echo 'void* getVSScriptAPI(int version) { return 0; }' \
         | cc -shared -o "$LIBS_DIR/libvapoursynth-script.0.dylib" -x c - -arch arm64
@@ -82,22 +87,22 @@ if [ ! -d "$LIBS_DIR" ] || [ -z "$(ls "$LIBS_DIR"/*.dylib 2>/dev/null)" ]; then
     echo "Created: libvapoursynth-script.0.dylib (stub)"
 
     echo ""
-    echo "=== Step 4: Codesigning all dylibs ==="
+    echo "Codesigning all dylibs..."
     for lib in "$LIBS_DIR"/*.dylib; do
         codesign --force --sign - "$lib"
     done
     echo "Signed $(ls "$LIBS_DIR"/*.dylib | wc -l | tr -d ' ') libraries."
 
 else
-    echo "=== libs/ directory exists, skipping dylib collection ==="
+    echo " libs/ directory exists, skipping dylib collection "
     echo "  (Delete libs/ and re-run to regenerate from Homebrew)"
 fi
 
-# =====================================================================
-# STEP 5: Prepare output directory
-# =====================================================================
+# ==================================================================
+# Prepare output directory
+# ==================================================================
 echo ""
-echo "=== Step 5: Preparing output directory ==="
+echo "Preparing output directory..."
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
@@ -108,11 +113,11 @@ cp "$CODBASE_DIR"/*.py "$OUTPUT_DIR/"
 cp laser.ico "$OUTPUT_DIR/"
 cp -R "$LIBS_DIR" "$OUTPUT_DIR/libs"
 
-# =====================================================================
-# STEP 6: Compile with Nuitka
-# =====================================================================
+# ==================================================================
+# Compile with Nuitka
+# ==================================================================
 echo ""
-echo "=== Step 6: Compiling with Nuitka ==="
+echo "Compiling with Nuitka..."
 cd "$OUTPUT_DIR"
 
 python -m nuitka \
@@ -129,8 +134,13 @@ python -m nuitka \
 rm -f *.py *.ico
 rm -rf libs
 
+## Replace Nuitka's auto-generated Info.plist with our custom one
+#echo ""
+#echo "Installing custom Info.plist..."
+#cp ../Info.plist "${APP_NAME}.app/Contents/Info.plist"
+
 echo ""
-echo "=== Step 7: Creating DMG installer ==="
+echo "Creating DMG installer..."
 
 DMG_NAME="${APP_NAME}Installer.dmg"
 STAGING_DIR="dmg_staging"
@@ -151,9 +161,9 @@ rm -rf "$STAGING_DIR"
 
 cd ..
 
-# =====================================================================
+# ==================================================================
 # Summary
-# =====================================================================
+# ==================================================================
 echo ""
 echo "============================================"
 echo "  Build Complete"

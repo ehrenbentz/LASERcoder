@@ -1,7 +1,7 @@
-# LaserTAG Windows Build Instructions
+# LaserTAG Manual Windows Build Instructions
 
 All commands are run from inside `LaserTAG\build_Windows\` using a
-standard Windows Command Prompt (cmd.exe), not WSL or PowerShell.
+standard Windows Command Prompt (cmd.exe -- not WSL or PowerShell)
 
 ```
 LaserTAG\
@@ -101,14 +101,14 @@ LaserTAGSetup.exe in output\.
 
 ## Step 4 (optional): Code signing
 
-If you have a code signing certificate (.pfx file), sign the executable
-before creating the installer. This prevents Windows SmartScreen
-warnings for end users.
+If you have a code signing certificate (.pfx file), sign the executable before creating the installer.
+This prevents most Windows SmartScreen warnings
 
-If you have not purchased a valid certificate, SignTool will throw an error (below).
-This is normal if you have a self-signed certificate. It does not imply that the code was not properly signed.
-"SignTool Error: A certificate chain processed, but terminated in a root
-        certificate which is not trusted by the trust provider."
+If you have not purchased a valid certificate, SignTool WILL report an error:
+    "SignTool Error: A certificate chain processed, but terminated in a root
+            certificate which is not trusted by the trust provider."
+This error is normal and benign if you have a self-signed certificate.
+It does not imply that the code was not properly signed, only that you haven't purchased a certificate.
 
 ```
 signtool.exe sign /f "C:\path\to\YourCert.pfx" /p YOUR_PASSWORD /fd sha256 /td sha256 /tr http://timestamp.digicert.com /a output\LaserTAG.dist\LaserTAG.exe
@@ -193,13 +193,7 @@ copy libmpv-2.dll output\LaserTAG.dist\
 
 The codebase uses PySide6. If Nuitka warns about PyQt6, it means
 PyQt6 is installed in the Python environment alongside PySide6.
-This is harmless (Nuitka excludes it) but produces a warning. To
-silence it:
-
-```
-pip uninstall PyQt6 PyQt6-Qt6 PyQt6-sip
-```
-
+This is harmless (Nuitka excludes it) but produces a warning.
 
 ## Troubleshooting: Nuitka cannot find a C compiler
 
@@ -221,4 +215,4 @@ SmartScreen will show a warning on first launch. Users can bypass it:
 2. Click "Run anyway".
 
 This is a one-time prompt per machine. Signing the executable with a
-valid certificate eliminates this warning entirely.
+valid (paid) certificate eliminates this warning entirely.

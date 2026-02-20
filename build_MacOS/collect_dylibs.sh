@@ -19,7 +19,7 @@ mkdir -p "$DEST"
 cp "$SEED" "$DEST/"
 echo "Copied: $(basename "$SEED")"
 
-# Track what we have already processed
+# Track progress
 PROCESSED=()
 
 is_processed() {
@@ -99,12 +99,12 @@ collect_deps() {
     done
 }
 
-# Phase 1: Recursively collect all dependencies
-echo "=== Phase 1: Collecting dependencies ==="
+# Recursively collect all dependencies
+echo "Collecting dependencies..."
 collect_deps "$DEST/$(basename "$SEED")"
 
 echo ""
-echo "=== Phase 2: Rewriting load paths ==="
+echo "Rewriting load paths..."
 
 # Phase 2: Rewrite all load paths to @loader_path/
 for lib in "$DEST"/*.dylib; do
@@ -136,7 +136,7 @@ for lib in "$DEST"/*.dylib; do
 done
 
 echo ""
-echo "=== Phase 3: Verification ==="
+echo "Verifiying..."
 
 ERRORS=0
 for lib in "$DEST"/*.dylib; do
@@ -161,7 +161,7 @@ else
 fi
 
 echo ""
-echo "=== Summary ==="
+echo "########### Summary ###########"
 echo "Libraries collected: $(ls "$DEST"/*.dylib | wc -l | tr -d ' ')"
 echo "Output directory: $DEST"
 ls -lh "$DEST"/*.dylib

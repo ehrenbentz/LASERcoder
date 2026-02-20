@@ -191,9 +191,9 @@ This leaves only LaserTAG.app, LaserTAGInstaller.dmg, and the Nuitka
 build/dist directories in output/.
 
 
-## Troubleshooting: macOS blocks the app
+## Troubleshooting: If MacOS blocks the app or marks it as corrupt
 
-This app is not signed with an Apple Developer ID, so Gatekeeper will
+This app is not signed with an Apple Developer ID, so Gatekeeper may
 block it on first launch. Three ways to bypass this:
 
 Option 1 (GUI):
@@ -214,7 +214,7 @@ Option 3 (System Settings):
 
 ## Troubleshooting: Rebuilding libs after Homebrew update
 
-If you update mpv or ffmpeg via Homebrew, delete libs/ and repeat
+To update mpv or ffmpeg via Homebrew, delete libs/ and repeat
 from Step 1:
 
 ```bash

@@ -174,13 +174,24 @@ class VideoAnnotator(QFrame):
         self.display_height = screen["height"]
 
         self.parent.setWindowTitle(f"LaserTag  {video_path}")
-        self.parent.setGeometry(
-            screen["x"], screen["y"], screen["width"], screen["height"])
+        self.parent.setStyleSheet("background-color: black;")
 
         if sys.platform == "darwin":
-            # Show the window at full available size without native fullscreen
+            self.parent.setWindowFlags(
+                Qt.WindowType.Window
+                | Qt.WindowType.CustomizeWindowHint
+                | Qt.WindowType.WindowTitleHint
+                | Qt.WindowType.WindowCloseButtonHint
+                | Qt.WindowType.WindowMinimizeButtonHint
+                | Qt.WindowType.WindowMaximizeButtonHint
+            )
+            full_screen = QApplication.primaryScreen().geometry()
+            self._initial_geometry = full_screen
+            self.parent.setGeometry(full_screen)
             self.parent.show()
         else:
+            self.parent.setGeometry(
+                screen["x"], screen["y"], screen["width"], screen["height"])
             self.parent.showMaximized()
 
         # Layout measurements
@@ -194,7 +205,6 @@ class VideoAnnotator(QFrame):
         # Build UI
         self._setup_layout()
         self._create_video_frame()
-        create_toggle_buttons(self)
         self._create_progress_bar()
         self._create_annotation_panel()
         self._setup_key_bindings()
@@ -243,6 +253,69 @@ class VideoAnnotator(QFrame):
         video_layout.addWidget(self.gl_widget)
 
         self.left_layout.addWidget(self.video_frame)
+
+    def _reposition_floating_windows(self):
+            """Reanchor floating toggle buttons to the video frame."""
+            if not hasattr(self, "video_frame") or not self.video_frame:
+                return
+            video_pos = self.video_frame.mapToGlobal(QPoint(0, 0))
+            margin = 5
+
+            if hasattr(self, "behavior_toggle_window") and self.behavior_toggle_window:
+                self.behavior_toggle_window.move(
+                    video_pos.x() + margin, video_pos.y() + 20)
+
+            if hasattr(self, "controls_window") and self.controls_window:
+                self.controls_window.move(
+                    video_pos.x() + margin,
+                    video_pos.y() + self.video_height - 20)
+
+            if hasattr(self, "zoom_toggle_window") and self.zoom_toggle_window:
+                self.zoom_toggle_window.move(
+                    video_pos.x() + self.video_width - 40 - margin,
+                    video_pos.y() + 20)
+
+            if hasattr(self, "floating_controls_window") and self.floating_controls_window:
+                win_w = self.floating_controls_window.width()
+                x = video_pos.x() + (self.video_width - win_w) // 2
+                y = (video_pos.y() + self.video_height
+                     - self.floating_controls_window.height() - 10)
+                self.floating_controls_window.move(x, y)
+
+            if hasattr(self, "behavior_buttons_window") and self.behavior_buttons_window:
+                toggle_width = self.behavior_toggle_button.width()
+                x = video_pos.x() + 10 + toggle_width + 10
+                y = video_pos.y() + 10
+                self.behavior_buttons_window.move(x, y)
+
+    def _set_floating_visible(self, visible):
+        """Show or hide all floating windows, pruning any deleted C++ objects."""
+        live = []
+        for w in self.floating_windows:
+            if w is None:
+                continue
+            try:
+                w.winId()  # raises RuntimeError if C++ object is deleted
+                w.setVisible(visible)
+                live.append(w)
+            except RuntimeError:
+                pass
+        self.floating_windows[:] = live
+
+    def _raise_floating_windows(self):
+        """Ensure floating windows render above the parent window."""
+        live = []
+        for w in self.floating_windows:
+            if w is None:
+                continue
+            try:
+                w.winId()  # raises RuntimeError if C++ object is deleted
+                if w.isVisible():
+                    w.raise_()
+                live.append(w)
+            except RuntimeError:
+                pass
+        self.floating_windows[:] = live
 
     # ------------------------------------------------------------------
     # Progress bar
@@ -383,7 +456,7 @@ class VideoAnnotator(QFrame):
     def _init_mpv_player(self):
         self.parent.show()
         QApplication.processEvents()
-        locale.setlocale(locale.LC_NUMERIC, "C")  # Ensure locale is correct for mpv
+        locale.setlocale(locale.LC_NUMERIC, "C")
         self.player = mpv.MPV(
             vo="libmpv",
             keep_open="yes",
@@ -407,6 +480,12 @@ class VideoAnnotator(QFrame):
         self.parent.activateWindow()
         self.parent.raise_()
         self.player.play(self.video_path)
+
+        # Delay floating windows until after video starts
+        QTimer.singleShot(500, self._show_floating_controls)
+
+    def _show_floating_controls(self):
+        create_toggle_buttons(self)
         QTimer.singleShot(100, self._scroll_annotations_to_bottom)
 
     # ------------------------------------------------------------------
@@ -737,28 +816,47 @@ class VideoAnnotator(QFrame):
 
     def eventFilter(self, obj, event):
         if obj == self.parent:
-            if event.type() == QEvent.Type.WindowStateChange:
-                if sys.platform == "darwin":
-                    # Prevent native macOS fullscreen (green button)
-                    # which moves the window to a new Space and freezes the app
-                    if self.parent.windowState() & Qt.WindowState.WindowFullScreen:
-                        QTimer.singleShot(0, lambda: self.parent.setWindowState(
-                            Qt.WindowState.WindowMaximized))
-                        return True
+            if event.type() == QEvent.Type.Move:
+                self._reposition_floating_windows()
 
             if event.type() in (QEvent.Type.ActivationChange,
                                 QEvent.Type.WindowStateChange):
                 if sys.platform == "darwin":
-                    # On macOS, check if ANY of our windows are active
-                    app = QApplication.instance()
-                    active = app.activeWindow()
-                    any_active = (
-                        active == self.parent
-                        or active in self.floating_windows
+                    state = self.parent.windowState()
+                    is_minimized = bool(
+                        state & Qt.WindowState.WindowMinimized
                     )
-                    for w in self.floating_windows:
-                        if w:
-                            w.setVisible(any_active and self.parent.isVisible())
+                    is_maximized = bool(
+                        state & Qt.WindowState.WindowMaximized
+                    )
+                    if is_maximized and hasattr(self, "_initial_geometry"):
+                        # Green button was clicked: snap back to initial
+                        # full-screen geometry instead of entering zoom mode.
+                        self.parent.setWindowState(Qt.WindowState.WindowNoState)
+                        self.parent.setGeometry(self._initial_geometry)
+                        QTimer.singleShot(50, self._reposition_floating_windows)
+                        QTimer.singleShot(100, self._raise_floating_windows)
+                    elif is_minimized:
+                        self._set_floating_visible(False)
+                    else:
+                        app = QApplication.instance()
+                        active = app.activeWindow()
+                        # Show if our app is active (main window or a
+                        # floating window) or during transient None state
+                        # (e.g. mid-restore from minimize).
+                        is_ours = (
+                            active is None
+                            or active == self.parent
+                            or active in self.floating_windows
+                        )
+                        if is_ours:
+                            self._set_floating_visible(True)
+                            QTimer.singleShot(
+                                50, self._raise_floating_windows)
+                            QTimer.singleShot(
+                                200, self._raise_floating_windows)
+                        else:
+                            self._set_floating_visible(False)
                 else:
                     update_floating_visibility(self)
 

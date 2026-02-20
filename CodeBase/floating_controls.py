@@ -70,9 +70,11 @@ def create_toggle_buttons(annotator):
     # Behaviour toggle
     annotator.behavior_toggle_window = QWidget(parent)
     annotator.behavior_toggle_window.setWindowFlags(
-        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
+        | Qt.WindowType.WindowStaysOnTopHint)
     annotator.behavior_toggle_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
+    annotator.behavior_toggle_window.setStyleSheet("background-color: transparent;")
 
     annotator.behavior_toggle_button = QPushButton(
         "\u2637", annotator.behavior_toggle_window)
@@ -84,9 +86,11 @@ def create_toggle_buttons(annotator):
     # Controls toggle
     annotator.controls_window = QWidget(parent)
     annotator.controls_window.setWindowFlags(
-        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
+        | Qt.WindowType.WindowStaysOnTopHint)
     annotator.controls_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
+    annotator.controls_window.setStyleSheet("background-color: transparent;")
 
     annotator.controls_button = QPushButton(
         "\u23E3", annotator.controls_window)
@@ -107,9 +111,11 @@ def create_toggle_buttons(annotator):
     # Zoom toggle (upper-right corner)
     annotator.zoom_toggle_window = QWidget(parent)
     annotator.zoom_toggle_window.setWindowFlags(
-        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
+        | Qt.WindowType.WindowStaysOnTopHint)
     annotator.zoom_toggle_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
+    annotator.zoom_toggle_window.setStyleSheet("background-color: transparent;")
 
     annotator.zoom_toggle_button = QPushButton(
         "\u2315", annotator.zoom_toggle_window)
@@ -184,6 +190,7 @@ def _create_floating_controls(annotator):
         | Qt.WindowType.WindowStaysOnTopHint)
     annotator.floating_controls_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
+    annotator.floating_controls_window.setStyleSheet("background-color: transparent;")
 
     layout = QHBoxLayout(annotator.floating_controls_window)
     layout.setSpacing(40)
@@ -239,7 +246,8 @@ def _create_behavior_buttons(annotator):
         | Qt.WindowType.WindowStaysOnTopHint)
     annotator.behavior_buttons_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
-
+    annotator.behavior_buttons_window.setStyleSheet("background-color: transparent;")
+    
     main_layout = QVBoxLayout(annotator.behavior_buttons_window)
     main_layout.setSpacing(10)
     main_layout.setContentsMargins(10, 10, 10, 10)

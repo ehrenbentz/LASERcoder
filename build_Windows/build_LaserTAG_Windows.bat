@@ -56,9 +56,9 @@ if not exist "laser.ico" (
 )
 
 REM =====================================================================
-REM STEP 1: Prepare output directory
+REM Prepare output directory
 REM =====================================================================
-echo === Step 1: Preparing output directory ===
+echo Preparing output directory...
 
 if exist "%OUTPUT_DIR%" (
     echo Removing previous output directory...
@@ -75,10 +75,10 @@ copy "laser.ico" "%OUTPUT_DIR%\" >nul
 copy "libmpv-2.dll" "%OUTPUT_DIR%\" >nul
 
 REM =====================================================================
-REM STEP 2: Compile with Nuitka
+REM Compile with Nuitka
 REM =====================================================================
 echo.
-echo === Step 2: Compiling with Nuitka ===
+echo Compiling with Nuitka...
 
 pushd "%OUTPUT_DIR%"
 
@@ -107,17 +107,17 @@ if %errorlevel% neq 0 (
 popd
 
 REM =====================================================================
-REM STEP 3: Clean up staged source from output
+REM Clean up staged source from output
 REM =====================================================================
 echo.
-echo === Step 3: Cleaning up ===
+echo Cleaning up...
 
 del "%OUTPUT_DIR%\*.py" >nul 2>&1
 del "%OUTPUT_DIR%\laser.ico" >nul 2>&1
 del "%OUTPUT_DIR%\libmpv-2.dll" >nul 2>&1
 
 REM =====================================================================
-REM STEP 4: Code signing
+REM Code signing
 REM =====================================================================
 echo.
 if not defined CERT_FILE (
@@ -138,10 +138,10 @@ if not defined CERT_FILE (
 )
 
 REM =====================================================================
-REM STEP 5: Create installer with Inno Setup (if available)
+REM Create installer with Inno Setup (if available)
 REM =====================================================================
 echo.
-echo === Step 5: Creating installer ===
+echo Creating installer...
 
 set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist %ISCC% (
