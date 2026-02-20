@@ -2,25 +2,25 @@
 
 **Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder**
 
-LaserTAG is a free, open-source desktop application for behavioral annotation of video recordings. It is designed for researchers and students in ethology, animal behavior, ecology, and related fields who need to score behaviors from video data quickly and reliably.
+LaserTAG is a free, open-source desktop application for behavioral annotation of video recordings. It is designed for researchers and students in ethology, animal behavior, ecology, psychology, or related fields who need to score behaviors from video data quickly and reliably.
 
-LaserTAG runs natively on **Windows** and **macOS** with pre-built installers — no programming or configuration required.
+LaserTAG runs natively on **Windows** and **macOS** with pre-built installers or may be run from source.
 
 <!-- TODO: Add screenshot of main annotation window here -->
 <!-- ![LaserTAG Main Window](docs/images/screenshot.png) -->
 
 ## Key Features
 
-- **No save button** — Annotations are saved in real time using atomic write operations. Your data is protected even during crashes, power outages, or accidental closures.
-- **Simple CSV output** — Annotation files are clean, properly formatted `.csv` files ready for direct import into R, Python, or any statistics software. No reformatting required.
-- **Point and state behaviors** — Annotate instantaneous events (point behaviors) and behaviors with duration (state behaviors) using the same intuitive interface.
-- **Mutually exclusive groups** — Define groups of state behaviors where starting one automatically ends the others, ensuring logically consistent annotations.
-- **Keyboard shortcuts and on-screen buttons** — Code behaviors using hotkeys for speed, or floating buttons for mouse/touchscreen workflows.
-- **Annotation visualization** — Generate timeline visualizations of all annotated behaviors and export them as high-resolution images (JPG/PNG, 100–900 DPI).
-- **Summary statistics** — Generate per-video and per-experiment summary statistics and combined annotation files for batch analysis.
-- **Resume coding sessions** — Stop and restart coding at any time without losing your place.
-- **Set coding windows** — Define a start time and duration to standardize observation periods across videos without editing video files.
-- **Cross-platform** — Native builds for Windows and macOS with platform-optimized video playback.
+- **No save button**: Annotations are saved in real time using atomic write operations. Your data is protected even during accidental closures, power outages, crashes.
+- **Simple CSV output**: Annotation files are clean, properly formatted `.csv` files ready for direct import into R, Python, or any statistics software. No reformatting required.
+- **Point and state behaviors**: Annotate instantaneous events (point behaviors) and behaviors with duration (state behaviors) using the same intuitive interface.
+- **Mutually exclusive groups**: Define groups of state behaviors where starting one automatically ends the others, ensuring logically consistent annotations.
+- **Keyboard shortcuts and on-screen buttons**: Code behaviors using hotkeys for speed, or floating buttons for mouse/touchscreen workflows.
+- **Annotation visualization**: Generate timeline visualizations of all annotated behaviors and export them as high-resolution images (JPG/PNG, 100–900 DPI).
+- **Summary statistics**: Generate per-video and per-experiment summary statistics and combined annotation files for batch analysis.
+- **Resume coding sessions**: Stop and restart coding at any time without losing your place.
+- **Set coding windows**: Define a start time and duration to standardize observation periods across videos without editing video files.
+- **Cross-platform**: Native builds for Windows and macOS with platform-optimized video playback.
 
 ## Installation
 
@@ -31,7 +31,7 @@ Download the latest release for your platform from the [Releases](../../releases
 | Platform | Download | Notes |
 |----------|----------|-------|
 | **Windows** | `LaserTAGSetup.exe` | Installer adds Start Menu/Desktop shortcuts and PATH entry |
-| **Windows** | `LaserTAG.zip` | Portable version — extract and run, no installation needed |
+| **Windows** | `LaserTAG.zip` | Portable version — extract and run LaserTAG.exe, no installation needed |
 | **macOS** | `LaserTAGInstaller.dmg` | Drag to Applications folder (see [Gatekeeper note](#macos-gatekeeper)) |
 
 ### macOS Gatekeeper
@@ -46,7 +46,7 @@ This is only required once per machine.
 
 ### Running from Source
 
-Requires Python 3.10+ and a working installation of [MPV](https://mpv.io/) (Windows) or Homebrew mpv (macOS).
+Requires Python 3.10+ and a working installation or prebuilt libraries for [MPV](https://mpv.io/) (Windows) or Homebrew mpv (macOS).
 
 ```bash
 pip install PySide6 python-mpv
@@ -56,7 +56,7 @@ python LaserTAG.py
 
 ### Building from Source
 
-Full build instructions for creating standalone executables and installers:
+Full build instructions for manually creating standalone executables and installers:
 
 - [Windows Build Guide](build_Windows/build_LaserTAG_Windows.MD)
 - [macOS Build Guide](build_MacOS/build_LaserTAG_MacOS.MD)
@@ -109,15 +109,9 @@ Annotation files are saved as `VideoName_Annotations.csv` with 11 columns:
 | `Manual_Edit` | `TRUE` if the timestamp was manually edited |
 | `Notes` | User-added notes |
 
-## Platform Differences
+## Video Backend
 
-| Feature | Windows | macOS |
-|---------|---------|-------|
-| Video backend | MPV | QMediaPlayer |
-| Max playback speed | 25x | 10x |
-| Audio quality | Clean up to 4x | Pitch distortion above 1x |
-
-The Windows version uses [MPV](https://mpv.io/) for video playback, which provides hardware-accelerated decoding with intelligent frame skipping at high speeds. The macOS version uses Qt's QMediaPlayer, which provides hardware-accelerated playback with some limitations at high speeds.
+LaserTAG (Windows and macOS) uses [MPV](https://mpv.io/) for video playback, which provides hardware-accelerated decoding with intelligent frame skipping at high speeds.
 
 ## Project Structure
 
