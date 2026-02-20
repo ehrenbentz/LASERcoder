@@ -135,9 +135,9 @@ rm -f *.py *.ico
 rm -rf libs
 
 ## Replace Nuitka's auto-generated Info.plist with our custom one
-#echo ""
-#echo "Installing custom Info.plist..."
-#cp ../Info.plist "${APP_NAME}.app/Contents/Info.plist"
+echo ""
+echo "Installing custom Info.plist..."
+cp ../Info.plist "${APP_NAME}.app/Contents/Info.plist"
 
 echo ""
 echo "Creating DMG installer..."

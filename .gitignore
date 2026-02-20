@@ -7,7 +7,7 @@ output/
 *.exe
 *.zip
 
-# Bundled libraries (too large, platform-specific)
+# mpv libraries
 libs/
 libmpv-2.dll
 
@@ -16,6 +16,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+env/
 venv/
 .venv/
 
