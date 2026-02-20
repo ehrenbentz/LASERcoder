@@ -142,7 +142,7 @@ If you use LaserTAG in your research, please cite:
 
 <!-- TODO: Update with JOSS DOI once published -->
 
-> Bentz, E. (2026). LaserTAG: Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder. *Journal of Open Source Software*. (in preparation)
+> Bentz, E.J., Laser, R.S., Ophir, A.G. (2026). LaserTAG: Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder. *Journal of Open Source Software*. (in preparation)
 
 See [CITATION.cff](CITATION.cff) for machine-readable citation information.
 
@@ -173,6 +173,6 @@ LaserTAG is licensed under the [GNU General Public License v3.0](LICENSE).
 
 ## Acknowledgments
 
-LaserTAG was developed at Cornell University.
+LaserTAG was developed in the [Ophir Lab of Integrative Neuroethology](https://www.ophirlab.com/) in the Cornell University department of Psychology.
 
 <!-- TODO: Add specific acknowledgments (lab, funding, contributors) -->
