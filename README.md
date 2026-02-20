@@ -109,9 +109,6 @@ Annotation files are saved as `VideoName_Annotations.csv` with 11 columns:
 | `Manual_Edit` | `TRUE` if the timestamp was manually edited |
 | `Notes` | User-added notes |
 
-## Video Backend
-
-LaserTAG (Windows and macOS) uses [MPV](https://mpv.io/) for video playback, which provides hardware-accelerated decoding with intelligent frame skipping at high speeds.
 
 ## Project Structure
 
