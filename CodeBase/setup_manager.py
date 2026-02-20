@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt, QTimer
 from config_manager import ConfigManager
 from files_manager import FilesManager
 from behavior_key_editor import BehaviorKeyEditor
+import theme
 
 
 class SetupManager(QDialog):
@@ -40,6 +41,7 @@ class SetupManager(QDialog):
         self._files_manager = None
 
         self.setWindowTitle("LaserTAG")
+        self.setStyleSheet(theme.dialog_stylesheet())
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
         self._show_files_manager()
@@ -215,6 +217,7 @@ class SetupManager(QDialog):
         dialog.setWindowTitle("Resume Session")
         dialog.setWindowFlags(
             Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+        dialog.setStyleSheet(theme.dialog_stylesheet())
         layout = QVBoxLayout(dialog)
 
         msg = QLabel(
@@ -223,7 +226,14 @@ class SetupManager(QDialog):
         msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(msg)
 
-        btn_style = "QPushButton { padding: 8px 16px; min-width: 100px; }"
+        btn_style = (f"QPushButton {{ padding: 8px 16px; min-width: 100px;"
+                     f" background-color: {theme.color('button_bg')};"
+                     f" color: {theme.color('button_text')};"
+                     f" border: none; border-radius: 4px; }}"
+                     f"QPushButton:hover {{ background-color: {theme.color('button_hover')};"
+                     f" color: {theme.color('text_on_accent')}; }}"
+                     f"QPushButton:pressed {{ background-color: {theme.color('button_pressed')};"
+                     f" color: {theme.color('text_on_accent')}; }}")
         btn_row = QHBoxLayout()
         for text, choice in [
             ("Resume", "resume"),

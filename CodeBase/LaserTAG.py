@@ -44,6 +44,7 @@ from pathlib import Path
 from setup_manager import SetupManager
 from config_manager import ConfigManager
 from video_annotator import VideoAnnotator
+import theme
 
 class MainWindow(QMainWindow):
     """Main window class for the LaserTAG application."""
@@ -86,14 +87,15 @@ def main():
     try:        
         # Create Qt Application
         app = QApplication(sys.argv)
-        app.setStyleSheet("QWidget { font-size: 12pt; }")
         app.setStyle('Fusion')
-        
+
+        # Initialize config manager and load theme
+        config_manager = ConfigManager()
+        theme.load_theme(config_manager.get_theme())
+        app.setStyleSheet(theme.app_stylesheet())
+
         # Create main window
         main_window = MainWindow()
-        
-        # Initialize config manager
-        config_manager = ConfigManager()
         
         while True:  # Create a loop to allow returning to setup
             # Create and show SetupManager dialog

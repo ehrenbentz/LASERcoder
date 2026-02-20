@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from display_utils import get_screen_geometry, center_window
+import theme
 
 class BehaviorKeyEditor(QDialog):
     """Dialog for editing behavior key definitions."""
@@ -37,6 +38,7 @@ class BehaviorKeyEditor(QDialog):
         self.setWindowTitle("Behavior Key Editor")
         self.setWindowFlags(
             Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+        self.setStyleSheet(theme.dialog_stylesheet())
 
         self._screen = get_screen_geometry()
         self._editor_w = int(self._screen["width"] * 0.5)

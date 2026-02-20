@@ -2,6 +2,8 @@ from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 
+import theme
+
 class ProgressBarWithText(QWidget):
     """
     Progress bar that displays current time, speed, and total time.
@@ -46,13 +48,13 @@ class ProgressBarWithText(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Background
-        painter.fillRect(event.rect(), QColor(0, 0, 0))
-        painter.fillRect(0, 0, self.width(), self.height(), QColor(40, 40, 40))
+        painter.fillRect(event.rect(), theme.qcolor("progress_bg"))
+        painter.fillRect(0, 0, self.width(), self.height(), theme.qcolor("progress_bg"))
 
         # Progress fill
         if self._progress > 0:
             progress_width = int(self.width() * self._progress)
-            painter.fillRect(0, 0, progress_width, self.height(), QColor(0, 0, 150))
+            painter.fillRect(0, 0, progress_width, self.height(), theme.qcolor("progress_fill"))
 
         # Coding-end indicator
         ann = self._annotator
@@ -65,11 +67,11 @@ class ProgressBarWithText(QWidget):
                     ratio = coding_end / total
                     if 0 <= ratio <= 1:
                         x = int(self.width() * ratio)
-                        painter.setPen(QPen(QColor(255, 255, 255), 2))
+                        painter.setPen(QPen(theme.qcolor("progress_text"), 2))
                         painter.drawLine(x, 0, x, self.height())
 
         # Text
-        painter.setPen(QColor(255, 255, 255))
+        painter.setPen(theme.qcolor("progress_text"))
         font = painter.font()
         font.setBold(True)
         painter.setFont(font)
@@ -86,6 +88,8 @@ class ProgressBarWithText(QWidget):
         # Right (total time)
         rx = self.width() - painter.fontMetrics().horizontalAdvance(self._right_text) - 10
         painter.drawText(rx, text_y, self._right_text)
+
+        painter.end()
 
     # --- mouse ---------------------------------------------------------
 

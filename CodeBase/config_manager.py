@@ -42,7 +42,10 @@ class ConfigManager:
             
         if 'last_behavior_key' not in self.config:
             self.config['last_behavior_key'] = None
-            
+
+        if self.config.get('theme') not in ('dark', 'light', 'system'):
+            self.config['theme'] = 'system'
+
         self.save_config()
 
     def create_default_config(self):
@@ -50,7 +53,8 @@ class ConfigManager:
         return {
             'output_dir': self.home_dir,
             'video_dir': self.home_dir,
-            'last_behavior_key': None
+            'last_behavior_key': None,
+            'theme': 'system',
         }
 
     def save_config(self):
@@ -92,3 +96,22 @@ class ConfigManager:
         if behavior_key and isinstance(behavior_key, str):
             self.config['last_behavior_key'] = behavior_key
             self.save_config()
+
+    def get_theme(self):
+        """Get the current theme preference."""
+        return self.config.get('theme', 'system')
+
+    def update_theme(self, name):
+        """Update the theme preference."""
+        if name in ('dark', 'light', 'system'):
+            self.config['theme'] = name
+            self.save_config()
+
+    def get_show_floating_controls(self):
+        """Get whether floating controls should be visible."""
+        return self.config.get('show_floating_controls', True)
+
+    def update_show_floating_controls(self, visible):
+        """Update whether floating controls should be visible."""
+        self.config['show_floating_controls'] = bool(visible)
+        self.save_config()

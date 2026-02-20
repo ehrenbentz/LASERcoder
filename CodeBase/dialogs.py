@@ -8,6 +8,11 @@ from PySide6.QtCore import Qt
 
 from display_utils import center_window
 from annotation_store import format_time_human, parse_time
+import theme
+
+
+def _apply_dialog_theme(dialog):
+    dialog.setStyleSheet(theme.dialog_stylesheet())
 
 
 # ======================================================================
@@ -32,6 +37,7 @@ def show_coding_start_dialog(annotator):
         dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dialog.setWindowTitle("Set Coding Start and Duration")
     dialog.setModal(True)
+    _apply_dialog_theme(dialog)
     center_window(dialog, 400, 300)
 
     layout = QVBoxLayout(dialog)
@@ -262,6 +268,7 @@ def show_note_dialog(annotator):
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle("Add Note")
     dlg.setModal(True)
+    _apply_dialog_theme(dlg)
     center_window(dlg, 400, 300)
 
     layout = QVBoxLayout(dlg)
@@ -338,6 +345,7 @@ def show_annotation_details(annotator):
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle(f"Annotation Details - {annotation['Name']}")
     dlg.setModal(True)
+    _apply_dialog_theme(dlg)
     center_window(dlg, 500, 400)
 
     main_lay = QVBoxLayout(dlg)
@@ -424,6 +432,7 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle(f"Edit {annotation_type} Annotation")
     dlg.setModal(True)
+    _apply_dialog_theme(dlg)
     center_window(dlg, 400, 500)
 
     main_lay = QVBoxLayout(dlg)
@@ -562,6 +571,7 @@ def show_edit_point_dialog(annotator):
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle("Edit Point Annotation")
     dlg.setModal(True)
+    _apply_dialog_theme(dlg)
     center_window(dlg, 275, 250)
 
     layout = QVBoxLayout(dlg)
@@ -618,6 +628,7 @@ def show_edit_state_dialog(annotator):
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle("Edit State Annotation")
     dlg.setModal(True)
+    _apply_dialog_theme(dlg)
     center_window(dlg, 250, 300)
 
     layout = QVBoxLayout(dlg)

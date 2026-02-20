@@ -37,6 +37,7 @@ from dialogs import (
     show_coding_start_dialog, show_note_dialog, show_annotation_details,
     show_comprehensive_edit, show_edit_point_dialog, show_edit_state_dialog,
 )
+import theme
 
 
 class MpvOpenGLWidget(QOpenGLWidget):
@@ -87,7 +88,10 @@ class MpvOpenGLWidget(QOpenGLWidget):
 
     def _on_mpv_frame_ready(self):
         """Called from mpv's decoder thread. Emit signal to repaint on GUI thread."""
-        self._frame_ready.emit()
+        try:
+            self._frame_ready.emit()
+        except RuntimeError:
+            pass
 
     def initializeGL(self):
         pass
@@ -168,30 +172,34 @@ class VideoAnnotator(QFrame):
         )
 
         # Screen geometry
-        screen = get_screen_geometry()
         self.app = QApplication.instance()
-        self.display_width = screen["width"]
-        self.display_height = screen["height"]
+        if sys.platform == "darwin":
+            full = QApplication.primaryScreen().geometry()
+            self.display_width = full.width()
+            self.display_height = full.height()
+        else:
+            screen = get_screen_geometry()
+            self.display_width = screen["width"]
+            self.display_height = screen["height"]
 
         self.parent.setWindowTitle(f"LaserTag  {video_path}")
-        self.parent.setStyleSheet("background-color: black;")
+        self.parent.setStyleSheet(f"background-color: {theme.color('window_bg')};")
 
         if sys.platform == "darwin":
+            self.parent.hide()
             self.parent.setWindowFlags(
                 Qt.WindowType.Window
-                | Qt.WindowType.CustomizeWindowHint
-                | Qt.WindowType.WindowTitleHint
-                | Qt.WindowType.WindowCloseButtonHint
-                | Qt.WindowType.WindowMinimizeButtonHint
-                | Qt.WindowType.WindowMaximizeButtonHint
+                | Qt.WindowType.FramelessWindowHint
             )
             full_screen = QApplication.primaryScreen().geometry()
-            self._initial_geometry = full_screen
             self.parent.setGeometry(full_screen)
             self.parent.show()
+            QApplication.processEvents()
+            self._apply_macos_fullscreen()
         else:
+            _screen = get_screen_geometry()
             self.parent.setGeometry(
-                screen["x"], screen["y"], screen["width"], screen["height"])
+                _screen["x"], _screen["y"], _screen["width"], _screen["height"])
             self.parent.showMaximized()
 
         # Layout measurements
@@ -218,6 +226,109 @@ class VideoAnnotator(QFrame):
             self._on_state_item_selected)
         self.point_annotations_tree.itemSelectionChanged.connect(
             self._on_point_item_selected)
+
+    # ------------------------------------------------------------------
+    # macOS fullscreen helper
+    # ------------------------------------------------------------------
+
+    def _apply_macos_fullscreen(self):
+        """Hide the dock and menubar using native macOS APIs.
+
+        Uses CFUNCTYPE to create properly-typed function pointers for
+        objc_msgSend, which is required for correct ARM64 calling
+        conventions (mutating argtypes on the shared symbol does not
+        work reliably on Apple Silicon).
+        """
+        try:
+            import ctypes.util as _cu
+
+            objc_path = _cu.find_library("objc")
+            if not objc_path:
+                return
+            _objc = ctypes.cdll.LoadLibrary(objc_path)
+
+            _objc.objc_getClass.restype = ctypes.c_void_p
+            _objc.objc_getClass.argtypes = [ctypes.c_char_p]
+            _objc.sel_registerName.restype = ctypes.c_void_p
+            _objc.sel_registerName.argtypes = [ctypes.c_char_p]
+
+            # Typed function pointers for ARM64-safe objc_msgSend calls
+            send = ctypes.CFUNCTYPE(
+                ctypes.c_void_p,
+                ctypes.c_void_p, ctypes.c_void_p,
+            )(("objc_msgSend", _objc))
+
+            send_long = ctypes.CFUNCTYPE(
+                ctypes.c_void_p,
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long,
+            )(("objc_msgSend", _objc))
+
+            send_ulong = ctypes.CFUNCTYPE(
+                ctypes.c_void_p,
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong,
+            )(("objc_msgSend", _objc))
+
+            # --- NSWindow: raise level above dock & menubar ---
+            view_ptr = int(self.parent.winId())
+            sel_window = _objc.sel_registerName(b"window")
+            ns_window = send(view_ptr, sel_window)
+            if ns_window:
+                # Borderless style mask (NSWindowStyleMaskBorderless = 0)
+                sel_setStyleMask = _objc.sel_registerName(b"setStyleMask:")
+                send_ulong(ns_window, sel_setStyleMask, 0)
+
+                # Window level above menubar (kCGMainMenuWindowLevel=24)
+                sel_setLevel = _objc.sel_registerName(b"setLevel:")
+                send_long(ns_window, sel_setLevel, 25)
+
+            # --- NSApplication: auto-hide dock & menubar ---
+            NSApp_cls = _objc.objc_getClass(b"NSApplication")
+            sel_shared = _objc.sel_registerName(b"sharedApplication")
+            ns_app = send(NSApp_cls, sel_shared)
+            if ns_app:
+                sel_setPresentation = _objc.sel_registerName(
+                    b"setPresentationOptions:")
+                # NSApplicationPresentationAutoHideDock      = 1 << 0
+                # NSApplicationPresentationAutoHideMenuBar   = 1 << 2
+                send_ulong(ns_app, sel_setPresentation, (1 << 0) | (1 << 2))
+        except Exception as exc:
+            print(f"macOS fullscreen setup failed: {exc}")
+
+    def _restore_macos_presentation(self):
+        """Restore default dock/menubar presentation on exit."""
+        try:
+            import ctypes.util as _cu
+
+            objc_path = _cu.find_library("objc")
+            if not objc_path:
+                return
+            _objc = ctypes.cdll.LoadLibrary(objc_path)
+
+            _objc.objc_getClass.restype = ctypes.c_void_p
+            _objc.objc_getClass.argtypes = [ctypes.c_char_p]
+            _objc.sel_registerName.restype = ctypes.c_void_p
+            _objc.sel_registerName.argtypes = [ctypes.c_char_p]
+
+            send = ctypes.CFUNCTYPE(
+                ctypes.c_void_p,
+                ctypes.c_void_p, ctypes.c_void_p,
+            )(("objc_msgSend", _objc))
+
+            send_ulong = ctypes.CFUNCTYPE(
+                ctypes.c_void_p,
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong,
+            )(("objc_msgSend", _objc))
+
+            NSApp_cls = _objc.objc_getClass(b"NSApplication")
+            sel_shared = _objc.sel_registerName(b"sharedApplication")
+            ns_app = send(NSApp_cls, sel_shared)
+            if ns_app:
+                sel_setPresentation = _objc.sel_registerName(
+                    b"setPresentationOptions:")
+                # NSApplicationPresentationDefault = 0
+                send_ulong(ns_app, sel_setPresentation, 0)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Layout
@@ -323,7 +434,7 @@ class VideoAnnotator(QFrame):
 
     def _create_progress_bar(self):
         self.progress_frame = QFrame()
-        self.progress_frame.setStyleSheet("background-color: black;")
+        self.progress_frame.setStyleSheet("background-color: black;")  # Video area stays black
         self.progress_frame.setFixedSize(
             self.progress_bar_width, self.progress_bar_height + 20)
 
@@ -333,8 +444,7 @@ class VideoAnnotator(QFrame):
 
         self.coding_info_label = QLabel()
         self.coding_info_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.coding_info_label.setStyleSheet(
-            "color: white; font-size: 10px; padding-right: 10px; margin: 0;")
+        self.coding_info_label.setStyleSheet(theme.coding_info_label_style())
         self.coding_info_label.setFixedHeight(20)
         frame_layout.addWidget(self.coding_info_label)
 
@@ -485,7 +595,10 @@ class VideoAnnotator(QFrame):
         QTimer.singleShot(500, self._show_floating_controls)
 
     def _show_floating_controls(self):
+        from config_manager import ConfigManager
         create_toggle_buttons(self)
+        if not ConfigManager().get_show_floating_controls():
+            self._set_floating_visible(False)
         QTimer.singleShot(100, self._scroll_annotations_to_bottom)
 
     # ------------------------------------------------------------------
@@ -502,52 +615,17 @@ class VideoAnnotator(QFrame):
         self.annotation_frame = QFrame(self)
         self.annotation_frame.setFrameStyle(
             QFrame.Shape.Box | QFrame.Shadow.Raised)
-        self.annotation_frame.setStyleSheet("""
-            QFrame {
-                background-color: #2b2b2b;
-                border: 1px solid #3a3a3a;
-                border-radius: 4px;
-            }""")
+        self.annotation_frame.setStyleSheet(theme.panel_frame_stylesheet())
         self.right_layout.addWidget(self.annotation_frame)
 
         main_layout = QVBoxLayout(self.annotation_frame)
         main_layout.setContentsMargins(3, 3, 3, 3)
         main_layout.setSpacing(3)
 
-        tree_style = (
-            "QTreeWidget {"
-            "  background-color: #333333; border: 1px solid #444444;"
-            "  border-radius: 4px; color: #ffffff; font-size: " + tree_font + ";}"
-            "QTreeWidget::item { height: 18px; padding: 0px; margin: 0px;"
-            "  font-size: " + tree_font + ";}"
-            "QTreeWidget::item:selected { background-color: #808080; color: white; }"
-            "QTreeWidget::item:hover { background-color: #404040; }"
-            "QHeaderView::section {"
-            "  background-color: #2b2b2b; color: #ffffff; font-weight: bold;"
-            "  font-size: " + heading_font + "; padding: 2px;"
-            "  border: none; border-bottom: 1px solid #444444; }"
-            "QScrollBar:vertical { border: none; background: #2b2b2b; width: 10px; }"
-            "QScrollBar::handle:vertical { background: #666666; min-height: 20px;"
-            "  border-radius: 5px; }"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
-        )
-        label_style = ("color: white; font-weight: bold; font-size: "
-                        + heading_font + ";")
-        btn_style = (
-            "QPushButton { background-color: #808080; color: white;"
-            "  border: none; border-radius: 4px; padding: 3px 8px;"
-            "  font-size: " + heading_font + ";}"
-            "QPushButton:hover { background-color: #1084D9; }"
-            "QPushButton:pressed { background-color: #006CC1; }"
-        )
-        big_btn_style = (
-            "QPushButton { background-color: #808080; color: white;"
-            "  border: none; border-radius: 4px; padding: 4px;"
-            "  min-width: 100px; min-height: 40px;"
-            "  font-size: " + heading_font + ";}"
-            "QPushButton:hover { background-color: #1084D9; }"
-            "QPushButton:pressed { background-color: #006CC1; }"
-        )
+        tree_style = theme.tree_stylesheet(heading_font)
+        label_style = theme.heading_label_style(heading_font)
+        btn_style = theme.button_stylesheet(heading_font)
+        big_btn_style = theme.button_large_stylesheet(heading_font)
 
         def _make_tree(headers, widths, height):
             frame = QFrame()
@@ -564,13 +642,29 @@ class VideoAnnotator(QFrame):
             tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             return frame, lay, tree
 
+        # Track themed widgets for live re-theming
+        self._heading_labels = []
+        self._header_widgets = []
+        self._panel_buttons = []
+        self._big_buttons = []
+
         # State behaviours
         sf, sl, self.state_behaviors_tree = _make_tree(
             ["Name", "Key", "ME Group"], [0.5, 0.15, 0.25], pane_h)
-        sl.addWidget(QLabel("State Behaviors").setStyleSheet(label_style) or
-                     QLabel("State Behaviors"))
+        sb_header = QWidget()
+        sb_header.setStyleSheet(theme.header_widget_stylesheet())
+        self._header_widgets.append(sb_header)
+        sb_hlay = QHBoxLayout(sb_header); sb_hlay.setContentsMargins(0, 0, 0, 0); sb_hlay.setSpacing(3)
         lbl = QLabel("State Behaviors"); lbl.setStyleSheet(label_style)
-        sl.insertWidget(0, lbl)
+        self._heading_labels.append(lbl)
+        sb_hlay.addWidget(lbl)
+        sb_hlay.addStretch()
+        self._gear_btn = QPushButton("\u2699"); self._gear_btn.setStyleSheet(btn_style)
+        self._gear_btn.setFixedSize(28, 22)
+        self._gear_btn.clicked.connect(self._show_settings_menu)
+        self._panel_buttons.append(self._gear_btn)
+        sb_hlay.addWidget(self._gear_btn)
+        sl.insertWidget(0, sb_header)
         sl.addWidget(self.state_behaviors_tree)
         main_layout.addWidget(sf)
 
@@ -578,6 +672,7 @@ class VideoAnnotator(QFrame):
         pf, pl, self.point_behaviors_tree = _make_tree(
             ["Name", "Key"], [0.6, 0.3], pane_h)
         lbl2 = QLabel("Point Behaviors"); lbl2.setStyleSheet(label_style)
+        self._heading_labels.append(lbl2)
         pl.insertWidget(0, lbl2)
         pl.addWidget(self.point_behaviors_tree)
         main_layout.addWidget(pf)
@@ -586,12 +681,16 @@ class VideoAnnotator(QFrame):
         saf, sal, self.state_annotations_tree = _make_tree(
             ["Name", "Start", "End"], [0.33, 0.25, 0.25], pane_h)
         sa_header = QWidget()
+        sa_header.setStyleSheet(theme.header_widget_stylesheet())
+        self._header_widgets.append(sa_header)
         hlay = QHBoxLayout(sa_header); hlay.setContentsMargins(0, 0, 0, 0); hlay.setSpacing(3)
         lbl3 = QLabel("State Annotations"); lbl3.setStyleSheet(label_style)
+        self._heading_labels.append(lbl3)
         hlay.addWidget(lbl3)
         sort_btn = QPushButton("Sort"); sort_btn.setStyleSheet(btn_style)
         sort_btn.setFixedWidth(50); sort_btn.setFixedHeight(22)
         sort_btn.clicked.connect(self._sort_state_annotations)
+        self._panel_buttons.append(sort_btn)
         hlay.addStretch(); hlay.addWidget(sort_btn)
         sal.insertWidget(0, sa_header)
         self.state_annotations_tree.setContextMenuPolicy(
@@ -605,12 +704,16 @@ class VideoAnnotator(QFrame):
         paf, pal, self.point_annotations_tree = _make_tree(
             ["Name", "Time"], [0.4, 0.5], pane_h)
         pa_header = QWidget()
+        pa_header.setStyleSheet(theme.header_widget_stylesheet())
+        self._header_widgets.append(pa_header)
         hlay2 = QHBoxLayout(pa_header); hlay2.setContentsMargins(0, 0, 0, 0); hlay2.setSpacing(8)
         lbl4 = QLabel("Point Annotations"); lbl4.setStyleSheet(label_style)
+        self._heading_labels.append(lbl4)
         hlay2.addWidget(lbl4)
         sort_btn2 = QPushButton("Sort"); sort_btn2.setStyleSheet(btn_style)
         sort_btn2.setFixedWidth(50); sort_btn2.setFixedHeight(22)
         sort_btn2.clicked.connect(self._sort_point_annotations)
+        self._panel_buttons.append(sort_btn2)
         hlay2.addStretch(); hlay2.addWidget(sort_btn2)
         pal.insertWidget(0, pa_header)
         self.point_annotations_tree.setContextMenuPolicy(
@@ -634,6 +737,7 @@ class VideoAnnotator(QFrame):
             b = QPushButton(text)
             b.setStyleSheet(big_btn_style)
             b.clicked.connect(callback)
+            self._big_buttons.append(b)
             btn_lay.addWidget(b)
 
         main_layout.addWidget(btn_frame)
@@ -676,8 +780,8 @@ class VideoAnnotator(QFrame):
     def _populate_behavior_trees(self):
         self.state_behaviors_tree.clear()
         self.point_behaviors_tree.clear()
-        active_color = QColor("darkorange")
-        highlight_color = QColor("dodgerblue")
+        active_color = theme.qcolor("active_color")
+        highlight_color = theme.qcolor("highlight_color")
 
         for name, key, btype, me_group in self.store.behaviors:
             if btype == "state":
@@ -701,6 +805,117 @@ class VideoAnnotator(QFrame):
                     for i in range(tree.topLevelItemCount())]:
             for c in range(item.columnCount()):
                 item.setBackground(c, QColor("transparent"))
+
+    # ------------------------------------------------------------------
+    # Settings menu
+    # ------------------------------------------------------------------
+
+    def _show_settings_menu(self):
+        from config_manager import ConfigManager
+
+        menu = QMenu(self)
+        menu.setStyleSheet(theme.menu_stylesheet())
+
+        theme_menu = menu.addMenu("Theme")
+        current = theme.current_theme()
+        for name in ("system", "dark", "light"):
+            action = theme_menu.addAction(name.capitalize())
+            action.setCheckable(True)
+            action.setChecked(name == current)
+            action.triggered.connect(
+                lambda checked, n=name: self._apply_theme(n))
+
+        cfg = ConfigManager()
+        float_action = menu.addAction("Show Floating Controls")
+        float_action.setCheckable(True)
+        float_action.setChecked(cfg.get_show_floating_controls())
+        float_action.triggered.connect(self._toggle_floating_controls_setting)
+
+        btn = self.sender()
+        if btn:
+            menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _toggle_floating_controls_setting(self, checked):
+        from config_manager import ConfigManager
+        ConfigManager().update_show_floating_controls(checked)
+        self._set_floating_visible(checked)
+
+    def _apply_theme(self, name):
+        from config_manager import ConfigManager
+        theme.load_theme(name)
+        cfg = ConfigManager()
+        cfg.update_theme(name)
+
+        heading_font = "12px"
+
+        # Re-apply global stylesheet
+        app = QApplication.instance()
+        app.setStyleSheet(theme.app_stylesheet())
+
+        # Re-apply main window background
+        self.parent.setStyleSheet(f"background-color: {theme.color('window_bg')};")
+
+        # Re-apply annotation panel frame
+        self.annotation_frame.setStyleSheet(theme.panel_frame_stylesheet())
+
+        # Re-apply tree styles
+        tree_style = theme.tree_stylesheet(heading_font)
+        for tree in (self.state_behaviors_tree, self.point_behaviors_tree,
+                     self.state_annotations_tree, self.point_annotations_tree):
+            tree.setStyleSheet(tree_style)
+
+        # Re-apply heading labels
+        label_style = theme.heading_label_style(heading_font)
+        for lbl in self._heading_labels:
+            lbl.setStyleSheet(label_style)
+
+        # Re-apply header widget backgrounds
+        header_bg = theme.header_widget_stylesheet()
+        for hw in self._header_widgets:
+            hw.setStyleSheet(header_bg)
+
+        # Re-apply small panel buttons (Sort, gear)
+        btn_style = theme.button_stylesheet(heading_font)
+        for btn in self._panel_buttons:
+            btn.setStyleSheet(btn_style)
+
+        # Re-apply big bottom buttons
+        big_btn_style = theme.button_large_stylesheet(heading_font)
+        for btn in self._big_buttons:
+            btn.setStyleSheet(big_btn_style)
+
+        # Re-apply coding info label
+        self.coding_info_label.setStyleSheet(theme.coding_info_label_style())
+
+        # Refresh QPainter-based widgets
+        self.progress_bar.update()
+
+        # Refresh floating toggle buttons
+        for attr in ("behavior_toggle_button", "controls_button"):
+            btn = getattr(self, attr, None)
+            if btn:
+                try:
+                    btn.setStyleSheet(theme.toggle_btn_stylesheet())
+                except RuntimeError:
+                    pass
+        if hasattr(self, "zoom_toggle_button") and self.zoom_toggle_button:
+            try:
+                if self.zoom_active:
+                    self.zoom_toggle_button.setStyleSheet(theme.zoom_active_stylesheet())
+                else:
+                    self.zoom_toggle_button.setStyleSheet(theme.toggle_btn_stylesheet())
+            except RuntimeError:
+                pass
+
+        # Recreate floating controls if open (to pick up new styles)
+        if hasattr(self, "floating_controls_window") and self.floating_controls_window:
+            from floating_controls import toggle_floating_controls
+            toggle_floating_controls(self)
+            toggle_floating_controls(self)
+        if hasattr(self, "behavior_buttons_window") and self.behavior_buttons_window:
+            from floating_controls import toggle_behavior_buttons
+            toggle_behavior_buttons(self)
+            toggle_behavior_buttons(self)
 
     # ------------------------------------------------------------------
     # Sorting
@@ -826,24 +1041,11 @@ class VideoAnnotator(QFrame):
                     is_minimized = bool(
                         state & Qt.WindowState.WindowMinimized
                     )
-                    is_maximized = bool(
-                        state & Qt.WindowState.WindowMaximized
-                    )
-                    if is_maximized and hasattr(self, "_initial_geometry"):
-                        # Green button was clicked: snap back to initial
-                        # full-screen geometry instead of entering zoom mode.
-                        self.parent.setWindowState(Qt.WindowState.WindowNoState)
-                        self.parent.setGeometry(self._initial_geometry)
-                        QTimer.singleShot(50, self._reposition_floating_windows)
-                        QTimer.singleShot(100, self._raise_floating_windows)
-                    elif is_minimized:
+                    if is_minimized:
                         self._set_floating_visible(False)
                     else:
                         app = QApplication.instance()
                         active = app.activeWindow()
-                        # Show if our app is active (main window or a
-                        # floating window) or during transient None state
-                        # (e.g. mid-restore from minimize).
                         is_ours = (
                             active is None
                             or active == self.parent
@@ -1210,9 +1412,7 @@ class VideoAnnotator(QFrame):
         self.selected_index = tree.indexOfTopLevelItem(item)
 
         menu = QMenu(self)
-        menu.setStyleSheet(
-            "QMenu::item { padding: 4px 25px; }"
-            "QMenu::item:selected { background-color: #808080; color: white; }")
+        menu.setStyleSheet(theme.menu_stylesheet())
         menu.addAction("Edit", self.edit_annotation)
         menu.addAction("Add Note", lambda: show_note_dialog(self))
         menu.addAction("View Details", lambda: show_annotation_details(self))
@@ -1446,42 +1646,6 @@ class VideoAnnotator(QFrame):
                 "whole_video": True,
             }
 
-            if has_bounds:
-                from PySide6.QtWidgets import QDialog as _D
-                dlg = _D(self.parent)
-                dlg.setWindowTitle("Select Visualization Range")
-                dlg.setWindowFlags(
-                    dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-                dlg.setModal(True)
-                lay = QVBoxLayout(dlg)
-
-                parts = []
-                if coding_start > 0:
-                    parts.append(f"Start: {format_time_human(coding_start)}")
-                if coding_end is not None:
-                    parts.append(f"End: {format_time_human(coding_end)}")
-                lay.addWidget(QLabel(
-                    f"Coding bounds detected:\n{', '.join(parts)}\n\n"
-                    "What would you like to visualize?"))
-
-                blay = QHBoxLayout()
-                blay.addStretch(1)
-                for text, code in [("Whole Video", 1),
-                                   ("Coded Segment Only", 2),
-                                   ("Cancel", 0)]:
-                    b = QPushButton(text)
-                    b.clicked.connect(lambda _, c=code: dlg.done(c))
-                    blay.addWidget(b)
-                    blay.addSpacing(10)
-                blay.addStretch(1)
-                lay.addLayout(blay)
-
-                result = dlg.exec()
-                if result == 0:
-                    self.dialog_open = False
-                    return
-                bounds["whole_video"] = (result == 1)
-
             show_visualization_dialog(
                 parent=self.parent,
                 video_name=self.video_name,
@@ -1637,6 +1801,7 @@ class VideoAnnotator(QFrame):
 
         self.dialog_open = True
         dlg = QMessageBox(self.parent)
+        dlg.setStyleSheet(theme.dialog_stylesheet())
         dlg.setIcon(QMessageBox.Icon.Warning)
         dlg.setWindowTitle("File Access Error")
         dlg.setText(message or
@@ -1654,6 +1819,9 @@ class VideoAnnotator(QFrame):
 
     def on_closing(self):
         try:
+            if sys.platform == "darwin":
+                self._restore_macos_presentation()
+
             if hasattr(self, "progress_timer") and self.progress_timer:
                 self.progress_timer.stop()
             QTimer.singleShot(0, lambda: None)
@@ -1691,6 +1859,9 @@ class VideoAnnotator(QFrame):
 
         self._returning = True
         try:
+            if sys.platform == "darwin":
+                self._restore_macos_presentation()
+
             if hasattr(self, "player") and self.player:
                 try:
                     self.save_session_state()

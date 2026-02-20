@@ -5,11 +5,12 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QListWidget, QFrame, QMessageBox, QSplitter, QWidget, QInputDialog,
-    QApplication, QFileDialog,
+    QApplication, QFileDialog, QMenu,
 )
 from PySide6.QtCore import Qt, QTimer
 
 from display_utils import get_screen_geometry, center_window
+import theme
 
 
 class FilesManager(QDialog):
@@ -32,6 +33,7 @@ class FilesManager(QDialog):
         self._screen = get_screen_geometry()
 
         self.setWindowTitle("LaserTAG - Select Output Directory and Video File")
+        self.setStyleSheet(theme.dialog_stylesheet())
 
         if self.parent():
             self.parent().showMaximized()
@@ -124,7 +126,18 @@ class FilesManager(QDialog):
         self._populate_dir_list(self.initial_output_dir)
 
     def _setup_video_panel(self, layout):
-        layout.addWidget(QLabel("Select Video File:"))
+        # Top row: label + settings gear pushed to the right
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.addWidget(QLabel("Select Video File:"))
+        top_row.addStretch()
+
+        settings_btn = QPushButton("\u2699  Settings")
+        settings_btn.setToolTip("Settings")
+        settings_btn.clicked.connect(self._show_settings_menu)
+        top_row.addWidget(settings_btn)
+
+        layout.addLayout(top_row)
 
         nav_frame = QFrame()
         nav = QHBoxLayout(nav_frame)
@@ -431,6 +444,49 @@ class FilesManager(QDialog):
             QMessageBox.critical(
                 self, "Error",
                 f"Failed to open Summary Statistics Manager: {exc}")
+
+    # ------------------------------------------------------------------
+    # Settings menu
+    # ------------------------------------------------------------------
+
+    def _show_settings_menu(self):
+        from config_manager import ConfigManager
+
+        menu = QMenu(self)
+        menu.setStyleSheet(theme.menu_stylesheet())
+
+        theme_menu = menu.addMenu("Theme")
+        current = theme.current_theme()
+        for name in ("system", "dark", "light"):
+            action = theme_menu.addAction(name.capitalize())
+            action.setCheckable(True)
+            action.setChecked(name == current)
+            action.triggered.connect(
+                lambda checked, n=name: self._apply_theme(n))
+
+        cfg = ConfigManager()
+        float_action = menu.addAction("Show Floating Controls")
+        float_action.setCheckable(True)
+        float_action.setChecked(cfg.get_show_floating_controls())
+        float_action.triggered.connect(
+            lambda checked: cfg.update_show_floating_controls(checked))
+
+        btn = self.sender()
+        if btn:
+            menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _apply_theme(self, name):
+        from config_manager import ConfigManager
+        theme.load_theme(name)
+        ConfigManager().update_theme(name)
+
+        app = QApplication.instance()
+        app.setStyleSheet(theme.app_stylesheet())
+
+        self.setStyleSheet(theme.dialog_stylesheet())
+
+        if self.parent():
+            self.parent().setStyleSheet(theme.dialog_stylesheet())
 
     # ------------------------------------------------------------------
     # Key handling

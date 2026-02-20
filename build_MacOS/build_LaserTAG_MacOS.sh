@@ -24,6 +24,9 @@ CODBASE_DIR="../CodeBase"
 LIBS_DIR="./libs"
 OUTPUT_DIR="./output"
 
+export COPYFILE_DISABLE=1
+export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
+
 # ==================================================================
 # Verify directory structure
 # ==================================================================
@@ -119,6 +122,8 @@ cp -R "$LIBS_DIR" "$OUTPUT_DIR/libs"
 echo ""
 echo "Compiling with Nuitka..."
 cd "$OUTPUT_DIR"
+
+find . -name '._*' -delete
 
 python -m nuitka \
     --standalone \

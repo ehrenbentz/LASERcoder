@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt
 
 from display_utils import get_screen_geometry, center_window
 from summary_statistics import generate_summary_statistics, combine_summaries
+import theme
 
 
 class SummaryStatisticsManager(QDialog):
@@ -25,6 +26,7 @@ class SummaryStatisticsManager(QDialog):
         self.current_dir = self.initial_dir
 
         self.setWindowTitle("LaserTAG - Generate Summary Statistics")
+        self.setStyleSheet(theme.dialog_stylesheet())
 
         screen = get_screen_geometry()
         self._display_width = screen["width"]
