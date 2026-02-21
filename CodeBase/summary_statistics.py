@@ -60,7 +60,7 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
     # --- group rows by behaviour name ------------------------------------
     rows_by_name = {}
     for row in rows:
-        name = row.get("Name", "").strip()
+        name = row.get("Behavior", "").strip()
         if name:
             rows_by_name.setdefault(name, []).append(row)
 

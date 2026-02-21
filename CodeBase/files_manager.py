@@ -132,7 +132,7 @@ class FilesManager(QDialog):
         top_row.addWidget(QLabel("Select Video File:"))
         top_row.addStretch()
 
-        settings_btn = QPushButton("\u2699  Settings")
+        settings_btn = QPushButton("Settings")
         settings_btn.setToolTip("Settings")
         settings_btn.clicked.connect(self._show_settings_menu)
         top_row.addWidget(settings_btn)

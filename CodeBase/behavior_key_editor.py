@@ -118,7 +118,7 @@ class BehaviorKeyEditor(QDialog):
         layout.setSpacing(5)
 
         for col, (text, width) in enumerate([
-            ("Name", 300), ("Key", 75), ("Type", None), ("ME Group", 120),
+            ("Behavior", 300), ("Key", 75), ("Type", None), ("ME Group", 120),
         ]):
             lbl = QLabel(text)
             lbl.setStyleSheet("font-weight: bold;")

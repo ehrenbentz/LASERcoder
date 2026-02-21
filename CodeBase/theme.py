@@ -29,7 +29,7 @@ _DARK = {
     "button_bg": "#808080",
     "button_hover": "#1084D9",
     "button_pressed": "#006CC1",
-    "button_text": "#ffffff",
+    "button_text": "#000000",
     # Tree widget
     "tree_selected": "#808080",
     "tree_hover": "#404040",

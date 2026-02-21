@@ -14,23 +14,23 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QBrush, QFont,
 import theme
 
 # ---------------------------------------------------------------------------
-# Color palette — golden-angle spacing for distinct per-behavior hues
+# Color palette: golden-angle spacing for distinct per-behavior hues
 # ---------------------------------------------------------------------------
-_GOLDEN_ANGLE = 137.508
+_HUE_ANGLE = 30
+_HUE_OFFSET   = 30.0
 
 def _generate_default_colors(behavior_names):
-    """Return {name: QColor} with evenly-spaced hues via golden-angle."""
     cmap = {}
     for i, name in enumerate(sorted(behavior_names)):
-        hue = (i * _GOLDEN_ANGLE) % 360
+        hue = (_HUE_OFFSET + i * _HUE_ANGLE) % 360
         r, g, b = colorsys.hls_to_rgb(hue / 360.0, 0.55, 0.65)
         cmap[name] = QColor(int(r * 255), int(g * 255), int(b * 255))
     return cmap
 
 def _state_fill(base_color):
     c = QColor(base_color)
-    c.setAlpha(180)
-    return c.lighter(125)
+    c.setAlpha(225)
+    return c.lighter(100)
 
 def _state_border(base_color):
     return QColor(base_color).darker(140)
@@ -54,7 +54,7 @@ def _make_color_icon(color, size=16):
 
 
 class AnnotationsVisualizer(QFrame):
-    """Publication-quality timeline visualization widget for annotations."""
+    """Timeline visualization widget for annotations."""
 
     def __init__(self, parent, video_name, state_events, point_events,
                  video_duration, parse_time_func, bounds=None):
@@ -105,18 +105,18 @@ class AnnotationsVisualizer(QFrame):
         # Build color map from ALL behaviors {name: QColor}
         all_behaviors = set()
         for e in self._all_state_events:
-            if e['Name']:
-                all_behaviors.add(e['Name'])
+            if e['Behavior']:
+                all_behaviors.add(e['Behavior'])
         for e in self._all_point_events:
-            if e['Name']:
-                all_behaviors.add(e['Name'])
+            if e['Behavior']:
+                all_behaviors.add(e['Behavior'])
         self._color_map = _generate_default_colors(all_behaviors)
 
         # Canonical order lists — all known behaviors in each type
         self._state_order = sorted(
-            {e['Name'] for e in self._all_state_events if e['Name']})
+            {e['Behavior'] for e in self._all_state_events if e['Behavior']})
         self._point_order = sorted(
-            {e['Name'] for e in self._all_point_events if e['Name']})
+            {e['Behavior'] for e in self._all_point_events if e['Behavior']})
 
         # Compute visible behavior lists and height
         self.state_behaviors, self.point_behaviors = self._unique_behaviors()
@@ -179,8 +179,8 @@ class AnnotationsVisualizer(QFrame):
 
     def _unique_behaviors(self):
         """Return visible behaviors in custom order."""
-        visible_state = {e['Name'] for e in self.state_events if e['Name']}
-        visible_point = {e['Name'] for e in self.point_events if e['Name']}
+        visible_state = {e['Behavior'] for e in self.state_events if e['Behavior']}
+        visible_point = {e['Behavior'] for e in self.point_events if e['Behavior']}
         state = [n for n in self._state_order if n in visible_state]
         point = [n for n in self._point_order if n in visible_point]
         return state, point
@@ -342,7 +342,7 @@ class AnnotationsVisualizer(QFrame):
                 border_c = _state_border(base)
 
                 for ev in self.state_events:
-                    if ev['Name'] != behavior or ev['start_time'] is None:
+                    if ev['Behavior'] != behavior or ev['start_time'] is None:
                         continue
                     sx = self._time_to_x(ev['start_time'], axis_width)
                     if ev['end_time'] is None:
@@ -403,7 +403,7 @@ class AnnotationsVisualizer(QFrame):
                 pc = _point_marker(base)
 
                 for ev in self.point_events:
-                    if ev['Name'] != behavior:
+                    if ev['Behavior'] != behavior:
                         continue
                     if 'raw_time' in ev and ev['raw_time'] is not None:
                         tv = ev['raw_time']
@@ -532,7 +532,7 @@ class AnnotationsVisualizer(QFrame):
 
 def show_visualization_dialog(parent, video_name, state_events, point_events,
                               video_duration, parse_time_func, center_window_func,
-                              output_dir, bounds=None):
+                              output_dir, bounds=None, store=None):
     """Create and show the visualization dialog with behavior selection panel."""
     try:
         viz_dialog = QDialog(parent)
@@ -570,6 +570,13 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             video_duration, parse_time_func, bounds=bounds,
         )
 
+        # Load any previously saved behavior colors
+        if store is not None:
+            saved_colors = store.load_viz_colors()
+            for bname, hex_color in saved_colors.items():
+                if bname in timeline_widget._color_map:
+                    timeline_widget._color_map[bname] = QColor(hex_color)
+
         # Canonical order from the visualizer
         state_order = list(timeline_widget._state_order)
         point_order = list(timeline_widget._point_order)
@@ -597,11 +604,16 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             "QPushButton:hover { border: 1px solid white; }"
         )
 
+        # Load saved unchecked behaviors
+        saved_unchecked = set()
+        if store is not None:
+            saved_unchecked = set(store.load_viz_unchecked())
+
         # Create widgets for all behaviors (state + point)
         all_names = state_order + point_order
         for name in all_names:
             cb = QCheckBox(name)
-            cb.setChecked(True)
+            cb.setChecked(name not in saved_unchecked)
             checkboxes[name] = cb
 
             color_btn = QPushButton()
@@ -710,13 +722,19 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
         select_layout.addWidget(scroll, 1)
 
         # ---- Options below the behavior list ----
+        saved_options = {}
+        if store is not None:
+            saved_options = store.load_viz_options()
+
         show_title_cb = QCheckBox("Show title")
-        show_title_cb.setChecked(True)
+        show_title_cb.setChecked(saved_options.get("show_title", True))
         select_layout.addWidget(show_title_cb)
+        timeline_widget.show_title = show_title_cb.isChecked()
 
         show_headers_cb = QCheckBox("Show section headers")
-        show_headers_cb.setChecked(True)
+        show_headers_cb.setChecked(saved_options.get("show_headers", True))
         select_layout.addWidget(show_headers_cb)
+        timeline_widget.show_section_headers = show_headers_cb.isChecked()
 
         has_coding_bounds = bounds and bounds.get("has_bounds", False)
         segment_cb = None
@@ -724,15 +742,25 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
         if has_coding_bounds:
             segment_cb = QCheckBox("Coded segment only")
             segment_cb.setToolTip("Show only the coded segment instead of the whole video")
-            segment_cb.setChecked(False)
+            segment_cb.setChecked(saved_options.get("coded_segment", False))
             select_layout.addWidget(segment_cb)
 
             zero_base_cb = QCheckBox("Start time at 0:00")
             zero_base_cb.setToolTip(
                 "Subtract coding start so 0:00 aligns with the beginning of the coded segment")
-            zero_base_cb.setChecked(False)
-            zero_base_cb.setEnabled(False)
+            saved_zero = saved_options.get("zero_base", False)
+            zero_base_cb.setChecked(saved_zero and segment_cb.isChecked())
+            zero_base_cb.setEnabled(segment_cb.isChecked())
             select_layout.addWidget(zero_base_cb)
+
+            # Apply saved segment mode to timeline
+            if segment_cb.isChecked():
+                timeline_widget.set_segment_mode(True)
+            if zero_base_cb.isChecked():
+                timeline_widget.zero_base_time = True
+
+        timeline_widget._recalc_height()
+        timeline_widget.update()
 
         content_layout.addWidget(select_group)
 
@@ -746,14 +774,22 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
 
         # ---- Interaction logic ----
         all_checked = [True]
+        dialog_alive = [True]
 
         def on_checkbox_changed():
+            if not dialog_alive[0]:
+                return
             checked = {n for n, cb in checkboxes.items() if cb.isChecked()}
             filt_state = [e for e in timeline_widget._raw_state_events
-                          if e.get('Name') in checked]
+                          if e.get('Behavior') in checked]
             filt_point = [e for e in timeline_widget._raw_point_events
-                          if e.get('Name') in checked]
+                          if e.get('Behavior') in checked]
             timeline_widget.update_data(filt_state, filt_point)
+            # Persist unchecked selections
+            if store is not None:
+                unchecked = [n for n, cb in checkboxes.items()
+                             if not cb.isChecked()]
+                store.save_viz_unchecked(unchecked)
 
         def toggle_all():
             if all_checked[0]:
@@ -766,6 +802,24 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                     cb.setChecked(True)
                 toggle_btn.setText("Deselect All")
                 all_checked[0] = True
+            # on_checkbox_changed fires via stateChanged, but update toggle state
+            if store is not None:
+                unchecked = [n for n, cb in checkboxes.items()
+                             if not cb.isChecked()]
+                store.save_viz_unchecked(unchecked)
+
+        def _save_options():
+            if not dialog_alive[0] or store is None:
+                return
+            opts = {
+                "show_title": show_title_cb.isChecked(),
+                "show_headers": show_headers_cb.isChecked(),
+            }
+            if segment_cb is not None:
+                opts["coded_segment"] = segment_cb.isChecked()
+            if zero_base_cb is not None:
+                opts["zero_base"] = zero_base_cb.isChecked()
+            store.save_viz_options(opts)
 
         def on_segment_changed(state):
             coded_only = bool(state)
@@ -775,20 +829,24 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                 zero_base_cb.setEnabled(coded_only)
                 if not coded_only:
                     zero_base_cb.setChecked(False)
+            _save_options()
 
         def on_zero_base_changed(state):
             timeline_widget.zero_base_time = bool(state)
             timeline_widget.update()
+            _save_options()
 
         def on_show_title_changed(state):
             timeline_widget.show_title = bool(state)
             timeline_widget._recalc_height()
             timeline_widget.update()
+            _save_options()
 
         def on_show_headers_changed(state):
             timeline_widget.show_section_headers = bool(state)
             timeline_widget._recalc_height()
             timeline_widget.update()
+            _save_options()
 
         def make_color_callback(behavior_name):
             def pick_color():
@@ -800,6 +858,12 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                     timeline_widget.set_behavior_color(behavior_name, chosen)
                     color_buttons[behavior_name].setIcon(
                         _make_color_icon(chosen))
+                    # Persist custom colors to session state
+                    if store is not None:
+                        custom = {}
+                        for n, c in timeline_widget._color_map.items():
+                            custom[n] = c.name()
+                        store.save_viz_colors(custom)
             return pick_color
 
         for cb in checkboxes.values():
@@ -814,6 +878,14 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
 
         for name, btn in color_buttons.items():
             btn.clicked.connect(make_color_callback(name))
+
+        # Apply initial checkbox filter if any were saved as unchecked
+        if saved_unchecked:
+            on_checkbox_changed()
+            # Update toggle button text if not all are checked
+            if any(not cb.isChecked() for cb in checkboxes.values()):
+                toggle_btn.setText("Select All")
+                all_checked[0] = False
 
         # ---- Export bar ----
         export_frame = QFrame()
@@ -879,6 +951,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
 
         export_button.clicked.connect(export_visualization)
 
+        viz_dialog.finished.connect(lambda: dialog_alive.__setitem__(0, False))
         viz_dialog.exec()
         return True
 

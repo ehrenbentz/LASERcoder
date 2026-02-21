@@ -121,7 +121,7 @@ class SetupManager(QDialog):
         try:
             with open(temp_ann, "w", newline="") as fh:
                 csv.writer(fh).writerow([
-                    "Video", "Name", "Type", "Mutually_Exclusive",
+                    "Video", "Behavior", "Type", "Mutually_Exclusive",
                     "H_Start", "H_End", "Start", "End", "Duration",
                     "Manual_Edit", "Notes",
                 ])

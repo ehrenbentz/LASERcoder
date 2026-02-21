@@ -484,20 +484,27 @@ class VideoAnnotator(QFrame):
             self._show_coding_end_prompt(current)
 
     def _show_coding_end_prompt(self, current_sec):
+        dlg = QMessageBox(self.parent)
+        dlg.setStyleSheet(theme.dialog_stylesheet())
+        dlg.setWindowTitle("Coding Duration Reached")
+        dlg.setWindowFlags(
+            dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+
         if self.active_state_behaviors:
-            resp = QMessageBox.question(
-                self.parent, "Coding Duration Reached",
-                "Coding duration reached\n"
-                "Do you wish to end the active state behaviors?",
+            dlg.setIcon(QMessageBox.Icon.Question)
+            dlg.setText("Coding duration reached\n"
+                        "Do you wish to end the active state behaviors?")
+            dlg.setStandardButtons(
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if resp == QMessageBox.StandardButton.Yes:
+            if dlg.exec() == QMessageBox.StandardButton.Yes:
                 for key in list(self.active_state_behaviors):
                     self.handle_state_behavior(
                         key, current_sec, format_time_human(current_sec))
         else:
-            QMessageBox.information(
-                self.parent, "Coding Duration Reached",
-                "Coding duration reached")
+            dlg.setIcon(QMessageBox.Icon.Information)
+            dlg.setText("Coding duration reached")
+            dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            dlg.exec()
 
     def _poll_progress(self):
         if not hasattr(self, "player") or not self.player:
@@ -650,7 +657,7 @@ class VideoAnnotator(QFrame):
 
         # State behaviours
         sf, sl, self.state_behaviors_tree = _make_tree(
-            ["Name", "Key", "ME Group"], [0.5, 0.15, 0.25], pane_h)
+            ["Behavior", "Key", "ME Group"], [0.5, 0.15, 0.25], pane_h)
         sb_header = QWidget()
         sb_header.setStyleSheet(theme.header_widget_stylesheet())
         self._header_widgets.append(sb_header)
@@ -659,8 +666,8 @@ class VideoAnnotator(QFrame):
         self._heading_labels.append(lbl)
         sb_hlay.addWidget(lbl)
         sb_hlay.addStretch()
-        self._gear_btn = QPushButton("\u2699"); self._gear_btn.setStyleSheet(btn_style)
-        self._gear_btn.setFixedSize(28, 22)
+        self._gear_btn = QPushButton("Settings"); self._gear_btn.setStyleSheet(btn_style)
+        self._gear_btn.setFixedWidth(60); self._gear_btn.setFixedHeight(22)
         self._gear_btn.clicked.connect(self._show_settings_menu)
         self._panel_buttons.append(self._gear_btn)
         sb_hlay.addWidget(self._gear_btn)
@@ -670,7 +677,7 @@ class VideoAnnotator(QFrame):
 
         # Point behaviours
         pf, pl, self.point_behaviors_tree = _make_tree(
-            ["Name", "Key"], [0.6, 0.3], pane_h)
+            ["Behavior", "Key"], [0.6, 0.3], pane_h)
         lbl2 = QLabel("Point Behaviors"); lbl2.setStyleSheet(label_style)
         self._heading_labels.append(lbl2)
         pl.insertWidget(0, lbl2)
@@ -679,7 +686,7 @@ class VideoAnnotator(QFrame):
 
         # State annotations
         saf, sal, self.state_annotations_tree = _make_tree(
-            ["Name", "Start", "End"], [0.33, 0.25, 0.25], pane_h)
+            ["Behavior", "Start", "End"], [0.33, 0.25, 0.25], pane_h)
         sa_header = QWidget()
         sa_header.setStyleSheet(theme.header_widget_stylesheet())
         self._header_widgets.append(sa_header)
@@ -702,7 +709,7 @@ class VideoAnnotator(QFrame):
 
         # Point annotations
         paf, pal, self.point_annotations_tree = _make_tree(
-            ["Name", "Time"], [0.4, 0.5], pane_h)
+            ["Behavior", "Time"], [0.4, 0.5], pane_h)
         pa_header = QWidget()
         pa_header.setStyleSheet(theme.header_widget_stylesheet())
         self._header_widgets.append(pa_header)
@@ -760,12 +767,12 @@ class VideoAnnotator(QFrame):
             start = format_time_human(evt["start_time"])
             end = format_time_human(evt["end_time"]) if evt["end_time"] else ""
             self.state_annotations_tree.addTopLevelItem(
-                QTreeWidgetItem([evt["Name"], start, end]))
+                QTreeWidgetItem([evt["Behavior"], start, end]))
 
         self.point_annotations_tree.clear()
         for evt in self.store.point_events:
             self.point_annotations_tree.addTopLevelItem(
-                QTreeWidgetItem([evt["Name"], evt["time"]]))
+                QTreeWidgetItem([evt["Behavior"], evt["time"]]))
 
         QTimer.singleShot(50, self._scroll_annotations_to_bottom)
 
@@ -1186,12 +1193,12 @@ class VideoAnnotator(QFrame):
             self._add_point_annotation(key, info, current, fmt)
 
     def _add_point_annotation(self, key, info, current_time, formatted_time):
-        if any(e["Name"] == info["Name"] and e["time"] == formatted_time
+        if any(e["Behavior"] == info["Behavior"] and e["time"] == formatted_time
                for e in self.store.point_events):
             return
 
         record = {
-            "Video": self.video_name, "Name": info["Name"], "Type": "Point",
+            "Video": self.video_name, "Behavior": info["Behavior"], "Type": "Point",
             "Mutually_Exclusive": "False", "H_Start": formatted_time,
             "H_End": "", "Start": f"{current_time:.2f}", "End": "",
             "Duration": "", "Manual_Edit": "False", "Notes": "",
@@ -1202,7 +1209,7 @@ class VideoAnnotator(QFrame):
             return
 
         self.store.point_events.append({
-            "Name": info["Name"], "time": formatted_time,
+            "Behavior": info["Behavior"], "time": formatted_time,
             "Manual_Edit": False, "Notes": "",
         })
         self.used_point_behaviors.add(key)
@@ -1224,7 +1231,7 @@ class VideoAnnotator(QFrame):
             start = self.active_state_behaviors[key]
             dur = frame_ts - start
             record = {
-                "Video": self.video_name, "Name": name, "Type": "State",
+                "Video": self.video_name, "Behavior": name, "Type": "State",
                 "Mutually_Exclusive": "True" if me_group else "False",
                 "H_Start": format_time_human(start),
                 "H_End": format_time_human(frame_ts),
@@ -1238,7 +1245,7 @@ class VideoAnnotator(QFrame):
 
             self.active_state_behaviors.pop(key)
             for evt in self.store.state_events:
-                if evt["Name"] == name and evt["end_time"] is None:
+                if evt["Behavior"] == name and evt["end_time"] is None:
                     evt["end_time"] = frame_ts
                     break
             self._update_annotations()
@@ -1251,7 +1258,7 @@ class VideoAnnotator(QFrame):
 
             self.active_state_behaviors[key] = frame_ts
             self.store.state_events.append({
-                "Name": name, "start_time": frame_ts, "end_time": None,
+                "Behavior": name, "start_time": frame_ts, "end_time": None,
                 "Type": "State",
                 "Mutually_Exclusive": "True" if me_group else "False",
                 "Notes": "",
@@ -1282,7 +1289,7 @@ class VideoAnnotator(QFrame):
             name = self.store.state_behaviors.get(key)
             dur = frame_ts - start
             record = {
-                "Video": self.video_name, "Name": name, "Type": "State",
+                "Video": self.video_name, "Behavior": name, "Type": "State",
                 "Mutually_Exclusive": "True",
                 "H_Start": format_time_human(start),
                 "H_End": format_time_human(frame_ts),
@@ -1296,7 +1303,7 @@ class VideoAnnotator(QFrame):
 
             removed.append(key)
             for evt in self.store.state_events:
-                if evt["Name"] == name and evt["end_time"] is None:
+                if evt["Behavior"] == name and evt["end_time"] is None:
                     evt["end_time"] = frame_ts
                     break
 
@@ -1517,19 +1524,19 @@ class VideoAnnotator(QFrame):
             dialog.reject()
             return False
 
-        new_name = new_entries["Name"].text().strip()
+        new_name = new_entries["Behavior"].text().strip()
         new_start = new_entries["H_Start"].text().strip()
         if not new_name or not new_start:
             QMessageBox.warning(
                 self.parent, "Invalid Input",
-                "Both Name and Start Time are required.")
+                "Both Behavior and Start Time are required.")
             return False
 
         for ann in self.store.point_events:
-            if ann["Name"] == selected["Name"] and ann["time"] == old_time:
-                if ann["Name"] != new_name or ann["time"] != new_start:
+            if ann["Behavior"] == selected["Behavior"] and ann["time"] == old_time:
+                if ann["Behavior"] != new_name or ann["time"] != new_start:
                     ann["Manual_Edit"] = True
-                ann["Name"] = new_name
+                ann["Behavior"] = new_name
                 ann["time"] = new_start
                 break
         else:
@@ -1538,8 +1545,8 @@ class VideoAnnotator(QFrame):
 
         if not self.store.save_sorted_annotations():
             for ann in self.store.point_events:
-                if ann["Name"] == new_name and ann["time"] == new_start:
-                    ann["Name"] = selected["Name"]
+                if ann["Behavior"] == new_name and ann["time"] == new_start:
+                    ann["Behavior"] = selected["Behavior"]
                     ann["time"] = old_time
                     break
             dialog.reject()
@@ -1558,13 +1565,13 @@ class VideoAnnotator(QFrame):
             dialog.reject()
             return False
 
-        new_name = new_entries["Name"].text().strip()
+        new_name = new_entries["Behavior"].text().strip()
         new_h_start = new_entries["H_Start"].text().strip()
         new_h_end = new_entries["H_End"].text().strip()
         if not new_name or not new_h_start or not new_h_end:
             QMessageBox.warning(
                 self.parent, "Invalid Input",
-                "Name, Start, and End times are required.")
+                "Behavior, Start, and End times are required.")
             return False
 
         try:
@@ -1578,10 +1585,10 @@ class VideoAnnotator(QFrame):
 
         original = None
         for ann in self.store.state_events:
-            if (ann["Name"] == selected["Name"]
+            if (ann["Behavior"] == selected["Behavior"]
                     and format_time_human(ann.get("start_time", 0)) == old_time):
                 original = dict(ann)
-                ann["Name"] = new_name
+                ann["Behavior"] = new_name
                 ann["start_time"] = new_start
                 ann["end_time"] = new_end
                 ann["Manual_Edit"] = True
@@ -1594,7 +1601,7 @@ class VideoAnnotator(QFrame):
 
         if not self.store.save_sorted_annotations():
             for ann in self.store.state_events:
-                if ann["Name"] == new_name and ann["start_time"] == new_start:
+                if ann["Behavior"] == new_name and ann["start_time"] == new_start:
                     ann.update(original)
                     break
             dialog.reject()
@@ -1609,7 +1616,7 @@ class VideoAnnotator(QFrame):
         result = {f: "" for f in fields}
         with open(self.store.annotations_file, "r") as fh:
             for row in csv.DictReader(fh):
-                if (row["Name"] == annotation["Name"]
+                if (row.get("Behavior", "") == annotation["Behavior"]
                         and row["H_Start"] == format_time_human(
                             annotation.get("start_time", 0))):
                     result.update({f: row.get(f, "") for f in fields})
@@ -1656,6 +1663,7 @@ class VideoAnnotator(QFrame):
                 center_window_func=center_window,
                 output_dir=self.output_dir,
                 bounds=bounds,
+                store=self.store,
             )
         except ImportError:
             QMessageBox.warning(
@@ -1696,7 +1704,7 @@ class VideoAnnotator(QFrame):
                             if he and he != "NA":
                                 end = parse_time(he)
                         state_ann.append({
-                            "Name": row.get("Name", "").strip(),
+                            "Behavior": row.get("Behavior", "").strip(),
                             "start_time": start, "end_time": end,
                             "Type": "State",
                             "Mutually_Exclusive": row.get("Mutually_Exclusive", "False"),
@@ -1705,7 +1713,7 @@ class VideoAnnotator(QFrame):
                     elif atype == "point":
                         raw = row.get("Start", "0").strip()
                         point_ann.append({
-                            "Name": row.get("Name", "").strip(),
+                            "Behavior": row.get("Behavior", "").strip(),
                             "time": row.get("H_Start", "").strip(),
                             "raw_time": float(raw) if raw and raw != "NA" else 0,
                             "Manual_Edit": row.get("Manual_Edit", "False"),

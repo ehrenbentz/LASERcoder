@@ -26,10 +26,10 @@ class AnnotationStore:
         self.state_behaviors = {}   # key -> name
         self.point_behaviors = {}   # key -> name
         self.me_groups = {}         # key -> ME group name
-        self.behavior_map = {}      # key -> {"Name": …, "Type": …}
+        self.behavior_map = {}      # key -> {"Behavior": …, "Type": …}
 
     CSV_HEADERS = [
-        "Video", "Name", "Type", "Mutually_Exclusive",
+        "Video", "Behavior", "Type", "Mutually_Exclusive",
         "H_Start", "H_End", "Start", "End", "Duration",
         "Manual_Edit", "Notes",
     ]
@@ -65,7 +65,7 @@ class AnnotationStore:
                 elif btype == "point":
                     self.point_behaviors[key] = name
 
-                self.behavior_map[key] = {"Name": name, "Type": btype.capitalize()}
+                self.behavior_map[key] = {"Behavior": name, "Type": btype.capitalize()}
                 self.behaviors.append((name, key, btype, me_group))
 
     # ------------------------------------------------------------------
@@ -83,7 +83,7 @@ class AnnotationStore:
         with open(self.annotations_file, "r", newline="") as f:
             for row in csv.DictReader(f):
                 atype = row.get("Type", "").strip().lower()
-                name = row.get("Name", "").strip()
+                name = row.get("Behavior", "").strip()
                 notes = row.get("Notes", "")
 
                 if atype == "state":
@@ -93,7 +93,7 @@ class AnnotationStore:
                     end_time = float(raw_end) if raw_end and raw_end != "NA" else None
 
                     self.state_events.append({
-                        "Name": name,
+                        "Behavior": name,
                         "start_time": start_time,
                         "end_time": end_time,
                         "Type": "State",
@@ -103,7 +103,7 @@ class AnnotationStore:
 
                 elif atype == "point":
                     self.point_events.append({
-                        "Name": name,
+                        "Behavior": name,
                         "time": row.get("H_Start", "").strip(),
                         "Manual_Edit": row.get("Manual_Edit", "False"),
                         "Notes": notes,
@@ -153,7 +153,7 @@ class AnnotationStore:
                     h_end = format_time_human(evt["end_time"]) if evt["end_time"] is not None else "NA"
                     writer.writerow([
                         self.video_name,
-                        evt["Name"],
+                        evt["Behavior"],
                         evt.get("Type", "State"),
                         evt.get("Mutually_Exclusive", "False"),
                         h_start, h_end, start, end, dur,
@@ -165,7 +165,7 @@ class AnnotationStore:
                     time_machine = format_time_machine(parse_time(evt["time"]))
                     writer.writerow([
                         self.video_name,
-                        evt["Name"],
+                        evt["Behavior"],
                         evt.get("Type", "Point"),
                         evt.get("Mutually_Exclusive", "False"),
                         evt["time"], "NA",
@@ -188,31 +188,37 @@ class AnnotationStore:
     # Session state JSON
     # ------------------------------------------------------------------
 
-    def save_session_state(self, current_time, coding_start, coding_duration,
-                           coding_end, coding_end_reached):
-        """Persist the current session state to JSON.
+    # ------------------------------------------------------------------
+    # Session state file (shared read/write helper)
+    # ------------------------------------------------------------------
+
+    def _session_state_path(self):
+        return os.path.join(
+            self.output_dir, "Resume",
+            f"{self.video_name}_session_state.json")
+
+    def _merge_and_write(self, updates):
+        """Read session state JSON, merge updates, write back with indentation.
 
         Returns True on success.
         """
-        if current_time is None or current_time <= 0:
-            return False
+        path = self._session_state_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        resume_dir = os.path.join(self.output_dir, "Resume")
-        os.makedirs(resume_dir, exist_ok=True)
-        path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
+        data = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, ValueError, OSError):
+                data = {}
 
-        state = {
-            "timestamp_sec": float(current_time),
-            "coding_start": coding_start,
-            "coding_duration": coding_duration,
-            "coding_end": coding_end,
-            "coding_end_reached": coding_end_reached,
-        }
+        data.update(updates)
 
         try:
             temp = path + ".tmp"
             with open(temp, "w") as f:
-                json.dump(state, f)
+                json.dump(data, f, indent=2)
             os.replace(temp, path)
             return True
         except (PermissionError, OSError):
@@ -223,12 +229,26 @@ class AnnotationStore:
                     pass
             return False
 
-    def load_session_state(self):
-        """Load session state from JSON.
+    def save_session_state(self, current_time, coding_start, coding_duration,
+                           coding_end, coding_end_reached):
+        """Persist the current session state to JSON.
 
+        Returns True on success.
         """
-        resume_dir = os.path.join(self.output_dir, "Resume")
-        path = os.path.join(resume_dir, f"{self.video_name}_session_state.json")
+        if current_time is None or current_time <= 0:
+            return False
+
+        return self._merge_and_write({
+            "timestamp_sec": float(current_time),
+            "coding_start": coding_start,
+            "coding_duration": coding_duration,
+            "coding_end": coding_end,
+            "coding_end_reached": coding_end_reached,
+        })
+
+    def load_session_state(self):
+        """Load session state from JSON."""
+        path = self._session_state_path()
 
         if not os.path.exists(path):
             return None
@@ -256,6 +276,45 @@ class AnnotationStore:
             result["coding_end"] = result["coding_start"] + result["coding_duration"]
 
         return result
+
+    # ------------------------------------------------------------------
+    # Visualization settings (stored in the same session state JSON)
+    # ------------------------------------------------------------------
+
+    def _read_session_key(self, key, default):
+        path = self._session_state_path()
+        if not os.path.exists(path):
+            return default
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, ValueError, OSError):
+            return default
+        return data.get(key, default)
+
+    def save_viz_colors(self, color_map):
+        """Save behavior color selections {name: hex_string}."""
+        self._merge_and_write({"viz_behavior_colors": color_map})
+
+    def load_viz_colors(self):
+        """Load saved behavior colors. Returns {name: hex_string} or {}."""
+        return self._read_session_key("viz_behavior_colors", {})
+
+    def save_viz_unchecked(self, unchecked_list):
+        """Save list of unchecked behavior names."""
+        self._merge_and_write({"viz_unchecked_behaviors": unchecked_list})
+
+    def load_viz_unchecked(self):
+        """Load list of unchecked behavior names. Returns [] if none."""
+        return self._read_session_key("viz_unchecked_behaviors", [])
+
+    def save_viz_options(self, options):
+        """Save visualization option checkboxes {name: bool}."""
+        self._merge_and_write({"viz_options": options})
+
+    def load_viz_options(self):
+        """Load visualization option checkboxes. Returns {} if none."""
+        return self._read_session_key("viz_options", {})
 
     # ------------------------------------------------------------------
     # File access check
