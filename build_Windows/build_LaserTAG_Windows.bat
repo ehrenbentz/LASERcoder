@@ -28,8 +28,8 @@ set CODBASE_DIR=..\CodeBase
 set OUTPUT_DIR=output
 
 REM Code signing (leave empty to skip)
-set CERT_FILE=
-set CERT_PASS=
+set CERT_FILE=C:\Software\Development\LaserTAG\MyCert.pfx
+set CERT_PASS=Sirtalis1111
 
 REM =====================================================================
 REM Verify directory structure
@@ -90,8 +90,8 @@ python -m nuitka ^
     --enable-plugin=pyside6 ^
     --include-data-files=libmpv-2.dll=libmpv-2.dll ^
     --include-data-files=laser.ico=laser.ico ^
-    --windows-file-version=1.0.0.0 ^
-    --windows-product-version=1.0.0.0 ^
+    --windows-file-version=1.2.0 ^
+    --windows-product-version=1.2.0 ^
     --windows-company-name="Cornell University" ^
     --windows-product-name=LaserTAG ^
     --windows-file-description="LaserTAG - Lightweight application for scoring ethology recordings and Tracking Animals Gooder" ^

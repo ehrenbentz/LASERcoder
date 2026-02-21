@@ -46,7 +46,7 @@ This is only required once per machine.
 
 ### Running from Source
 
-Requires Python 3.10+ and a working installation or prebuilt libraries for [MPV](https://mpv.io/) (Windows) or Homebrew mpv (macOS).
+Requires Python 3.10+ and a working installation of [MPV](https://mpv.io/) or prebuilt libraries.
 
 ```bash
 pip install PySide6 python-mpv
@@ -61,14 +61,14 @@ Full build instructions for manually creating standalone executables and install
 - [Windows Build Guide](build_Windows/build_LaserTAG_Windows.MD)
 - [macOS Build Guide](build_MacOS/build_LaserTAG_MacOS.MD)
 
-Automated build scripts are provided for both platforms (`build_LaserTAG_Windows.bat` and `build_LaserTAG_MacOS.sh`).
+Automated build scripts are provided for Windows and macOS (`build_LaserTAG_Windows.bat` and `build_LaserTAG_MacOS.sh`).
 
 ## Quick Start
 
 1. **Launch LaserTAG** and select an output directory (subdirectories for annotations, behaviors, resume files, and summaries are created automatically).
 2. **Select a video directory** and choose a video file to annotate.
-3. **Create or load a behavior key** — define behaviors with names, keyboard shortcuts, and types (Point or State). Assign mutually exclusive groups as needed.
-4. **Annotate** — Use keyboard shortcuts or floating buttons to add annotations as the video plays. Navigate with standard controls (see table below).
+3. **Create or load a behavior key** - define behaviors with names, keyboard shortcuts, and types (Point or State). Assign mutually exclusive groups.
+4. **Annotate** - Use keyboard shortcuts or floating buttons to add annotations as the video plays. Navigate with standard controls (see table below).
 5. **Generate summary statistics** from the file selection screen when you have finished annotating.
 
 ### Keyboard Controls
@@ -78,7 +78,7 @@ Automated build scripts are provided for both platforms (`build_LaserTAG_Windows
 | Play / Pause | `Space` |
 | Increase speed | `+` or `=` |
 | Decrease speed | `-` or `_` |
-| Reset speed to 1x | `Backspace` (`Delete` on macOS) |
+| Reset speed to 1x | `Backspace` (Windows) or `Delete` (macOS) |
 | Skip forward 10s | `W` |
 | Skip backward 10s | `S` |
 | Skip forward 5s | `D` or `Right Arrow` |
@@ -89,16 +89,17 @@ Automated build scripts are provided for both platforms (`build_LaserTAG_Windows
 | Previous annotation | `Down Arrow` |
 | Delete annotation | `Delete` |
 | Undo delete | `Ctrl+Z` |
-| Return to file selection | `Escape` |
+| Close video and return to file selection | `Escape` |
+
 
 ## Output Format
 
-Annotation files are saved as `VideoName_Annotations.csv` with 11 columns:
+Annotation files are saved as `VideoName_Annotations.csv` with 11 columns formatted for direct input into statitical software:
 
 | Column | Description |
 |--------|-------------|
 | `Video` | Video filename |
-| `Name` | Behavior name |
+| `Behavior` | Behavior name |
 | `Type` | `Point` or `State` |
 | `Mutually_Exclusive` | Whether the behavior belongs to an ME group |
 | `H_Start` | Human-readable start time (HH:MM:SS) |
@@ -114,12 +115,12 @@ Annotation files are saved as `VideoName_Annotations.csv` with 11 columns:
 
 ```
 LaserTAG/
-├── CodeBase/                 Python source code
-│   ├── LaserTAG.py           Main entry point
-│   ├── video_annotator.py    Core annotation engine
-│   ├── annotation_store.py   Atomic file I/O
+├── CodeBase/                          Source code
+│   ├── LaserTAG.py                    Main entry point
+│   ├── video_annotator.py             Core annotation module
+│   ├── annotation_store.py            Atomic file I/O
 │   ├── behavior_key_editor.py
-│   ├── setup_manager.py      File/directory selection UI
+│   ├── setup_manager.py               File/directory selection UI
 │   ├── annotations_visualizer.py
 │   ├── summary_statistics.py
 │   ├── summary_statistics_manager.py
@@ -129,20 +130,20 @@ LaserTAG/
 │   ├── files_manager.py
 │   ├── floating_controls.py
 │   └── progress_bar.py
-├── build_Windows/            Windows build scripts and resources
-├── build_MacOS/              macOS build scripts and resources
-├── LaserTAG_Manual.txt       User manual
-├── LICENSE                   GPL-3.0 license
-└── README.md                 This file
+├── build_Windows/                     Windows build scripts and resources
+├── build_MacOS/                       macOS build scripts and resources
+├── LaserTAG_Manual.txt                User manual
+├── LICENSE                            GPL-3.0 license
+└── README.md                          This file
 ```
 
 ## Citation
 
 If you use LaserTAG in your research, please cite:
 
-<!-- TODO: Update with JOSS DOI once published -->
+<!-- TODO: Update with DOI once published -->
 
-> Bentz, E.J., Laser, R.S., Ophir, A.G. (2026). LaserTAG: Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder. *Journal of Open Source Software*. (in preparation)
+> Bentz, E.J., Laser, R.S., Ophir, A.G. (2026). LaserTAG: Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder. (in preparation)
 
 See [CITATION.cff](CITATION.cff) for machine-readable citation information.
 

@@ -144,6 +144,9 @@ echo ""
 echo "Installing custom Info.plist..."
 cp ../Info.plist "${APP_NAME}.app/Contents/Info.plist"
 
+# ==================================================================
+# Create .dmg installer
+# ==================================================================
 echo ""
 echo "Creating DMG installer..."
 
@@ -167,6 +170,36 @@ rm -rf "$STAGING_DIR"
 cd ..
 
 # ==================================================================
+# Create .pkg installer
+# ==================================================================
+echo ""
+echo "Creating .pkg installer..."
+
+PKG_NAME="${APP_NAME}Installer.pkg"
+SCRIPTS_DIR="pkg_scripts"
+INSTALL_LOCATION="/Applications"
+
+# Create postinstall script
+rm -rf "$SCRIPTS_DIR"
+mkdir -p "$SCRIPTS_DIR"
+cat > "$SCRIPTS_DIR/postinstall" << 'POSTINSTALL'
+#!/bin/bash
+xattr -cr /Applications/LaserTAG.app
+POSTINSTALL
+chmod +x "$SCRIPTS_DIR/postinstall"
+
+# Build the component package
+pkgbuild \
+    --root "$OUTPUT_DIR/${APP_NAME}.app" \
+    --install-location "${INSTALL_LOCATION}/${APP_NAME}.app" \
+    --scripts "$SCRIPTS_DIR" \
+    --identifier "com.lasertag.app" \
+    --version "1.0" \
+    "$OUTPUT_DIR/$PKG_NAME"
+
+rm -rf "$SCRIPTS_DIR"
+
+# ==================================================================
 # Summary
 # ==================================================================
 echo ""
@@ -174,7 +207,8 @@ echo "============================================"
 echo "  Build Complete"
 echo "============================================"
 echo "  App bundle:  $OUTPUT_DIR/${APP_NAME}.app"
-echo "  Installer:   $OUTPUT_DIR/${DMG_NAME}"
+echo "  DMG:         $OUTPUT_DIR/${DMG_NAME}"
+echo "  PKG:         $OUTPUT_DIR/${PKG_NAME}"
 echo ""
 echo "  --- Installing locally ---"
 echo "  cp -R $OUTPUT_DIR/${APP_NAME}.app /Applications/"

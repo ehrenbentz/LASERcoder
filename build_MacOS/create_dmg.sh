@@ -3,7 +3,7 @@
 # Creates a distributable DMG from the Nuitka .app bundle
 
 APP_NAME="LaserTAG"
-APP_VERSION="v1.0.0"
+APP_VERSION="v1.2.0"
 APP_PATH="LaserTAG.app"
 DMG_NAME="${APP_NAME}_${APP_VERSION}_macOS_arm64.dmg"
 VOLUME_NAME="${APP_NAME}"

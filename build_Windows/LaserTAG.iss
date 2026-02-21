@@ -4,12 +4,12 @@
 
 [Setup]
 AppName=LaserTAG
-AppVersion=1.0
+AppVersion=1.2.0
 AppPublisher=Ehren Bentz
 DefaultDirName={autopf}\LaserTAG
 DefaultGroupName=LaserTAG
 OutputDir=output
-OutputBaseFilename=LaserTAG_v1.0.0_windows_x64_setup
+OutputBaseFilename=LaserTAG_v1.2.0_windows_x64_setup
 PrivilegesRequired=admin
 Compression=lzma
 SolidCompression=yes
