@@ -8,7 +8,7 @@ output/
 *.zip
 
 # mpv libraries
-libs/
+#libs/
 libmpv-2.dll
 
 # Python
