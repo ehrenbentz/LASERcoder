@@ -10,11 +10,11 @@ class AnnotationStore:
     """
 
     def __init__(self, video_name, annotations_file, session_state_file,
-                 behavior_key_file, output_dir):
+                 event_key_file, output_dir):
         self.video_name = video_name
         self.annotations_file = annotations_file
         self.session_state_file = session_state_file
-        self.behavior_key_file = behavior_key_file
+        self.event_key_file = event_key_file
         self.output_dir = output_dir
 
         # Annotation data
@@ -22,14 +22,14 @@ class AnnotationStore:
         self.point_events = []
 
         # Behaviour definitions
-        self.behaviors = []
-        self.state_behaviors = {}   # key -> name
-        self.point_behaviors = {}   # key -> name
+        self.events = []
+        self.state_event_keys = {}   # key -> name
+        self.point_event_keys = {}   # key -> name
         self.me_groups = {}         # key -> ME group name
-        self.behavior_map = {}      # key -> {"Behavior": …, "Type": …}
+        self.event_map = {}      # key -> {"Event": …, "Type": …}
 
     CSV_HEADERS = [
-        "Video", "Behavior", "Type", "Mutually_Exclusive",
+        "Video", "Event", "Type", "Mutually_Exclusive",
         "H_Start", "H_End", "Start", "End", "Duration",
         "Manual_Edit", "Notes",
     ]
@@ -38,15 +38,15 @@ class AnnotationStore:
     # Behaviour definitions
     # ------------------------------------------------------------------
 
-    def load_behaviors(self):
+    def load_events(self):
         """Read behaviour key CSV and populate lookup structures."""
-        self.behaviors.clear()
-        self.state_behaviors.clear()
-        self.point_behaviors.clear()
+        self.events.clear()
+        self.state_event_keys.clear()
+        self.point_event_keys.clear()
         self.me_groups.clear()
-        self.behavior_map.clear()
+        self.event_map.clear()
 
-        with open(self.behavior_key_file, "r", newline="") as f:
+        with open(self.event_key_file, "r", newline="") as f:
             for row in csv.reader(f):
                 if not row or len(row) < 3:
                     continue
@@ -59,14 +59,14 @@ class AnnotationStore:
                     continue
 
                 if btype == "state":
-                    self.state_behaviors[key] = name
+                    self.state_event_keys[key] = name
                     if me_group:
                         self.me_groups[key] = me_group
                 elif btype == "point":
-                    self.point_behaviors[key] = name
+                    self.point_event_keys[key] = name
 
-                self.behavior_map[key] = {"Behavior": name, "Type": btype.capitalize()}
-                self.behaviors.append((name, key, btype, me_group))
+                self.event_map[key] = {"Event": name, "Type": btype.capitalize()}
+                self.events.append((name, key, btype, me_group))
 
     # ------------------------------------------------------------------
     # Annotation CSV
@@ -83,7 +83,7 @@ class AnnotationStore:
         with open(self.annotations_file, "r", newline="") as f:
             for row in csv.DictReader(f):
                 atype = row.get("Type", "").strip().lower()
-                name = row.get("Behavior", "").strip()
+                name = row.get("Event", "").strip()
                 notes = row.get("Notes", "")
 
                 if atype == "state":
@@ -93,7 +93,7 @@ class AnnotationStore:
                     end_time = float(raw_end) if raw_end and raw_end != "NA" else None
 
                     self.state_events.append({
-                        "Behavior": name,
+                        "Event": name,
                         "start_time": start_time,
                         "end_time": end_time,
                         "Type": "State",
@@ -103,7 +103,7 @@ class AnnotationStore:
 
                 elif atype == "point":
                     self.point_events.append({
-                        "Behavior": name,
+                        "Event": name,
                         "time": row.get("H_Start", "").strip(),
                         "Manual_Edit": row.get("Manual_Edit", "False"),
                         "Notes": notes,
@@ -153,7 +153,7 @@ class AnnotationStore:
                     h_end = format_time_human(evt["end_time"]) if evt["end_time"] is not None else "NA"
                     writer.writerow([
                         self.video_name,
-                        evt["Behavior"],
+                        evt["Event"],
                         evt.get("Type", "State"),
                         evt.get("Mutually_Exclusive", "False"),
                         h_start, h_end, start, end, dur,
@@ -165,7 +165,7 @@ class AnnotationStore:
                     time_machine = format_time_machine(parse_time(evt["time"]))
                     writer.writerow([
                         self.video_name,
-                        evt["Behavior"],
+                        evt["Event"],
                         evt.get("Type", "Point"),
                         evt.get("Mutually_Exclusive", "False"),
                         evt["time"], "NA",
@@ -293,20 +293,20 @@ class AnnotationStore:
         return data.get(key, default)
 
     def save_viz_colors(self, color_map):
-        """Save behavior color selections {name: hex_string}."""
-        self._merge_and_write({"viz_behavior_colors": color_map})
+        """Save event color selections {name: hex_string}."""
+        self._merge_and_write({"viz_event_colors": color_map})
 
     def load_viz_colors(self):
-        """Load saved behavior colors. Returns {name: hex_string} or {}."""
-        return self._read_session_key("viz_behavior_colors", {})
+        """Load saved event colors. Returns {name: hex_string} or {}."""
+        return self._read_session_key("viz_event_colors", {})
 
     def save_viz_unchecked(self, unchecked_list):
-        """Save list of unchecked behavior names."""
-        self._merge_and_write({"viz_unchecked_behaviors": unchecked_list})
+        """Save list of unchecked event names."""
+        self._merge_and_write({"viz_unchecked_events": unchecked_list})
 
     def load_viz_unchecked(self):
-        """Load list of unchecked behavior names. Returns [] if none."""
-        return self._read_session_key("viz_unchecked_behaviors", [])
+        """Load list of unchecked event names. Returns [] if none."""
+        return self._read_session_key("viz_unchecked_events", [])
 
     def save_viz_options(self, options):
         """Save visualization option checkboxes {name: bool}."""

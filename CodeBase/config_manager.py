@@ -40,8 +40,8 @@ class ConfigManager:
         if not self.config.get('video_dir') or not os.path.exists(self.config['video_dir']):
             self.config['video_dir'] = self.home_dir
             
-        if 'last_behavior_key' not in self.config:
-            self.config['last_behavior_key'] = None
+        if 'last_event_key' not in self.config:
+            self.config['last_event_key'] = None
 
         if self.config.get('theme') not in ('dark', 'light', 'system'):
             self.config['theme'] = 'system'
@@ -53,7 +53,7 @@ class ConfigManager:
         return {
             'output_dir': self.home_dir,
             'video_dir': self.home_dir,
-            'last_behavior_key': None,
+            'last_event_key': None,
             'theme': 'system',
         }
 
@@ -74,9 +74,9 @@ class ConfigManager:
         """Get the current video directory."""
         return self.config.get('video_dir', self.home_dir)
 
-    def get_last_behavior_key(self):
-        """Get the last used behavior key file."""
-        return self.config.get('last_behavior_key')
+    def get_last_event_key(self):
+        """Get the last used event key file."""
+        return self.config.get('last_event_key')
 
     def update_output_dir(self, new_dir):
         """Update the output directory if it exists."""
@@ -91,10 +91,10 @@ class ConfigManager:
             self.config['video_dir'] = video_dir
             self.save_config()
 
-    def update_last_behavior_key(self, behavior_key):
-        """Update the last used behavior key file."""
-        if behavior_key and isinstance(behavior_key, str):
-            self.config['last_behavior_key'] = behavior_key
+    def update_last_event_key(self, event_key):
+        """Update the last used event key file."""
+        if event_key and isinstance(event_key, str):
+            self.config['last_event_key'] = event_key
             self.save_config()
 
     def get_theme(self):

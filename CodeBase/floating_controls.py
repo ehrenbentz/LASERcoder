@@ -9,25 +9,25 @@ def create_toggle_buttons(annotator):
     """Create the two small floating toggle buttons (behaviour grid + controls).
 
     Attaches the windows to *annotator.floating_windows* and stores
-    references as *annotator.behavior_toggle_window*, etc.
+    references as *annotator.event_toggle_window*, etc.
     """
     parent = annotator.parent
 
     # Behaviour toggle
-    annotator.behavior_toggle_window = QWidget(parent)
-    annotator.behavior_toggle_window.setWindowFlags(
+    annotator.event_toggle_window = QWidget(parent)
+    annotator.event_toggle_window.setWindowFlags(
         Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
         | Qt.WindowType.WindowStaysOnTopHint)
-    annotator.behavior_toggle_window.setAttribute(
+    annotator.event_toggle_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
-    annotator.behavior_toggle_window.setStyleSheet("background-color: transparent;")
+    annotator.event_toggle_window.setStyleSheet("background-color: transparent;")
 
-    annotator.behavior_toggle_button = QPushButton(
-        "\u2637", annotator.behavior_toggle_window)
-    annotator.behavior_toggle_button.setFixedSize(30, 30)
-    annotator.behavior_toggle_button.setStyleSheet(theme.toggle_btn_stylesheet())
-    annotator.behavior_toggle_button.clicked.connect(
-        lambda: toggle_behavior_buttons(annotator))
+    annotator.event_toggle_button = QPushButton(
+        "\u2637", annotator.event_toggle_window)
+    annotator.event_toggle_button.setFixedSize(30, 30)
+    annotator.event_toggle_button.setStyleSheet(theme.toggle_btn_stylesheet())
+    annotator.event_toggle_button.clicked.connect(
+        lambda: toggle_event_buttons(annotator))
 
     # Controls toggle
     annotator.controls_window = QWidget(parent)
@@ -48,7 +48,7 @@ def create_toggle_buttons(annotator):
     # Position
     video_pos = annotator.video_frame.mapToGlobal(QPoint(0, 0))
     margin = 5
-    annotator.behavior_toggle_window.move(
+    annotator.event_toggle_window.move(
         video_pos.x() + margin, video_pos.y() + 20)
     annotator.controls_window.move(
         video_pos.x() + margin,
@@ -74,12 +74,12 @@ def create_toggle_buttons(annotator):
         video_pos.x() + annotator.video_width - 40 - margin,
         video_pos.y() + 20)
 
-    annotator.behavior_toggle_window.show()
+    annotator.event_toggle_window.show()
     annotator.controls_window.show()
     annotator.zoom_toggle_window.show()
 
     annotator.floating_windows.extend([
-        annotator.behavior_toggle_window,
+        annotator.event_toggle_window,
         annotator.controls_window,
         annotator.zoom_toggle_window,
     ])
@@ -160,46 +160,46 @@ def _create_floating_controls(annotator):
     annotator.floating_windows.append(annotator.floating_controls_window)
 
 
-def toggle_behavior_buttons(annotator):
+def toggle_event_buttons(annotator):
     """Toggle the floating behaviour-buttons panel."""
-    if (hasattr(annotator, "behavior_buttons_window")
-            and annotator.behavior_buttons_window):
-        annotator.behavior_buttons_window.deleteLater()
-        annotator.behavior_buttons_window = None
+    if (hasattr(annotator, "event_buttons_window")
+            and annotator.event_buttons_window):
+        annotator.event_buttons_window.deleteLater()
+        annotator.event_buttons_window = None
     else:
-        _create_behavior_buttons(annotator)
+        _create_event_buttons(annotator)
 
 
-def _create_behavior_buttons(annotator):
+def _create_event_buttons(annotator):
     parent = annotator.parent
     store = annotator.store
 
-    annotator.behavior_buttons_window = QWidget(parent)
-    annotator.behavior_buttons_window.setWindowFlags(
+    annotator.event_buttons_window = QWidget(parent)
+    annotator.event_buttons_window.setWindowFlags(
         Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
         | Qt.WindowType.WindowStaysOnTopHint)
-    annotator.behavior_buttons_window.setAttribute(
+    annotator.event_buttons_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
-    annotator.behavior_buttons_window.setStyleSheet("background-color: transparent;")
+    annotator.event_buttons_window.setStyleSheet("background-color: transparent;")
     
-    main_layout = QVBoxLayout(annotator.behavior_buttons_window)
+    main_layout = QVBoxLayout(annotator.event_buttons_window)
     main_layout.setSpacing(10)
     main_layout.setContentsMargins(10, 10, 10, 10)
 
     # Separate behaviours by type
-    point_behaviors = []
-    state_behaviors = []
-    for name, key, btype, _ in store.behaviors:
+    point_events = []
+    state_events = []
+    for name, key, btype, _ in store.events:
         if not name:
             continue
-        (point_behaviors if btype == "point" else state_behaviors).append(
+        (point_events if btype == "point" else state_events).append(
             (name, key))
 
     max_per_row = 4
 
     def _add_section(label_text, items, style):
         lbl = QLabel(label_text)
-        lbl.setStyleSheet(theme.behavior_label_stylesheet())
+        lbl.setStyleSheet(theme.event_label_stylesheet())
         main_layout.addWidget(lbl)
 
         container = QWidget()
@@ -221,7 +221,7 @@ def _create_behavior_buttons(annotator):
                 QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet(style)
             btn.clicked.connect(
-                lambda checked, k=key: annotator.add_annotation_for_behavior(k))
+                lambda checked, k=key: annotator.add_annotation_for_event(k))
             row_layout.addWidget(btn)
 
             count += 1
@@ -234,20 +234,20 @@ def _create_behavior_buttons(annotator):
 
         main_layout.addWidget(container)
 
-    _add_section("Point Behaviors", point_behaviors, theme.point_btn_stylesheet())
-    _add_section("State Behaviors", state_behaviors, theme.state_btn_stylesheet())
+    _add_section("Point Events", point_events, theme.point_btn_stylesheet())
+    _add_section("State Events", state_events, theme.state_btn_stylesheet())
 
     # Position
     video_pos = annotator.video_frame.mapToGlobal(QPoint(0, 0))
     margin = 10
-    toggle_width = annotator.behavior_toggle_button.width()
+    toggle_width = annotator.event_toggle_button.width()
     x = video_pos.x() + margin + toggle_width + 10
     y = video_pos.y() + margin
 
-    annotator.behavior_buttons_window.adjustSize()
-    annotator.behavior_buttons_window.show()
-    annotator.behavior_buttons_window.move(x, y)
-    annotator.floating_windows.append(annotator.behavior_buttons_window)
+    annotator.event_buttons_window.adjustSize()
+    annotator.event_buttons_window.show()
+    annotator.event_buttons_window.move(x, y)
+    annotator.floating_windows.append(annotator.event_buttons_window)
 
 
 def update_floating_visibility(annotator):

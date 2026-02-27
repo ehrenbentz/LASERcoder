@@ -53,7 +53,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.video_annotator = None
 
-    def init_video_annotator(self, video_path, session_state_file, behavior_file, output_dir):
+    def init_video_annotator(self, video_path, session_state_file, event_file, output_dir):
         """Initialize the video annotator component."""
         try:
             # If there's an existing video_annotator, clean it up first
@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
                 self,
                 video_path=video_path,
                 session_state_file=session_state_file,
-                behavior_key_file=behavior_file,
+                event_key_file=event_file,
                 output_dir=output_dir
             )
             
@@ -110,11 +110,11 @@ def main():
                 break
             
             # Check if setup requirements are met to start video
-            if setup_dialog.start_video_flag and setup_dialog.video_path and setup_dialog.behavior_key_file:
+            if setup_dialog.start_video_flag and setup_dialog.video_path and setup_dialog.event_key_file:
                 # Get configuration values
                 video_path = setup_dialog.video_path
                 session_state_file = setup_dialog.session_state_file
-                behavior_file = setup_dialog.behavior_key_file
+                event_file = setup_dialog.event_key_file
                 output_dir = setup_dialog.output_dir
                 
                 # Update configuration
@@ -125,7 +125,7 @@ def main():
                 if main_window.init_video_annotator(
                     video_path=video_path,
                     session_state_file=session_state_file,
-                    behavior_file=behavior_file,
+                    event_file=event_file,
                     output_dir=output_dir
                 ):
                     main_window.show()

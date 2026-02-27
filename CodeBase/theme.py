@@ -389,5 +389,5 @@ def header_widget_stylesheet() -> str:
     p = _resolved()
     return f"background-color: {p['panel_bg']};"
 
-def behavior_label_stylesheet() -> str:
+def event_label_stylesheet() -> str:
     return "color: white; background-color: rgba(50,50,50,180); padding: 2px;"

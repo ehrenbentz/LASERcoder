@@ -10,21 +10,21 @@ from PySide6.QtCore import Qt
 from display_utils import get_screen_geometry, center_window
 import theme
 
-class BehaviorKeyEditor(QDialog):
-    """Dialog for editing behavior key definitions."""
+class EventKeyEditor(QDialog):
+    """Dialog for editing event key definitions."""
 
-    def __init__(self, parent, behavior_key_dir, on_start_video, on_cancel,
+    def __init__(self, parent, event_key_dir, on_start_video, on_cancel,
                  config_manager):
         super().__init__(parent)
 
-        self.behavior_key_dir = behavior_key_dir
+        self.event_key_dir = event_key_dir
         self._on_start_video_cb = on_start_video
         self._on_cancel_cb = on_cancel
         self.config_manager = config_manager
 
-        self.behavior_key_file = None
-        self.behaviors = [["", "", "point", ""] for _ in range(30)]
-        self._behavior_key_files = {}
+        self.event_key_file = None
+        self.events = [["", "", "point", ""] for _ in range(30)]
+        self._event_key_files = {}
         self._new_dialog_open = False
         self._initializing = False
         self.start_video_flag = False
@@ -35,7 +35,7 @@ class BehaviorKeyEditor(QDialog):
         self._me_group_entries = []
         self._combo = None
 
-        self.setWindowTitle("Behavior Key Editor")
+        self.setWindowTitle("Event Key Editor")
         self.setWindowFlags(
             Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         self.setStyleSheet(theme.dialog_stylesheet())
@@ -45,7 +45,7 @@ class BehaviorKeyEditor(QDialog):
         self._editor_h = int(self._screen["height"] * 0.8)
 
         self._setup_ui()
-        self._initialize_behavior_key()
+        self._initialize_event_key()
 
         if parent:
             parent.showMaximized()
@@ -68,7 +68,7 @@ class BehaviorKeyEditor(QDialog):
         scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         content = QWidget()
-        self._create_behavior_entries(content)
+        self._create_event_entries(content)
         scroll.setWidget(content)
         main_layout.addWidget(scroll, 1)
 
@@ -76,7 +76,7 @@ class BehaviorKeyEditor(QDialog):
 
         note = QLabel(
             "Note: 'w', 'a', 's', 'd' are reserved for video navigation. "
-            "Do not assign these keys to a behavior.")
+            "Do not assign these keys to a event.")
         note.setWordWrap(True)
         main_layout.addWidget(note)
 
@@ -92,7 +92,7 @@ class BehaviorKeyEditor(QDialog):
         layout.setContentsMargins(10, 5, 10, 5)
         layout.setSpacing(10)
 
-        label = QLabel("Select Behavior Key File:")
+        label = QLabel("Select Event Key File:")
         label.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         layout.addWidget(label)
@@ -103,10 +103,10 @@ class BehaviorKeyEditor(QDialog):
         self._combo.currentTextChanged.connect(self._on_combo_changed)
         layout.addWidget(self._combo, stretch=1)
 
-        new_btn = QPushButton("New Behavior Key File")
+        new_btn = QPushButton("New Event Key File")
         new_btn.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        new_btn.clicked.connect(self._new_behavior_key_file)
+        new_btn.clicked.connect(self._new_event_key_file)
         layout.addWidget(new_btn)
 
         return frame
@@ -118,7 +118,7 @@ class BehaviorKeyEditor(QDialog):
         layout.setSpacing(5)
 
         for col, (text, width) in enumerate([
-            ("Behavior", 300), ("Key", 75), ("Type", None), ("ME Group", 120),
+            ("Event", 300), ("Key", 75), ("Type", None), ("ME Group", 120),
         ]):
             lbl = QLabel(text)
             lbl.setStyleSheet("font-weight: bold;")
@@ -132,7 +132,7 @@ class BehaviorKeyEditor(QDialog):
         layout.setColumnStretch(2, 1)
         return frame
 
-    def _create_behavior_entries(self, parent):
+    def _create_event_entries(self, parent):
         layout = QGridLayout(parent)
         layout.setContentsMargins(10, 5, 10, 5)
         layout.setSpacing(5)
@@ -181,9 +181,9 @@ class BehaviorKeyEditor(QDialog):
         layout = QHBoxLayout(frame)
 
         for text, slot in [
-            ("Save", self._save_behaviors),
-            ("Rename", self._rename_behavior_key),
-            ("Delete", self._delete_behavior_key),
+            ("Save", self._save_events),
+            ("Rename", self._rename_event_key),
+            ("Delete", self._delete_event_key),
             ("Back", self._on_cancel),
         ]:
             btn = QPushButton(text)
@@ -199,40 +199,40 @@ class BehaviorKeyEditor(QDialog):
         return frame
 
     # ------------------------------------------------------------------
-    # Behavior key file management
+    # Event key file management
     # ------------------------------------------------------------------
 
-    def _initialize_behavior_key(self):
-        files = self._get_behavior_files()
-        last_key = self.config_manager.get_last_behavior_key()
+    def _initialize_event_key(self):
+        files = self._get_event_files()
+        last_key = self.config_manager.get_last_event_key()
 
         if last_key and os.path.exists(
-                os.path.join(self.behavior_key_dir, last_key)):
-            self.behavior_key_file = os.path.join(
-                self.behavior_key_dir, last_key)
+                os.path.join(self.event_key_dir, last_key)):
+            self.event_key_file = os.path.join(
+                self.event_key_dir, last_key)
             self._refresh_combo()
             self._combo.setCurrentText(
-                last_key.replace("_behaviors.csv", ""))
-            self._load_behaviors()
+                last_key.replace("_events.csv", ""))
+            self._load_events()
             self._update_entries()
         elif files:
-            self.behavior_key_file = os.path.join(
-                self.behavior_key_dir, files[0])
+            self.event_key_file = os.path.join(
+                self.event_key_dir, files[0])
             self._refresh_combo()
             self._combo.setCurrentText(
-                files[0].replace("_behaviors.csv", ""))
-            self._load_behaviors()
+                files[0].replace("_events.csv", ""))
+            self._load_events()
             self._update_entries()
         else:
-            self._new_behavior_key_file()
+            self._new_event_key_file()
 
-    def _get_behavior_files(self):
-        files = [f for f in os.listdir(self.behavior_key_dir)
-                 if f.endswith("_behaviors.csv")]
-        self._behavior_key_files = {
-            f: os.path.join(self.behavior_key_dir, f) for f in files}
+    def _get_event_files(self):
+        files = [f for f in os.listdir(self.event_key_dir)
+                 if f.endswith("_events.csv")]
+        self._event_key_files = {
+            f: os.path.join(self.event_key_dir, f) for f in files}
 
-        last_key = self.config_manager.get_last_behavior_key()
+        last_key = self.config_manager.get_last_event_key()
         if last_key and last_key in files:
             files.remove(last_key)
             files.insert(0, last_key)
@@ -240,47 +240,47 @@ class BehaviorKeyEditor(QDialog):
 
     def _refresh_combo(self):
         self._combo.clear()
-        files = self._get_behavior_files()
+        files = self._get_event_files()
         if files:
             self._combo.addItems(
-                [f.replace("_behaviors.csv", "") for f in files])
+                [f.replace("_events.csv", "") for f in files])
         else:
             self._combo.addItem("No file found")
 
-    def _load_behaviors(self):
-        if not os.path.exists(self.behavior_key_file):
-            self.behaviors = [["", "", "point", ""] for _ in range(30)]
+    def _load_events(self):
+        if not os.path.exists(self.event_key_file):
+            self.events = [["", "", "point", ""] for _ in range(30)]
             return True
 
-        if not self._check_file_access(self.behavior_key_file):
+        if not self._check_file_access(self.event_key_file):
             QMessageBox.critical(
                 self, "Error",
-                "Cannot access behavior key file.\n"
+                "Cannot access event key file.\n"
                 "Is it open in another application?")
-            self.behaviors = [["", "", "point", ""] for _ in range(30)]
+            self.events = [["", "", "point", ""] for _ in range(30)]
             return False
 
         try:
-            with open(self.behavior_key_file, "r") as fh:
-                self.behaviors = []
+            with open(self.event_key_file, "r") as fh:
+                self.events = []
                 for row in csv.reader(fh):
                     while len(row) < 4:
                         row.append("")
-                    self.behaviors.append(row)
-                while len(self.behaviors) < 30:
-                    self.behaviors.append(["", "", "point", ""])
+                    self.events.append(row)
+                while len(self.events) < 30:
+                    self.events.append(["", "", "point", ""])
             return True
         except OSError as exc:
             QMessageBox.critical(
-                self, "Error", f"Error loading behaviors: {exc}")
-            self.behaviors = [["", "", "point", ""] for _ in range(30)]
+                self, "Error", f"Error loading events: {exc}")
+            self.events = [["", "", "point", ""] for _ in range(30)]
             return False
 
     def _update_entries(self):
-        for i, behavior in enumerate(self.behaviors):
+        for i, event in enumerate(self.events):
             if i >= len(self._name_entries):
                 break
-            name, key, btype, me_group = (behavior + [""] * 4)[:4]
+            name, key, btype, me_group = (event + [""] * 4)[:4]
             self._name_entries[i].setText(name)
             self._key_entries[i].setText(key)
             radios = self._type_groups[i].buttons()
@@ -292,25 +292,25 @@ class BehaviorKeyEditor(QDialog):
 
     def _on_combo_changed(self, text):
         if text and text != "No file found":
-            filename = f"{text}_behaviors.csv"
-            self.behavior_key_file = os.path.join(
-                self.behavior_key_dir, filename)
-            self._load_behaviors()
+            filename = f"{text}_events.csv"
+            self.event_key_file = os.path.join(
+                self.event_key_dir, filename)
+            self._load_events()
             self._update_entries()
-            self.config_manager.update_last_behavior_key(filename)
+            self.config_manager.update_last_event_key(filename)
 
     # ------------------------------------------------------------------
     # File operations
     # ------------------------------------------------------------------
 
-    def _new_behavior_key_file(self):
+    def _new_event_key_file(self):
         if self._new_dialog_open:
             return
         self._new_dialog_open = True
 
         name, ok = QInputDialog.getText(
-            self, "New Behavior Key File",
-            "Enter a name for the new Behavior Key file:\n"
+            self, "New Event Key File",
+            "Enter a name for the new Event Key file:\n"
             "(Use only letters, numbers, and underscores)")
 
         if ok and name:
@@ -318,7 +318,7 @@ class BehaviorKeyEditor(QDialog):
             if not name:
                 QMessageBox.warning(
                     self, "No Name Entered",
-                    "You must enter a name for the Behavior Key file.")
+                    "You must enter a name for the Event Key file.")
                 self._new_dialog_open = False
                 return
 
@@ -330,14 +330,14 @@ class BehaviorKeyEditor(QDialog):
                 self._new_dialog_open = False
                 return
 
-            filename = (f"{name}_behaviors.csv"
-                        if not name.endswith("_behaviors.csv") else name)
-            path = os.path.join(self.behavior_key_dir, filename)
+            filename = (f"{name}_events.csv"
+                        if not name.endswith("_events.csv") else name)
+            path = os.path.join(self.event_key_dir, filename)
 
             if not self._check_file_access(path, for_writing=True):
                 QMessageBox.critical(
                     self, "Error",
-                    "Cannot create behavior key file.\n"
+                    "Cannot create event key file.\n"
                     "Check folder permissions or if a file with the "
                     "same name is open.")
                 self._new_dialog_open = False
@@ -351,11 +351,11 @@ class BehaviorKeyEditor(QDialog):
                         writer.writerow(["", "", "point", ""])
                 os.replace(temp, path)
 
-                self.behavior_key_file = path
-                self._behavior_key_files[filename] = path
+                self.event_key_file = path
+                self._event_key_files[filename] = path
                 self._refresh_combo()
                 self._combo.setCurrentText(name)
-                self._load_behaviors()
+                self._load_events()
                 self._update_entries()
             except OSError as exc:
                 _remove_temp(temp)
@@ -364,25 +364,25 @@ class BehaviorKeyEditor(QDialog):
 
         self._new_dialog_open = False
 
-    def _rename_behavior_key(self):
+    def _rename_event_key(self):
         current = self._combo.currentText()
         if not current or current == "No file found":
             QMessageBox.warning(
                 self, "No Selection",
-                "Please select a Behavior Key file to rename.")
+                "Please select a Event Key file to rename.")
             return
 
         if not self._check_file_access(
-                self.behavior_key_file, for_writing=True):
+                self.event_key_file, for_writing=True):
             QMessageBox.critical(
                 self, "Error",
-                "Cannot access the current behavior key file.\n"
+                "Cannot access the current event key file.\n"
                 "Is it open in another application?")
             return
 
         new_name, ok = QInputDialog.getText(
-            self, "Rename Behavior Key File",
-            "Enter new name for the Behavior Key file:\n"
+            self, "Rename Event Key File",
+            "Enter new name for the Event Key file:\n"
             "(Use only letters, numbers, and underscores)",
             text=current)
 
@@ -393,7 +393,7 @@ class BehaviorKeyEditor(QDialog):
         if not new_name:
             QMessageBox.warning(
                 self, "No Name Entered",
-                "You must enter a name for the Behavior Key file.")
+                "You must enter a name for the Event Key file.")
             return
 
         if not new_name.replace("_", "").isalnum():
@@ -403,9 +403,9 @@ class BehaviorKeyEditor(QDialog):
                 "and underscores.")
             return
 
-        new_filename = f"{new_name}_behaviors.csv"
-        old_path = self.behavior_key_file
-        new_path = os.path.join(self.behavior_key_dir, new_filename)
+        new_filename = f"{new_name}_events.csv"
+        old_path = self.event_key_file
+        new_path = os.path.join(self.event_key_dir, new_filename)
 
         if os.path.exists(new_path):
             QMessageBox.warning(
@@ -432,7 +432,7 @@ class BehaviorKeyEditor(QDialog):
             except OSError:
                 pass
 
-            self.behavior_key_file = new_path
+            self.event_key_file = new_path
             self._refresh_combo()
             self._combo.setCurrentText(new_name)
         except OSError as exc:
@@ -440,19 +440,19 @@ class BehaviorKeyEditor(QDialog):
             QMessageBox.critical(
                 self, "Error", f"Failed to rename the file: {exc}")
 
-    def _delete_behavior_key(self):
+    def _delete_event_key(self):
         current = self._combo.currentText()
         if not current or current == "No file found":
             QMessageBox.warning(
                 self, "No Selection",
-                "Please select a Behavior Key file to delete.")
+                "Please select a Event Key file to delete.")
             return
 
         if not self._check_file_access(
-                self.behavior_key_file, for_writing=True):
+                self.event_key_file, for_writing=True):
             QMessageBox.critical(
                 self, "Error",
-                "Cannot access the behavior key file for deletion.\n"
+                "Cannot access the event key file for deletion.\n"
                 "Is it open in another application?")
             return
 
@@ -465,39 +465,39 @@ class BehaviorKeyEditor(QDialog):
             return
 
         try:
-            os.remove(self.behavior_key_file)
-            files = self._get_behavior_files()
+            os.remove(self.event_key_file)
+            files = self._get_event_files()
             if files:
                 self._refresh_combo()
-                display = files[0].replace("_behaviors.csv", "")
+                display = files[0].replace("_events.csv", "")
                 self._combo.setCurrentText(display)
-                self.behavior_key_file = os.path.join(
-                    self.behavior_key_dir, files[0])
-                self._load_behaviors()
+                self.event_key_file = os.path.join(
+                    self.event_key_dir, files[0])
+                self._load_events()
                 self._update_entries()
             else:
                 self._combo.clear()
                 self._combo.addItem("No file found")
-                self._new_behavior_key_file()
+                self._new_event_key_file()
         except OSError as exc:
             QMessageBox.critical(
                 self, "Error", f"Failed to delete the file: {exc}")
 
-    def _save_behaviors(self):
-        if (not self.behavior_key_file
+    def _save_events(self):
+        if (not self.event_key_file
                 or self._combo.currentText() == "No file found"):
-            self._new_behavior_key_file()
+            self._new_event_key_file()
             return False
 
         if not self._check_file_access(
-                self.behavior_key_file, for_writing=True):
+                self.event_key_file, for_writing=True):
             QMessageBox.critical(
                 self, "Error",
-                "Cannot save to behavior key file.\n"
+                "Cannot save to event key file.\n"
                 "Is it open in another application?")
             return False
 
-        temp = self.behavior_key_file + ".tmp"
+        temp = self.event_key_file + ".tmp"
         try:
             with open(temp, "w", newline="") as fh:
                 writer = csv.writer(fh)
@@ -510,14 +510,14 @@ class BehaviorKeyEditor(QDialog):
                          else "point"),
                         self._me_group_entries[i].text(),
                     ])
-            os.replace(temp, self.behavior_key_file)
-            self.config_manager.update_last_behavior_key(
-                os.path.basename(self.behavior_key_file))
+            os.replace(temp, self.event_key_file)
+            self.config_manager.update_last_event_key(
+                os.path.basename(self.event_key_file))
             return True
         except OSError as exc:
             _remove_temp(temp)
             QMessageBox.critical(
-                self, "Error", f"Error saving behaviors: {exc}")
+                self, "Error", f"Error saving events: {exc}")
             return False
 
     # ------------------------------------------------------------------
@@ -527,11 +527,11 @@ class BehaviorKeyEditor(QDialog):
     def _start_video(self):
         if not any(e.text().strip() for e in self._name_entries):
             QMessageBox.warning(
-                self, "No Behaviors Defined",
-                "Please add behaviors before starting the video.")
+                self, "No Events Defined",
+                "Please add events before starting the video.")
             return
 
-        if not self._save_behaviors():
+        if not self._save_events():
             return
 
         reserved = {"w", "a", "s", "d"}
@@ -549,19 +549,19 @@ class BehaviorKeyEditor(QDialog):
                     QMessageBox.warning(
                         self, "Duplicate Shortcut Key",
                         f"The key '{key}' is assigned to multiple "
-                        "behaviors.\nPlease assign unique keys.")
+                        "events.\nPlease assign unique keys.")
                     return
                 assigned.add(key)
 
-        self.config_manager.update_last_behavior_key(
-            os.path.basename(self.behavior_key_file))
+        self.config_manager.update_last_event_key(
+            os.path.basename(self.event_key_file))
         self.start_video_flag = True
-        self._on_start_video_cb(self.behavior_key_file)
+        self._on_start_video_cb(self.event_key_file)
         self.done(QDialog.DialogCode.Accepted)
 
     def _on_cancel(self):
-        current = self._current_behaviors()
-        if current != self.behaviors:
+        current = self._current_events()
+        if current != self.events:
             reply = QMessageBox.question(
                 self, "Unsaved Changes",
                 "You have unsaved changes. Save before going back?",
@@ -571,7 +571,7 @@ class BehaviorKeyEditor(QDialog):
                 QMessageBox.StandardButton.Save)
 
             if reply == QMessageBox.StandardButton.Save:
-                if not self._save_behaviors():
+                if not self._save_events():
                     return
             elif reply == QMessageBox.StandardButton.Cancel:
                 return
@@ -582,7 +582,7 @@ class BehaviorKeyEditor(QDialog):
         self._on_cancel_cb()
         self.deleteLater()
 
-    def _current_behaviors(self):
+    def _current_events(self):
         result = []
         for i in range(30):
             result.append([

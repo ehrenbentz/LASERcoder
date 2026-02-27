@@ -14,14 +14,14 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QBrush, QFont,
 import theme
 
 # ---------------------------------------------------------------------------
-# Color palette: golden-angle spacing for distinct per-behavior hues
+# Color palette: golden-angle spacing for distinct per-event hues
 # ---------------------------------------------------------------------------
 _HUE_ANGLE = 30
 _HUE_OFFSET   = 30.0
 
-def _generate_default_colors(behavior_names):
+def _generate_default_colors(event_names):
     cmap = {}
-    for i, name in enumerate(sorted(behavior_names)):
+    for i, name in enumerate(sorted(event_names)):
         hue = (_HUE_OFFSET + i * _HUE_ANGLE) % 360
         r, g, b = colorsys.hls_to_rgb(hue / 360.0, 0.55, 0.65)
         cmap[name] = QColor(int(r * 255), int(g * 255), int(b * 255))
@@ -73,6 +73,7 @@ class AnnotationsVisualizer(QFrame):
         self.zero_base_time = False
         self.show_section_headers = True
         self.show_title = True
+        self.show_legend = True
 
         # Always store the complete unfiltered events
         self._all_state_events = list(state_events)
@@ -102,24 +103,24 @@ class AnnotationsVisualizer(QFrame):
         self.section_spacing = 14
         self.legend_row_height = 22
 
-        # Build color map from ALL behaviors {name: QColor}
-        all_behaviors = set()
+        # Build color map from ALL events {name: QColor}
+        all_events = set()
         for e in self._all_state_events:
-            if e['Behavior']:
-                all_behaviors.add(e['Behavior'])
+            if e['Event']:
+                all_events.add(e['Event'])
         for e in self._all_point_events:
-            if e['Behavior']:
-                all_behaviors.add(e['Behavior'])
-        self._color_map = _generate_default_colors(all_behaviors)
+            if e['Event']:
+                all_events.add(e['Event'])
+        self._color_map = _generate_default_colors(all_events)
 
-        # Canonical order lists — all known behaviors in each type
+        # Canonical order lists — all known events in each type
         self._state_order = sorted(
-            {e['Behavior'] for e in self._all_state_events if e['Behavior']})
+            {e['Event'] for e in self._all_state_events if e['Event']})
         self._point_order = sorted(
-            {e['Behavior'] for e in self._all_point_events if e['Behavior']})
+            {e['Event'] for e in self._all_point_events if e['Event']})
 
-        # Compute visible behavior lists and height
-        self.state_behaviors, self.point_behaviors = self._unique_behaviors()
+        # Compute visible event name lists and height
+        self.state_event_names, self.point_event_names = self._unique_events()
         self._recalc_height()
 
     # ------------------------------------------------------------------
@@ -130,11 +131,11 @@ class AnnotationsVisualizer(QFrame):
         """Re-set visible events and repaint."""
         self.state_events = list(state_events)
         self.point_events = list(point_events)
-        self.state_behaviors, self.point_behaviors = self._unique_behaviors()
+        self.state_event_names, self.point_event_names = self._unique_events()
         self._recalc_height()
         self.update()
 
-    def set_behavior_color(self, name, color):
+    def set_event_color(self, name, color):
         self._color_map[name] = QColor(color)
         self.update()
 
@@ -143,15 +144,15 @@ class AnnotationsVisualizer(QFrame):
         self._apply_range()
         self.state_events = list(self._raw_state_events)
         self.point_events = list(self._raw_point_events)
-        self.state_behaviors, self.point_behaviors = self._unique_behaviors()
+        self.state_event_names, self.point_event_names = self._unique_events()
         self._recalc_height()
         self.update()
 
-    def set_behavior_order(self, state_order, point_order):
-        """Set custom display order for behaviors and repaint."""
+    def set_event_order(self, state_order, point_order):
+        """Set custom display order for events and repaint."""
         self._state_order = list(state_order)
         self._point_order = list(point_order)
-        self.state_behaviors, self.point_behaviors = self._unique_behaviors()
+        self.state_event_names, self.point_event_names = self._unique_events()
         self._recalc_height()
         self.update()
 
@@ -177,21 +178,21 @@ class AnnotationsVisualizer(QFrame):
             self._raw_point_events = list(self._all_point_events)
         self.video_duration = self.effective_duration
 
-    def _unique_behaviors(self):
-        """Return visible behaviors in custom order."""
-        visible_state = {e['Behavior'] for e in self.state_events if e['Behavior']}
-        visible_point = {e['Behavior'] for e in self.point_events if e['Behavior']}
+    def _unique_events(self):
+        """Return visible events in custom order."""
+        visible_state = {e['Event'] for e in self.state_events if e['Event']}
+        visible_point = {e['Event'] for e in self.point_events if e['Event']}
         state = [n for n in self._state_order if n in visible_state]
         point = [n for n in self._point_order if n in visible_point]
         return state, point
 
     def _recalc_height(self):
         title_h = self.title_height if self.show_title else 0
-        total = len(self.state_behaviors) + len(self.point_behaviors)
+        total = len(self.state_event_names) + len(self.point_event_names)
         if total == 0:
             h = title_h + self.axis_height + self.margin_top + self.margin_bottom
         else:
-            sections = (1 if self.state_behaviors else 0) + (1 if self.point_behaviors else 0)
+            sections = (1 if self.state_event_names else 0) + (1 if self.point_event_names else 0)
             tracks_h = total * (self.track_height + self.track_spacing)
             if self.show_section_headers:
                 headers_h = sections * self.section_header_height
@@ -204,7 +205,9 @@ class AnnotationsVisualizer(QFrame):
         self.setMinimumHeight(max(h, 200))
 
     def _legend_height(self):
-        all_names = self.state_behaviors + self.point_behaviors
+        if not self.show_legend:
+            return 0
+        all_names = self.state_event_names + self.point_event_names
         unique = list(dict.fromkeys(all_names))  # preserve order, deduplicate
         if not unique:
             return 0
@@ -304,8 +307,8 @@ class AnnotationsVisualizer(QFrame):
                 gx = self.margin_left + (axis_width * i / tick_count)
                 painter.drawLine(int(gx), int(y_start), int(gx), int(y_end))
 
-        # State behaviors section
-        if self.state_behaviors:
+        # State events section
+        if self.state_event_names:
             if self.show_section_headers:
                 hdr_rect = QRectF(self.margin_left - 10, y, axis_width + 20,
                                   self.section_header_height)
@@ -316,11 +319,11 @@ class AnnotationsVisualizer(QFrame):
                 painter.setPen(header_text_c)
                 painter.setFont(section_font)
                 painter.drawText(hdr_rect, Qt.AlignmentFlag.AlignCenter,
-                                 "State Annotations")
+                                 "State Events")
                 y += self.section_header_height + 4
 
             painter.setFont(track_font)
-            for behavior in self.state_behaviors:
+            for event in self.state_event_names:
                 row_bg = track_bg_alt if track_idx % 2 else track_bg
                 track_idx += 1
 
@@ -334,15 +337,15 @@ class AnnotationsVisualizer(QFrame):
                 text_rect = QRectF(4, y, self.margin_left - 14, self.track_height)
                 painter.drawText(text_rect,
                                  Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                                 behavior)
+                                 event)
                 painter.setFont(track_font)
 
-                base = self._color_map.get(behavior, QColor("#6496dc"))
+                base = self._color_map.get(event, QColor("#6496dc"))
                 fill = _state_fill(base)
                 border_c = _state_border(base)
 
                 for ev in self.state_events:
-                    if ev['Behavior'] != behavior or ev['start_time'] is None:
+                    if ev['Event'] != event or ev['start_time'] is None:
                         continue
                     sx = self._time_to_x(ev['start_time'], axis_width)
                     if ev['end_time'] is None:
@@ -363,11 +366,11 @@ class AnnotationsVisualizer(QFrame):
 
                 y += self.track_height + self.track_spacing
 
-            if self.point_behaviors:
+            if self.point_event_names:
                 y += self.section_spacing - self.track_spacing
 
-        # Point behaviors section
-        if self.point_behaviors:
+        # Point events section
+        if self.point_event_names:
             if self.show_section_headers:
                 hdr_rect = QRectF(self.margin_left - 10, y, axis_width + 20,
                                   self.section_header_height)
@@ -378,11 +381,11 @@ class AnnotationsVisualizer(QFrame):
                 painter.setPen(header_text_c)
                 painter.setFont(section_font)
                 painter.drawText(hdr_rect, Qt.AlignmentFlag.AlignCenter,
-                                 "Point Annotations")
+                                 "Point Events")
                 y += self.section_header_height + 4
 
             painter.setFont(track_font)
-            for behavior in self.point_behaviors:
+            for event in self.point_event_names:
                 row_bg = track_bg_alt if track_idx % 2 else track_bg
                 track_idx += 1
 
@@ -396,14 +399,14 @@ class AnnotationsVisualizer(QFrame):
                 text_rect = QRectF(4, y, self.margin_left - 14, self.track_height)
                 painter.drawText(text_rect,
                                  Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                                 behavior)
+                                 event)
                 painter.setFont(track_font)
 
-                base = self._color_map.get(behavior, QColor("#dc5050"))
+                base = self._color_map.get(event, QColor("#dc5050"))
                 pc = _point_marker(base)
 
                 for ev in self.point_events:
-                    if ev['Behavior'] != behavior:
+                    if ev['Event'] != event:
                         continue
                     if 'raw_time' in ev and ev['raw_time'] is not None:
                         tv = ev['raw_time']
@@ -450,12 +453,13 @@ class AnnotationsVisualizer(QFrame):
             )
 
         # ---- Legend ----
-        legend_y = axis_y + self.axis_height
-        self._draw_legend(painter, legend_y, w, text_color)
+        if self.show_legend:
+            legend_y = axis_y + self.axis_height
+            self._draw_legend(painter, legend_y, w, text_color)
 
     def _draw_legend(self, painter, y, w, text_color):
         all_visible = list(dict.fromkeys(
-            self.state_behaviors + self.point_behaviors))
+            self.state_event_names + self.point_event_names))
         if not all_visible:
             return
 
@@ -533,7 +537,7 @@ class AnnotationsVisualizer(QFrame):
 def show_visualization_dialog(parent, video_name, state_events, point_events,
                               video_duration, parse_time_func, center_window_func,
                               output_dir, bounds=None, store=None):
-    """Create and show the visualization dialog with behavior selection panel."""
+    """Create and show the visualization dialog with event selection panel."""
     try:
         viz_dialog = QDialog(parent)
         viz_dialog.setStyleSheet(theme.dialog_stylesheet())
@@ -570,7 +574,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             video_duration, parse_time_func, bounds=bounds,
         )
 
-        # Load any previously saved behavior colors
+        # Load any previously saved event colors
         if store is not None:
             saved_colors = store.load_viz_colors()
             for bname, hex_color in saved_colors.items():
@@ -581,12 +585,12 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
         state_order = list(timeline_widget._state_order)
         point_order = list(timeline_widget._point_order)
 
-        # ---- Scrollable behavior rows ----
+        # ---- Scrollable event rows ----
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        # We'll store per-behavior widgets and rebuild the layout on reorder
+        # We'll store per-event widgets and rebuild the layout on reorder
         checkboxes = {}      # name -> QCheckBox
         color_buttons = {}   # name -> QPushButton
 
@@ -604,12 +608,12 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             "QPushButton:hover { border: 1px solid white; }"
         )
 
-        # Load saved unchecked behaviors
+        # Load saved unchecked events
         saved_unchecked = set()
         if store is not None:
             saved_unchecked = set(store.load_viz_unchecked())
 
-        # Create widgets for all behaviors (state + point)
+        # Create widgets for all events (state + point)
         all_names = state_order + point_order
         for name in all_names:
             cb = QCheckBox(name)
@@ -628,7 +632,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
         # Container widget that gets rebuilt on reorder
         cb_container = [None]  # mutable ref
 
-        def build_behavior_list():
+        def build_event_list():
             """(Re)build the scroll area contents from current order lists."""
             old = cb_container[0]
             if old is not None:
@@ -671,7 +675,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             cb_container[0] = container
 
         def _make_row(name, idx, order_list, section):
-            """Build a single behavior row: [up][down] [checkbox] [color]."""
+            """Build a single event row: [up][down] [checkbox] [color]."""
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -706,7 +710,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             return row_widget
 
         def _move(name, section, direction):
-            """Move a behavior up or down within its section."""
+            """Move a event up or down within its section."""
             lst = state_order if section == "state" else point_order
             idx = lst.index(name)
             new_idx = idx + direction
@@ -714,14 +718,14 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                 return
             lst[idx], lst[new_idx] = lst[new_idx], lst[idx]
             # Update visualizer order
-            timeline_widget.set_behavior_order(state_order, point_order)
+            timeline_widget.set_event_order(state_order, point_order)
             # Rebuild the sidebar to reflect new order
-            build_behavior_list()
+            build_event_list()
 
-        build_behavior_list()
+        build_event_list()
         select_layout.addWidget(scroll, 1)
 
-        # ---- Options below the behavior list ----
+        # ---- Options below the event list ----
         saved_options = {}
         if store is not None:
             saved_options = store.load_viz_options()
@@ -735,6 +739,11 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
         show_headers_cb.setChecked(saved_options.get("show_headers", True))
         select_layout.addWidget(show_headers_cb)
         timeline_widget.show_section_headers = show_headers_cb.isChecked()
+
+        show_legend_cb = QCheckBox("Show color legend")
+        show_legend_cb.setChecked(saved_options.get("show_legend", True))
+        select_layout.addWidget(show_legend_cb)
+        timeline_widget.show_legend = show_legend_cb.isChecked()
 
         has_coding_bounds = bounds and bounds.get("has_bounds", False)
         segment_cb = None
@@ -781,9 +790,9 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                 return
             checked = {n for n, cb in checkboxes.items() if cb.isChecked()}
             filt_state = [e for e in timeline_widget._raw_state_events
-                          if e.get('Behavior') in checked]
+                          if e.get('Event') in checked]
             filt_point = [e for e in timeline_widget._raw_point_events
-                          if e.get('Behavior') in checked]
+                          if e.get('Event') in checked]
             timeline_widget.update_data(filt_state, filt_point)
             # Persist unchecked selections
             if store is not None:
@@ -814,6 +823,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             opts = {
                 "show_title": show_title_cb.isChecked(),
                 "show_headers": show_headers_cb.isChecked(),
+                "show_legend": show_legend_cb.isChecked(),
             }
             if segment_cb is not None:
                 opts["coded_segment"] = segment_cb.isChecked()
@@ -848,15 +858,21 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             timeline_widget.update()
             _save_options()
 
-        def make_color_callback(behavior_name):
+        def on_show_legend_changed(state):
+            timeline_widget.show_legend = bool(state)
+            timeline_widget._recalc_height()
+            timeline_widget.update()
+            _save_options()
+
+        def make_color_callback(event_name):
             def pick_color():
                 current = timeline_widget._color_map.get(
-                    behavior_name, QColor("#888888"))
+                    event_name, QColor("#888888"))
                 chosen = QColorDialog.getColor(
-                    current, viz_dialog, f"Color for {behavior_name}")
+                    current, viz_dialog, f"Color for {event_name}")
                 if chosen.isValid():
-                    timeline_widget.set_behavior_color(behavior_name, chosen)
-                    color_buttons[behavior_name].setIcon(
+                    timeline_widget.set_event_color(event_name, chosen)
+                    color_buttons[event_name].setIcon(
                         _make_color_icon(chosen))
                     # Persist custom colors to session state
                     if store is not None:
@@ -875,6 +891,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             zero_base_cb.stateChanged.connect(on_zero_base_changed)
         show_title_cb.stateChanged.connect(on_show_title_changed)
         show_headers_cb.stateChanged.connect(on_show_headers_changed)
+        show_legend_cb.stateChanged.connect(on_show_legend_changed)
 
         for name, btn in color_buttons.items():
             btn.clicked.connect(make_color_callback(name))

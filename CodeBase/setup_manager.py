@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, QTimer
 
 from config_manager import ConfigManager
 from files_manager import FilesManager
-from behavior_key_editor import BehaviorKeyEditor
+from event_key_editor import EventKeyEditor
 import theme
 
 
@@ -25,19 +25,19 @@ class SetupManager(QDialog):
         self.start_video_flag = False
         self.video_path = None
         self.video_name = ""
-        self.behavior_key_file = None
+        self.event_key_file = None
         self.saved_state = None
         self.start_frame = 0
 
         self.output_dir = self.config_manager.get_output_dir()
-        self.behavior_key_dir = None
+        self.event_key_dir = None
         self.annotations_dir = None
         self.resume_dir = None
 
         self.annotations_file = ""
         self.session_state_file = ""
 
-        self._behavior_editor = None
+        self._event_editor = None
         self._files_manager = None
 
         self.setWindowTitle("LaserTAG")
@@ -52,9 +52,9 @@ class SetupManager(QDialog):
 
     def _show_files_manager(self):
         try:
-            if self._behavior_editor:
-                self._behavior_editor.close()
-                self._behavior_editor = None
+            if self._event_editor:
+                self._event_editor.close()
+                self._event_editor = None
 
             self._files_manager = FilesManager(
                 self,
@@ -96,12 +96,12 @@ class SetupManager(QDialog):
 
     def _init_output_dirs(self):
         try:
-            self.behavior_key_dir = os.path.join(
-                self.output_dir, "Behavior_Keys")
+            self.event_key_dir = os.path.join(
+                self.output_dir, "Event_Keys")
             self.annotations_dir = os.path.join(
                 self.output_dir, "Annotations")
             self.resume_dir = os.path.join(self.output_dir, "Resume")
-            for d in (self.output_dir, self.behavior_key_dir,
+            for d in (self.output_dir, self.event_key_dir,
                       self.annotations_dir, self.resume_dir):
                 os.makedirs(d, exist_ok=True)
         except OSError as exc:
@@ -121,7 +121,7 @@ class SetupManager(QDialog):
         try:
             with open(temp_ann, "w", newline="") as fh:
                 csv.writer(fh).writerow([
-                    "Video", "Behavior", "Type", "Mutually_Exclusive",
+                    "Video", "Event", "Type", "Mutually_Exclusive",
                     "H_Start", "H_End", "Start", "End", "Duration",
                     "Manual_Edit", "Notes",
                 ])
@@ -200,12 +200,12 @@ class SetupManager(QDialog):
                         "Session state file is corrupted. "
                         "Starting a new session.")
                     if self._create_empty_files():
-                        self._show_behavior_key_editor()
+                        self._show_event_key_editor()
             else:
                 self.start_frame = 0
                 self.saved_state = None
                 if self._create_empty_files():
-                    self._show_behavior_key_editor()
+                    self._show_event_key_editor()
         except Exception as exc:
             QMessageBox.critical(
                 self, "Error",
@@ -277,7 +277,7 @@ class SetupManager(QDialog):
                     self.saved_state["timestamp_ms"] / 1000.0 * 30)
         else:
             self.start_frame = 0
-        self._show_behavior_key_editor()
+        self._show_event_key_editor()
 
     def _confirm_start_over(self):
         reply = QMessageBox.question(
@@ -315,48 +315,48 @@ class SetupManager(QDialog):
             "current_frame": 0,
         }
         if self._create_empty_files():
-            self._show_behavior_key_editor()
+            self._show_event_key_editor()
 
     # ------------------------------------------------------------------
-    # Behavior key editor
+    # Event key editor
     # ------------------------------------------------------------------
 
-    def _show_behavior_key_editor(self):
+    def _show_event_key_editor(self):
         try:
-            if self._behavior_editor:
-                self._behavior_editor.close()
-                self._behavior_editor = None
+            if self._event_editor:
+                self._event_editor.close()
+                self._event_editor = None
 
-            self._behavior_editor = BehaviorKeyEditor(
+            self._event_editor = EventKeyEditor(
                 self,
-                self.behavior_key_dir,
+                self.event_key_dir,
                 on_start_video=self._on_start_video,
-                on_cancel=self._on_behavior_key_cancel,
+                on_cancel=self._on_event_key_cancel,
                 config_manager=self.config_manager,
             )
-            self._behavior_editor.exec()
+            self._event_editor.exec()
 
-            if (self._behavior_editor
-                    and self._behavior_editor.start_video_flag):
+            if (self._event_editor
+                    and self._event_editor.start_video_flag):
                 self.start_video_flag = True
-                self.behavior_key_file = (
-                    self._behavior_editor.behavior_key_file)
-                self._behavior_editor = None
+                self.event_key_file = (
+                    self._event_editor.event_key_file)
+                self._event_editor = None
                 self.done(QDialog.DialogCode.Accepted)
 
         except Exception as exc:
             QMessageBox.critical(
                 self, "Error",
-                f"Error showing behavior key editor: {exc}")
-            self._behavior_editor = None
+                f"Error showing event key editor: {exc}")
+            self._event_editor = None
             self._show_files_manager()
 
-    def _on_start_video(self, behavior_key_file):
-        self.behavior_key_file = behavior_key_file
+    def _on_start_video(self, event_key_file):
+        self.event_key_file = event_key_file
         self.start_video_flag = True
 
-    def _on_behavior_key_cancel(self):
-        self._behavior_editor = None
+    def _on_event_key_cancel(self):
+        self._event_editor = None
         self.start_video_flag = False
         self._show_files_manager()
 

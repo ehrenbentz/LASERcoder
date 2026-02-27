@@ -273,7 +273,7 @@ def show_note_dialog(annotator):
 
     layout = QVBoxLayout(dlg)
 
-    info = f"Adding note to: {annotation['Behavior']}"
+    info = f"Adding note to: {annotation['Event']}"
     if annotator.selected_treeview == annotator.state_annotations_tree:
         info += f" ({format_time_human(annotation['start_time'])})"
     else:
@@ -343,7 +343,7 @@ def show_annotation_details(annotator):
 
     dlg = QDialog(annotator.parent)
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-    dlg.setWindowTitle(f"Annotation Details - {annotation['Behavior']}")
+    dlg.setWindowTitle(f"Annotation Details - {annotation['Event']}")
     dlg.setModal(True)
     _apply_dialog_theme(dlg)
     center_window(dlg, 500, 400)
@@ -357,7 +357,7 @@ def show_annotation_details(annotator):
     main_lay.addWidget(details_w)
 
     pairs = [
-        ("Behavior:", annotation["Behavior"]),
+        ("Event:", annotation["Event"]),
         ("Type:", atype),
         ("Video:", annotator.store.video_name),
     ]
@@ -440,7 +440,7 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
 
     form = QFormLayout()
     entries = {}
-    fields = ["Behavior"]
+    fields = ["Event"]
     if annotation_type == "State":
         fields += ["H_Start", "H_End"]
     else:
@@ -448,8 +448,8 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
 
     for field in fields:
         entry = QLineEdit()
-        if field == "Behavior":
-            entry.setText(annotation["Behavior"])
+        if field == "Event":
+            entry.setText(annotation["Event"])
         elif field == "H_Start":
             if annotation_type == "State":
                 entry.setText(format_time_human(annotation["start_time"]))
@@ -470,7 +470,7 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
     main_lay.addWidget(notes_text)
 
     # Store originals for rollback
-    originals = {"Behavior": annotation["Behavior"], "Notes": annotation.get("Notes", "")}
+    originals = {"Event": annotation["Event"], "Notes": annotation.get("Notes", "")}
     if annotation_type == "State":
         originals["start_time"] = annotation["start_time"]
         originals["end_time"] = annotation["end_time"]
@@ -496,20 +496,20 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
                                     "Could not parse time values.")
                 return
             for evt in annotator.store.state_events:
-                if evt["Behavior"] == annotation["Behavior"] and evt["start_time"] == annotation["start_time"]:
-                    if evt["Behavior"] != vals["Behavior"] or evt["start_time"] != new_start or evt["end_time"] != new_end:
+                if evt["Event"] == annotation["Event"] and evt["start_time"] == annotation["start_time"]:
+                    if evt["Event"] != vals["Event"] or evt["start_time"] != new_start or evt["end_time"] != new_end:
                         evt["Manual_Edit"] = True
-                    evt["Behavior"] = vals["Behavior"]
+                    evt["Event"] = vals["Event"]
                     evt["start_time"] = new_start
                     evt["end_time"] = new_end
                     evt["Notes"] = new_note
                     break
         else:
             for evt in annotator.store.point_events:
-                if evt["Behavior"] == annotation["Behavior"] and evt["time"] == annotation["time"]:
-                    if evt["Behavior"] != vals["Behavior"] or evt["time"] != vals["H_Start"]:
+                if evt["Event"] == annotation["Event"] and evt["time"] == annotation["time"]:
+                    if evt["Event"] != vals["Event"] or evt["time"] != vals["H_Start"]:
                         evt["Manual_Edit"] = True
-                    evt["Behavior"] = vals["Behavior"]
+                    evt["Event"] = vals["Event"]
                     evt["time"] = vals["H_Start"]
                     evt["Notes"] = new_note
                     break
@@ -518,12 +518,12 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
             # Rollback
             if annotation_type == "State":
                 for evt in annotator.store.state_events:
-                    if evt["Behavior"] == vals["Behavior"]:
+                    if evt["Event"] == vals["Event"]:
                         evt.update(originals)
                         break
             else:
                 for evt in annotator.store.point_events:
-                    if evt["Behavior"] == vals["Behavior"]:
+                    if evt["Event"] == vals["Event"]:
                         evt.update(originals)
                         break
             return
@@ -551,7 +551,7 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
 
 def show_edit_point_dialog(annotator):
     """Edit a point annotation's name and time."""
-    if annotator.store.active_state_behaviors if hasattr(annotator.store, 'active_state_behaviors') else annotator.active_state_behaviors:
+    if annotator.store.active_state_events if hasattr(annotator.store, 'active_state_events') else annotator.active_state_events:
         QMessageBox.warning(annotator, "Active Annotation",
                             "Please end the active state before editing.")
         return
@@ -565,7 +565,7 @@ def show_edit_point_dialog(annotator):
 
     annotator.dialog_open = True
     sel = annotator.store.point_events[annotator.selected_index]
-    latest = annotator.load_annotation_data(sel, "Behavior", "H_Start")
+    latest = annotator.load_annotation_data(sel, "Event", "H_Start")
 
     dlg = QDialog(annotator.parent)
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
@@ -578,7 +578,7 @@ def show_edit_point_dialog(annotator):
 
     cur_grp = QGroupBox("Current Annotation")
     cur_lay = QFormLayout()
-    cur_lay.addRow("Behavior:", QLabel(latest["Behavior"]))
+    cur_lay.addRow("Event:", QLabel(latest["Event"]))
     cur_lay.addRow("Time:", QLabel(latest["H_Start"]))
     cur_grp.setLayout(cur_lay)
     layout.addWidget(cur_grp)
@@ -586,7 +586,7 @@ def show_edit_point_dialog(annotator):
     new_grp = QGroupBox("New Annotation")
     new_lay = QFormLayout()
     entries = {}
-    for field in ("Behavior", "H_Start"):
+    for field in ("Event", "H_Start"):
         e = QLineEdit(); e.setText(latest.get(field, ""))
         new_lay.addRow(field.replace("H_", "") + ":", e)
         entries[field] = e
@@ -619,10 +619,10 @@ def show_edit_state_dialog(annotator):
 
     if sel["end_time"] is None:
         QMessageBox.warning(annotator, "Edit Error",
-                            "Please end the state behavior before editing.")
+                            "Please end the state event before editing.")
         return
 
-    latest = annotator.load_annotation_data(sel, "Behavior", "H_Start", "H_End")
+    latest = annotator.load_annotation_data(sel, "Event", "H_Start", "H_End")
 
     dlg = QDialog(annotator.parent)
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
@@ -635,7 +635,7 @@ def show_edit_state_dialog(annotator):
 
     cur_grp = QGroupBox("Current Annotation")
     cur_lay = QFormLayout()
-    cur_lay.addRow("Behavior:", QLabel(latest["Behavior"]))
+    cur_lay.addRow("Event:", QLabel(latest["Event"]))
     cur_lay.addRow("Start:", QLabel(latest["H_Start"]))
     cur_lay.addRow("End:", QLabel(latest["H_End"]))
     cur_grp.setLayout(cur_lay)
@@ -644,7 +644,7 @@ def show_edit_state_dialog(annotator):
     new_grp = QGroupBox("New Annotation")
     new_lay = QFormLayout()
     entries = {}
-    for field in ("Behavior", "H_Start", "H_End"):
+    for field in ("Event", "H_Start", "H_End"):
         e = QLineEdit(); e.setText(latest.get(field, ""))
         new_lay.addRow(field.replace("H_", "") + ":", e)
         entries[field] = e

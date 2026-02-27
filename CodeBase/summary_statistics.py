@@ -60,7 +60,7 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
     # --- group rows by behaviour name ------------------------------------
     rows_by_name = {}
     for row in rows:
-        name = row.get("Behavior", "").strip()
+        name = row.get("Event", "").strip()
         if name:
             rows_by_name.setdefault(name, []).append(row)
 
@@ -79,7 +79,7 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
                    if analysis_duration > 0 else 0)
             summary_rows.append({
                 "Video": video_name,
-                "Behavior": name,
+                "Event": name,
                 "Type": "State",
                 "Count": count,
                 "Observations_per_minute": round(frequency, 3),
@@ -89,7 +89,7 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
         else:
             summary_rows.append({
                 "Video": video_name,
-                "Behavior": name,
+                "Event": name,
                 "Type": "Point",
                 "Count": count,
                 "Observations_per_minute": round(frequency, 3),
@@ -97,7 +97,7 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
                 "Percent_Time": "",
             })
 
-    summary_rows.sort(key=lambda r: (r["Type"], r["Behavior"]))
+    summary_rows.sort(key=lambda r: (r["Type"], r["Event"]))
 
     # --- write output CSV ------------------------------------------------
     if custom_output_file is None:
@@ -108,7 +108,7 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
         output_file = custom_output_file
 
     fieldnames = [
-        "Video", "Behavior", "Type", "Count",
+        "Video", "Event", "Type", "Count",
         "Observations_per_minute", "Total_Duration_seconds", "Percent_Time",
     ]
 
@@ -136,20 +136,20 @@ def combine_summaries(summary_files, output_file):
     if not all_rows:
         return None
 
-    # Group by (Behavior, Type)
+    # Group by (Event, Type)
     groups = {}
     for row in all_rows:
-        key = (row.get("Behavior", ""), row.get("Type", ""))
+        key = (row.get("Event", ""), row.get("Type", ""))
         groups.setdefault(key, []).append(row)
 
     summary_rows = []
-    for (behavior, btype), group in sorted(groups.items()):
+    for (event, btype), group in sorted(groups.items()):
         counts = [int(r["Count"]) for r in group]
         obs_rates = [float(r["Observations_per_minute"]) for r in group
                      if r.get("Observations_per_minute")]
 
         entry = {
-            "Behavior": behavior,
+            "Event": event,
             "Type": btype,
             "Count": sum(counts),
             "Mean_Count_per_video": round(_mean(counts), 3),
@@ -173,7 +173,7 @@ def combine_summaries(summary_files, output_file):
         summary_rows.append(entry)
 
     fieldnames = [
-        "Behavior", "Type", "Count", "Mean_Count_per_video", "Total_videos",
+        "Event", "Type", "Count", "Mean_Count_per_video", "Total_videos",
         "Total_Duration_seconds", "Mean_Duration_per_video",
         "Mean_Percent_Time", "Mean_Observations_per_minute",
     ]
