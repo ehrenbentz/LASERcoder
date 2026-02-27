@@ -21,15 +21,10 @@
 set -e
 
 APP_NAME="LaserTAG"
-APP_VERSION="1.2.0"
 MAIN_SCRIPT="LaserTAG.py"
 CODBASE_DIR="../CodeBase"
 LIBS_DIR="./libs"
 OUTPUT_DIR="./output"
-
-SETUP_DMG="${APP_NAME}_v${APP_VERSION}_macOS_arm64.dmg"
-SETUP_PKG="${APP_NAME}_v${APP_VERSION}_macOS_arm64.pkg"
-ZIP_NAME="${APP_NAME}_v${APP_VERSION}_macOS_arm64_portable.zip"
 
 export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
@@ -147,45 +142,34 @@ cd ..
 # Create installers
 # ==================================================================
 chmod +x ./create_dmg.sh
-./create_dmg.sh "$OUTPUT_DIR/${APP_NAME}.app" "$OUTPUT_DIR" "$APP_VERSION"
+./create_dmg.sh "$OUTPUT_DIR/${APP_NAME}.app" "$OUTPUT_DIR"
 
 chmod +x ./create_pkg.sh
-./create_pkg.sh "$OUTPUT_DIR/${APP_NAME}.app" "$OUTPUT_DIR" "$APP_VERSION"
-
-# ==================================================================
-# Create portable .zip for release upload
-# ==================================================================
-echo ""
-echo "Creating portable zip..."
-
-( cd "$OUTPUT_DIR" && zip -r -y "$ZIP_NAME" "${APP_NAME}.app" )
-
-if [ $? -ne 0 ]; then
-    echo "WARNING: Failed to create zip file."
-else
-    echo "Zip created: $OUTPUT_DIR/$ZIP_NAME"
-fi
+./create_pkg.sh "$OUTPUT_DIR/${APP_NAME}.app" "$OUTPUT_DIR"
 
 # ==================================================================
 # Summary
 # ==================================================================
+APP_VERSION="v1.2.0"
+DMG_NAME="${APP_NAME}_${APP_VERSION}_macOS_arm64.dmg"
+PKG_NAME="${APP_NAME}_${APP_VERSION}_macOS_arm64.pkg"
+
 echo ""
 echo "============================================"
 echo "  Build Complete"
 echo "============================================"
 echo "  App bundle:  $OUTPUT_DIR/${APP_NAME}.app"
-echo "  DMG:         $OUTPUT_DIR/${SETUP_DMG}"
-echo "  PKG:         $OUTPUT_DIR/${SETUP_PKG}"
-[ -f "$OUTPUT_DIR/$ZIP_NAME" ] && echo "  Portable:    $OUTPUT_DIR/${ZIP_NAME}"
+echo "  DMG:         $OUTPUT_DIR/${DMG_NAME}"
+echo "  PKG:         $OUTPUT_DIR/${PKG_NAME}"
 echo ""
 echo "  --- Installing locally ---"
 echo "  cp -R $OUTPUT_DIR/${APP_NAME}.app /Applications/"
 echo ""
 echo "  --- Distributing to others ---"
-echo "  Option A: Send ${SETUP_DMG}. They open it and drag"
+echo "  Option A: Send ${DMG_NAME}. They open it and drag"
 echo "    ${APP_NAME}.app to the Applications folder."
 echo ""
-echo "  Option B: Send ${SETUP_PKG}. They double-click to"
+echo "  Option B: Send ${PKG_NAME}. They double-click to"
 echo "    install. The pkg clears quarantine automatically."
 echo ""
 echo "  --- If macOS blocks the app ---"

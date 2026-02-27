@@ -11,8 +11,7 @@ REM         LaserTAG.build\
 REM         LaserTAG.dist\   Complete application folder
 REM           LaserTAG.exe
 REM           libmpv-2.dll
-REM         LaserTAG_v{ver}_windows_x64_setup.exe    Installer
-REM         LaserTAG_v{ver}_windows_x64_portable.zip Portable zip
+REM         LaserTAGSetup.exe  Installer (if Inno Setup is available)
 REM
 REM Prerequisites:
 REM   pip install nuitka PySide6 python-mpv
@@ -24,13 +23,9 @@ REM   build_LaserTAG_Windows.bat
 setlocal enabledelayedexpansion
 
 set APP_NAME=LaserTAG
-set APP_VERSION=1.2.0
 set MAIN_SCRIPT=LaserTAG.py
 set CODBASE_DIR=..\CodeBase
 set OUTPUT_DIR=output
-
-set SETUP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_setup.exe
-set ZIP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_portable.zip
 
 REM Code signing (leave empty to skip)
 set CERT_FILE=C:\Software\Development\LaserTAG\MyCert.pfx
@@ -95,8 +90,8 @@ python -m nuitka ^
     --enable-plugin=pyside6 ^
     --include-data-files=libmpv-2.dll=libmpv-2.dll ^
     --include-data-files=laser.ico=laser.ico ^
-    --windows-file-version=%APP_VERSION% ^
-    --windows-product-version=%APP_VERSION% ^
+    --windows-file-version=1.2.0 ^
+    --windows-product-version=1.2.0 ^
     --windows-company-name="Cornell University" ^
     --windows-product-name=LaserTAG ^
     --windows-file-description="LaserTAG - Lightweight application for scoring ethology recordings and Tracking Animals Gooder" ^
@@ -155,10 +150,7 @@ if exist %ISCC% (
         if %errorlevel% neq 0 (
             echo WARNING: Inno Setup compilation failed.
         ) else (
-            if exist "%OUTPUT_DIR%\LaserTAGSetup.exe" (
-                move /y "%OUTPUT_DIR%\LaserTAGSetup.exe" "%OUTPUT_DIR%\%SETUP_NAME%" >nul
-            )
-            echo Installer created: %OUTPUT_DIR%\%SETUP_NAME%
+            echo Installer created: %OUTPUT_DIR%\LaserTAGSetup.exe
         )
     ) else (
         echo WARNING: LaserTAG.iss not found. Skipping installer creation.
@@ -166,23 +158,6 @@ if exist %ISCC% (
 ) else (
     echo Inno Setup not found at %ISCC%. Skipping installer creation.
     echo Install from: https://jrsoftware.org/isinfo.php
-)
-
-REM =====================================================================
-REM Create portable .zip for release upload
-REM =====================================================================
-echo.
-echo Creating portable zip...
-
-if exist "%OUTPUT_DIR%\%ZIP_NAME%" del "%OUTPUT_DIR%\%ZIP_NAME%"
-
-powershell -NoProfile -Command ^
-    "Compress-Archive -Path '%OUTPUT_DIR%\%APP_NAME%.dist\*' -DestinationPath '%OUTPUT_DIR%\%ZIP_NAME%'"
-
-if %errorlevel% neq 0 (
-    echo WARNING: Failed to create zip file.
-) else (
-    echo Zip created: %OUTPUT_DIR%\%ZIP_NAME%
 )
 
 REM =====================================================================
@@ -194,8 +169,8 @@ echo   Build Complete
 echo ============================================
 echo   Executable: %OUTPUT_DIR%\%APP_NAME%.dist\%APP_NAME%.exe
 echo.
-if exist "%OUTPUT_DIR%\%SETUP_NAME%" (
-    echo   Installer:  %OUTPUT_DIR%\%SETUP_NAME%
+if exist "%OUTPUT_DIR%\LaserTAGSetup.exe" (
+    echo   Installer:  %OUTPUT_DIR%\LaserTAGSetup.exe
     echo.
 )
 echo   --- Testing ---
@@ -203,9 +178,7 @@ echo   %OUTPUT_DIR%\%APP_NAME%.dist\%APP_NAME%.exe
 echo.
 echo   --- Distributing without installer ---
 echo   The %APP_NAME%.dist folder is the complete application.
-if exist "%OUTPUT_DIR%\%ZIP_NAME%" (
-    echo   Portable zip: %OUTPUT_DIR%\%ZIP_NAME%
-)
+echo   Rename it to %APP_NAME% and zip it for distribution.
 echo ============================================
 
 endlocal

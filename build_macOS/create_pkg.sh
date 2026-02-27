@@ -5,11 +5,12 @@
 # attributes so the app launches without Gatekeeper issues.
 #
 # Usage:
-#   ./create_pkg.sh [APP_PATH] [OUTPUT_DIR]
+#   ./create_pkg.sh [APP_PATH] [OUTPUT_DIR] [APP_VERSION]
 #
 # Arguments:
-#   APP_PATH     Path to the .app bundle (default: ./output/LaserTAG.app)
-#   OUTPUT_DIR   Directory for the .pkg output (default: directory containing APP_PATH)
+#   APP_PATH      Path to the .app bundle (default: ./output/LaserTAG.app)
+#   OUTPUT_DIR    Directory for the .pkg output (default: directory containing APP_PATH)
+#   APP_VERSION   Version string, e.g. "1.2.0" (default: 0.0.0)
 
 set -e
 
@@ -17,8 +18,8 @@ APP_PATH="${1:-./output/LaserTAG.app}"
 OUTPUT_DIR="${2:-$(dirname "$APP_PATH")}"
 
 APP_NAME="$(basename "$APP_PATH" .app)"
-APP_VERSION="v1.2.0"
-PKG_NAME="${APP_NAME}_${APP_VERSION}_macOS_arm64.pkg"
+APP_VERSION="${3:-1.2.0}"
+PKG_NAME="${APP_NAME}_v${APP_VERSION}_macOS_arm64.pkg"
 INSTALL_LOCATION="/Applications"
 SCRIPTS_DIR="$(mktemp -d)"
 
@@ -43,7 +44,7 @@ pkgbuild \
     --install-location "${INSTALL_LOCATION}/${APP_NAME}.app" \
     --scripts "$SCRIPTS_DIR" \
     --identifier "edu.cornell.ehrenbentz.lasertag" \
-    --version "1.2.0" \
+    --version "$APP_VERSION" \
     "$OUTPUT_DIR/$PKG_NAME"
 
 rm -rf "$SCRIPTS_DIR"

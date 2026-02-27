@@ -3,11 +3,12 @@
 # Creates a distributable DMG from a .app bundle.
 #
 # Usage:
-#   ./create_dmg.sh [APP_PATH] [OUTPUT_DIR]
+#   ./create_dmg.sh [APP_PATH] [OUTPUT_DIR] [APP_VERSION]
 #
 # Arguments:
-#   APP_PATH     Path to the .app bundle (default: ./output/LaserTAG.app)
-#   OUTPUT_DIR   Directory for the .dmg output (default: directory containing APP_PATH)
+#   APP_PATH      Path to the .app bundle (default: ./output/LaserTAG.app)
+#   OUTPUT_DIR    Directory for the .dmg output (default: directory containing APP_PATH)
+#   APP_VERSION   Version string, e.g. "1.2.0" (default: 0.0.0)
 
 set -e
 
@@ -15,8 +16,8 @@ APP_PATH="${1:-./output/LaserTAG.app}"
 OUTPUT_DIR="${2:-$(dirname "$APP_PATH")}"
 
 APP_NAME="$(basename "$APP_PATH" .app)"
-APP_VERSION="v1.2.0"
-DMG_NAME="${APP_NAME}_${APP_VERSION}_macOS_arm64.dmg"
+APP_VERSION="${3:-1.2.0}"
+DMG_NAME="${APP_NAME}_v${APP_VERSION}_macOS_arm64.dmg"
 STAGING_DIR="$(mktemp -d)"
 
 export COPYFILE_DISABLE=1
