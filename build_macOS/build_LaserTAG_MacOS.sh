@@ -10,6 +10,9 @@
 #       output/          Created by this script: .build, .dist, .app,
 #                        .dmg, .pkg
 #
+# Auto-detects architecture (arm64 or x86_64) and adjusts paths,
+# output filenames, and compiler flags accordingly.
+#
 # Prerequisites:
 #   brew install mpv (only needed if libs/ directory does not exist yet)
 #   pip install nuitka PySide6 python-mpv
@@ -20,6 +23,31 @@
 
 set -e
 
+# ==================================================================
+# Auto-detect architecture
+# ==================================================================
+ARCH=$(uname -m)
+if [ "$ARCH" = "arm64" ]; then
+    ARCH_LABEL="arm64"
+else
+    ARCH_LABEL="x86_64"
+fi
+
+# ==================================================================
+# Find Python
+# ==================================================================
+if command -v python3 &>/dev/null; then
+    PYTHON=python3
+elif command -v python &>/dev/null; then
+    PYTHON=python
+else
+    echo "ERROR: No python3 or python found on PATH"
+    exit 1
+fi
+
+# ==================================================================
+# Configuration
+# ==================================================================
 APP_NAME="LaserTAG"
 APP_VERSION="1.2.0"
 MAIN_SCRIPT="LaserTAG.py"
@@ -27,12 +55,19 @@ CODBASE_DIR="../CodeBase"
 LIBS_DIR="./libs"
 OUTPUT_DIR="./output"
 
-SETUP_DMG="${APP_NAME}_v${APP_VERSION}_macOS_arm64.dmg"
-SETUP_PKG="${APP_NAME}_v${APP_VERSION}_macOS_arm64.pkg"
-ZIP_NAME="${APP_NAME}_v${APP_VERSION}_macOS_arm64_portable.zip"
+SETUP_DMG="${APP_NAME}_v${APP_VERSION}_macOS_${ARCH_LABEL}.dmg"
+SETUP_PKG="${APP_NAME}_v${APP_VERSION}_macOS_${ARCH_LABEL}.pkg"
+ZIP_NAME="${APP_NAME}_v${APP_VERSION}_macOS_${ARCH_LABEL}_portable.zip"
 
 export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
+
+echo "============================================"
+echo "  LaserTAG macOS Build"
+echo "  Architecture: ${ARCH_LABEL}"
+echo "  Version:      ${APP_VERSION}"
+echo "============================================"
+echo ""
 
 # ==================================================================
 # Verify directory structure
@@ -62,38 +97,12 @@ fi
 # Collect dylibs (only if libs/ does not exist)
 # ==================================================================
 if [ ! -d "$LIBS_DIR" ] || [ -z "$(ls "$LIBS_DIR"/*.dylib 2>/dev/null)" ]; then
-    echo "Collecting dylibs from Homebrew mpv..."
-
-    LIBMPV_PATH="/opt/homebrew/lib/libmpv.2.dylib"
-    if [ ! -f "$LIBMPV_PATH" ]; then
-        echo "ERROR: libmpv not found at $LIBMPV_PATH"
-        echo "Install it with: brew install mpv"
-        exit 1
-    fi
-
     if [ ! -f "./collect_dylibs.sh" ]; then
         echo "ERROR: collect_dylibs.sh not found in current directory."
         exit 1
     fi
     chmod +x ./collect_dylibs.sh
-    ./collect_dylibs.sh "$LIBMPV_PATH" "$LIBS_DIR"
-
-    echo ""
-    rm -f "$LIBS_DIR/Python"
-    rm -f "$LIBS_DIR/libvapoursynth-script.0.dylib"
-    echo 'void* getVSScriptAPI(int version) { return 0; }' \
-        | cc -shared -o "$LIBS_DIR/libvapoursynth-script.0.dylib" -x c - -arch arm64
-    install_name_tool -id "@loader_path/libvapoursynth-script.0.dylib" \
-        "$LIBS_DIR/libvapoursynth-script.0.dylib"
-
-    echo ""
-    echo "Codesigning all dylibs..."
-    for lib in "$LIBS_DIR"/*.dylib; do
-        chmod 755 "$lib"
-        codesign --force --sign - "$lib"
-    done
-    echo "Signed $(ls "$LIBS_DIR"/*.dylib | wc -l | tr -d ' ') libraries."
-
+    ./collect_dylibs.sh "$LIBS_DIR"
 else
     echo "libs/ directory exists, skipping dylib collection"
     echo "  (Delete libs/ and re-run to regenerate from Homebrew)"
@@ -123,7 +132,7 @@ cd "$OUTPUT_DIR"
 
 find . -name '._*' -delete
 
-python -m nuitka \
+$PYTHON -m nuitka \
     --standalone \
     --macos-create-app-bundle \
     --macos-app-icon=Icons.icns \
@@ -171,7 +180,7 @@ fi
 # ==================================================================
 echo ""
 echo "============================================"
-echo "  Build Complete"
+echo "  Build Complete (${ARCH_LABEL})"
 echo "============================================"
 echo "  App bundle:  $OUTPUT_DIR/${APP_NAME}.app"
 echo "  DMG:         $OUTPUT_DIR/${SETUP_DMG}"
