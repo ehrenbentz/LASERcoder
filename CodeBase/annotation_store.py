@@ -46,7 +46,7 @@ class AnnotationStore:
         self.me_groups.clear()
         self.event_map.clear()
 
-        with open(self.event_key_file, "r", newline="") as f:
+        with open(self.event_key_file, "r", newline="", encoding="utf-8-sig") as f:
             for row in csv.reader(f):
                 if not row or len(row) < 3:
                     continue
@@ -80,7 +80,7 @@ class AnnotationStore:
         if not os.path.exists(self.annotations_file):
             return
 
-        with open(self.annotations_file, "r", newline="") as f:
+        with open(self.annotations_file, "r", newline="", encoding="utf-8-sig") as f:
             for row in csv.DictReader(f):
                 atype = row.get("Type", "").strip().lower()
                 name = row.get("Event", "").strip()
@@ -116,7 +116,7 @@ class AnnotationStore:
         try:
             rows = []
             if os.path.exists(self.annotations_file):
-                with open(self.annotations_file, "r", newline="") as f:
+                with open(self.annotations_file, "r", newline="", encoding="utf-8-sig") as f:
                     for row in csv.DictReader(f):
                         row.setdefault("Notes", "")
                         rows.append(row)
@@ -269,6 +269,7 @@ class AnnotationStore:
             "coding_duration": _safe_float_or_none(data.get("coding_duration")),
             "coding_end": _safe_float_or_none(data.get("coding_end")),
             "coding_end_reached": bool(data.get("coding_end_reached", False)),
+            "completed": bool(data.get("completed", False)),
         }
 
         # Derive coding_end when absent but start + duration exist
@@ -276,6 +277,14 @@ class AnnotationStore:
             result["coding_end"] = result["coding_start"] + result["coding_duration"]
 
         return result
+
+    def mark_completed(self):
+        """Mark the current video as completed in the session state."""
+        return self._merge_and_write({"completed": True})
+
+    def unmark_completed(self):
+        """Remove the completed mark from the session state."""
+        return self._merge_and_write({"completed": False})
 
     # ------------------------------------------------------------------
     # Visualization settings (stored in the same session state JSON)
@@ -307,6 +316,14 @@ class AnnotationStore:
     def load_viz_unchecked(self):
         """Load list of unchecked event names. Returns [] if none."""
         return self._read_session_key("viz_unchecked_events", [])
+
+    def save_video_settings(self, settings):
+        """Save per-video display settings (brightness, contrast, etc.)."""
+        self._merge_and_write({"video_settings": settings})
+
+    def load_video_settings(self):
+        """Load per-video display settings. Returns None if not set."""
+        return self._read_session_key("video_settings", None)
 
     def save_viz_options(self, options):
         """Save visualization option checkboxes {name: bool}."""

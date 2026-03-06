@@ -250,18 +250,53 @@ def _create_event_buttons(annotator):
     annotator.floating_windows.append(annotator.event_buttons_window)
 
 
+def _hidden_by_settings(annotator):
+    """Return the set of floating windows the user has hidden via settings."""
+    from config_manager import ConfigManager
+    cfg = ConfigManager()
+    hidden = set()
+    if not cfg.get_show_video_controls_toggle():
+        for attr in ("controls_window", "floating_controls_window"):
+            w = getattr(annotator, attr, None)
+            if w:
+                hidden.add(w)
+    if not cfg.get_show_events_toggle():
+        for attr in ("event_toggle_window", "event_buttons_window"):
+            w = getattr(annotator, attr, None)
+            if w:
+                hidden.add(w)
+    if not cfg.get_show_zoom_button():
+        w = getattr(annotator, "zoom_toggle_window", None)
+        if w:
+            hidden.add(w)
+    return hidden
+
+
 def update_floating_visibility(annotator):
     """Hide/show floating windows when the main window is minimised or deactivated."""
-    should_hide = (
-        annotator.parent.windowState() & Qt.WindowState.WindowMinimized
-        or not annotator.parent.isActiveWindow()
-    )
+    from PySide6.QtWidgets import QApplication
+
+    is_minimized = bool(
+        annotator.parent.windowState() & Qt.WindowState.WindowMinimized)
+
+    if is_minimized:
+        should_hide = True
+    elif annotator.parent.isActiveWindow():
+        should_hide = False
+    else:
+        # Check if a floating window has focus (e.g. user clicked an event
+        # button).  In that case we should NOT hide.
+        active = QApplication.instance().activeWindow()
+        should_hide = active not in annotator.floating_windows
+
+    hidden = _hidden_by_settings(annotator)
+
     for w in annotator.floating_windows:
         if w is None:
             continue
         try:
             w.winId()
-            if should_hide:
+            if should_hide or w in hidden:
                 w.hide()
             else:
                 w.show()

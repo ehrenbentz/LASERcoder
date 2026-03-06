@@ -98,7 +98,7 @@ _LIGHT = {
     # Progress bar (QPainter)
     "progress_bg": "#c0c0c0",
     "progress_fill": "#3878a8",
-    "progress_text": "#ffffff",
+    "progress_text": "#000000",
     # Floating controls
     "float_toggle_bg": "#c8c8c8",
     "float_control_bg": "#bfbfbf",

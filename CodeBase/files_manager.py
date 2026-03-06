@@ -1,13 +1,15 @@
+import json
 import os
 import shutil
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QListWidget, QFrame, QMessageBox, QSplitter, QWidget, QInputDialog,
-    QApplication, QFileDialog, QMenu,
+    QListWidget, QListWidgetItem, QFrame, QMessageBox, QSplitter, QWidget,
+    QInputDialog, QApplication, QFileDialog, QMenu,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen
 
 from display_utils import get_screen_geometry, center_window
 import theme
@@ -118,9 +120,16 @@ class FilesManager(QDialog):
         summary_frame = QFrame()
         summary_layout = QHBoxLayout(summary_frame)
         summary_layout.setContentsMargins(0, 5, 0, 0)
-        summary_btn = QPushButton("Generate Summary Statistics")
-        summary_btn.clicked.connect(self._open_summary_statistics)
+        view_ann_btn = QPushButton("View Annotations")
+        view_ann_btn.clicked.connect(self._show_view_annotations)
+        summary_layout.addWidget(view_ann_btn)
+        summary_btn = QPushButton("Summary Statistics")
+        summary_btn.clicked.connect(self._show_summary_menu)
         summary_layout.addWidget(summary_btn)
+        spacer = QPushButton()
+        spacer.setEnabled(False)
+        spacer.setStyleSheet("border: none; background: transparent;")
+        summary_layout.addWidget(spacer)
         layout.addWidget(summary_frame)
 
         self._populate_dir_list(self.initial_output_dir)
@@ -192,6 +201,27 @@ class FilesManager(QDialog):
         self.video_file_listbox.itemDoubleClicked.connect(
             self._select_video_file)
         file_layout.addWidget(self.video_file_listbox, 1)
+
+        # Status legend
+        legend = QHBoxLayout()
+        legend.setContentsMargins(0, 2, 0, 2)
+        legend.setSpacing(12)
+        for status, label_text in [
+            ("in_progress", "In Progress"),
+            ("complete", "Complete"),
+        ]:
+            icon_label = QLabel()
+            icon_label.setPixmap(
+                FilesManager._status_icon(status).pixmap(QSize(14, 14)))
+            icon_label.setFixedSize(14, 14)
+            text_label = QLabel(label_text)
+            text_label.setStyleSheet(
+                f"color: {theme.color('text_secondary')};"
+                " background: transparent; font-size: 11px;")
+            legend.addWidget(icon_label)
+            legend.addWidget(text_label)
+        legend.addStretch()
+        file_layout.addLayout(legend)
 
         select_btn = QPushButton("Select Video")
         select_btn.setFixedSize(150, 30)
@@ -325,9 +355,61 @@ class FilesManager(QDialog):
                 f for f in os.listdir(directory)
                 if os.path.isfile(os.path.join(directory, f))
                 and f.lower().endswith(extensions))
-            self.video_file_listbox.addItems(files)
+            for fname in files:
+                item = QListWidgetItem(fname)
+                status = self._get_video_status(fname)
+                if status == "complete":
+                    item.setIcon(self._status_icon("complete"))
+                elif status == "in_progress":
+                    item.setIcon(self._status_icon("in_progress"))
+                self.video_file_listbox.addItem(item)
         except OSError:
             pass
+
+    def _get_video_status(self, filename):
+        """Check session state JSON to determine video status."""
+        if not self.output_dir:
+            return "not_started"
+        video_name = os.path.splitext(filename)[0]
+        state_path = os.path.join(
+            self.output_dir, "Resume",
+            f"{video_name}_session_state.json")
+        if not os.path.exists(state_path):
+            return "not_started"
+        try:
+            with open(state_path, "r") as f:
+                data = json.load(f)
+            if data.get("completed"):
+                return "complete"
+            if data.get("timestamp_sec"):
+                return "in_progress"
+        except (json.JSONDecodeError, ValueError, OSError):
+            pass
+        return "not_started"
+
+    @staticmethod
+    def _status_icon(status):
+        """Create a small colored circle icon for video status."""
+        size = 14
+        pixmap = QPixmap(QSize(size, size))
+        pixmap.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if status == "complete":
+            painter.setBrush(QColor("#4CAF50"))
+            painter.setPen(QPen(QColor("#388E3C"), 1))
+            painter.drawEllipse(1, 1, size - 2, size - 2)
+            # Draw checkmark
+            pen = QPen(QColor("white"), 1.8)
+            painter.setPen(pen)
+            painter.drawLine(4, 7, 6, 10)
+            painter.drawLine(6, 10, 10, 4)
+        elif status == "in_progress":
+            painter.setBrush(QColor("#FFC107"))
+            painter.setPen(QPen(QColor("#FFA000"), 1))
+            painter.drawEllipse(1, 1, size - 2, size - 2)
+        painter.end()
+        return QIcon(pixmap)
 
     # ------------------------------------------------------------------
     # Directory actions
@@ -425,6 +507,203 @@ class FilesManager(QDialog):
                 self, "Note", "You must select a video file to proceed")
 
     # ------------------------------------------------------------------
+    # View annotations
+    # ------------------------------------------------------------------
+
+    def _show_view_annotations(self):
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QGroupBox)
+
+        ann_dir = ""
+        if self.output_dir:
+            ann_dir = os.path.join(self.output_dir, "Annotations")
+
+        ann_files = []
+        if ann_dir and os.path.isdir(ann_dir):
+            ann_files = sorted(
+                f for f in os.listdir(ann_dir)
+                if f.endswith("_Annotations.csv"))
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("View Annotations")
+        dlg.setStyleSheet(theme.dialog_stylesheet())
+        dlg.setModal(True)
+        dlg.setMinimumWidth(400)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        grp = QGroupBox("Annotation Files")
+        grp_lay = QVBoxLayout(grp)
+        grp_lay.setSpacing(6)
+
+        if ann_files:
+            desc = QLabel(
+                f"{len(ann_files)} annotation file"
+                f"{'s' if len(ann_files) != 1 else ''} found. "
+                "Select a file to view.")
+            desc.setWordWrap(True)
+            desc.setStyleSheet(
+                f"color: {theme.color('text_secondary')};"
+                " background: transparent;")
+            grp_lay.addWidget(desc)
+
+            combo = QComboBox()
+            for fname in ann_files:
+                title = (fname.replace("_Annotations.csv", "")
+                              .replace("_", " "))
+                combo.addItem(title, os.path.join(ann_dir, fname))
+            grp_lay.addWidget(combo)
+
+            btn_row_ann = QHBoxLayout()
+            view_btn = QPushButton("View Spreadsheet")
+            view_btn.clicked.connect(lambda: self._view_annotation_file(
+                dlg, combo.currentData(), combo.currentText()))
+            btn_row_ann.addWidget(view_btn)
+            viz_btn = QPushButton("Visualize")
+            viz_btn.clicked.connect(lambda: self._visualize_annotation_file(
+                dlg, combo.currentData(), combo.currentText()))
+            btn_row_ann.addWidget(viz_btn)
+            grp_lay.addLayout(btn_row_ann)
+        else:
+            desc = QLabel(
+                "No annotation files found in the selected output directory.")
+            desc.setWordWrap(True)
+            desc.setStyleSheet(
+                f"color: {theme.color('text_secondary')};"
+                " background: transparent;")
+            grp_lay.addWidget(desc)
+
+        layout.addWidget(grp)
+
+        layout.addStretch()
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        dlg.exec()
+
+    def _view_annotation_file(self, parent_dlg, path, title):
+        from summary_viewer import show_table_viewer
+        show_table_viewer(parent_dlg, path, title + " Annotations")
+
+    def _visualize_annotation_file(self, parent_dlg, path, title):
+        import csv
+        from annotation_store import AnnotationStore, parse_time
+        from annotations_visualizer import show_visualization_dialog
+
+        state_ann, point_ann = [], []
+        try:
+            with open(path, "r", newline="", encoding="utf-8-sig") as fh:
+                for row in csv.DictReader(fh):
+                    atype = row.get("Type", "").strip().lower()
+                    if atype == "state":
+                        start, end = 0, None
+                        try:
+                            s = row.get("Start", "").strip()
+                            if s and s != "NA":
+                                start = float(s)
+                            e = row.get("End", "").strip()
+                            if e and e != "NA":
+                                end = float(e)
+                        except ValueError:
+                            hs = row.get("H_Start", "").strip()
+                            he = row.get("H_End", "").strip()
+                            if hs and hs != "NA":
+                                start = parse_time(hs)
+                            if he and he != "NA":
+                                end = parse_time(he)
+                        state_ann.append({
+                            "Event": row.get("Event", "").strip(),
+                            "start_time": start, "end_time": end,
+                            "Type": "State",
+                            "Mutually_Exclusive": row.get(
+                                "Mutually_Exclusive", "False"),
+                            "Notes": row.get("Notes", ""),
+                        })
+                    elif atype == "point":
+                        raw = row.get("Start", "0").strip()
+                        point_ann.append({
+                            "Event": row.get("Event", "").strip(),
+                            "time": row.get("H_Start", "").strip(),
+                            "raw_time": (float(raw)
+                                         if raw and raw != "NA" else 0),
+                            "Manual_Edit": row.get("Manual_Edit", "False"),
+                            "Notes": row.get("Notes", ""),
+                        })
+        except Exception as exc:
+            QMessageBox.critical(
+                parent_dlg, "Error",
+                f"Failed to read annotations: {exc}")
+            return
+
+        if not state_ann and not point_ann:
+            QMessageBox.information(
+                parent_dlg, "No Annotations",
+                "No annotations found to visualize.")
+            return
+
+        # Estimate duration from annotation timestamps
+        max_time = 0
+        for e in state_ann:
+            if e["end_time"] is not None:
+                max_time = max(max_time, e["end_time"])
+            max_time = max(max_time, e["start_time"])
+        for e in point_ann:
+            max_time = max(max_time, e.get("raw_time", 0))
+        video_duration = max_time * 1.05 if max_time > 0 else 60
+
+        # Build a lightweight store for viz settings persistence
+        video_name = os.path.splitext(os.path.basename(path))[0]
+        video_name = video_name.replace("_Annotations", "")
+        store = AnnotationStore(
+            video_name=video_name,
+            annotations_file=path,
+            session_state_file="",
+            event_key_file="",
+            output_dir=self.output_dir or "",
+        )
+
+        # Load coding bounds from session state if available
+        state = store.load_session_state()
+        coding_start = 0
+        coding_end = None
+        if state:
+            coding_start = state.get("coding_start", 0)
+            coding_end = state.get("coding_end")
+
+        has_bounds = (coding_start > 0
+                      or (coding_end is not None and coding_end > 0))
+        bounds = {
+            "has_bounds": has_bounds,
+            "start": coding_start,
+            "end": coding_end,
+            "whole_video": True,
+        }
+
+        try:
+            show_visualization_dialog(
+                parent=parent_dlg,
+                video_name=video_name,
+                state_events=state_ann,
+                point_events=point_ann,
+                video_duration=video_duration,
+                parse_time_func=parse_time,
+                center_window_func=center_window,
+                output_dir=self.output_dir or "",
+                bounds=bounds,
+                store=store,
+            )
+        except Exception as exc:
+            QMessageBox.critical(
+                parent_dlg, "Visualization Error",
+                f"Failed to create visualization: {exc}")
+
+    # ------------------------------------------------------------------
     # Summary statistics
     # ------------------------------------------------------------------
 
@@ -445,13 +724,162 @@ class FilesManager(QDialog):
                 self, "Error",
                 f"Failed to open Summary Statistics Manager: {exc}")
 
+    def _show_summary_menu(self):
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QFrame, QGroupBox)
+
+        # Scan for existing summary files
+        ind_files, comb_files = [], []
+        summary_base = os.path.join(self.output_dir, "Summary") if self.output_dir else ""
+        ind_dir  = os.path.join(summary_base, "Individual_summaries")
+        comb_dir = os.path.join(summary_base, "Combined_summaries")
+
+        if os.path.isdir(ind_dir):
+            ind_files = sorted(
+                f for f in os.listdir(ind_dir) if f.endswith(".csv"))
+        if os.path.isdir(comb_dir):
+            comb_files = sorted(
+                f for f in os.listdir(comb_dir) if f.endswith(".csv"))
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Summary Statistics")
+        dlg.setStyleSheet(theme.dialog_stylesheet())
+        dlg.setModal(True)
+        dlg.setMinimumWidth(420)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # ── Generate section ────────────────────────────────────────────
+        gen_grp = QGroupBox("Generate")
+        gen_lay = QVBoxLayout(gen_grp)
+        gen_lay.setSpacing(6)
+        gen_desc = QLabel(
+            "Create individual or combined summary statistics\n"
+            "from annotation files.")
+        gen_desc.setWordWrap(True)
+        gen_desc.setStyleSheet(
+            f"color: {theme.color('text_secondary')}; background: transparent;")
+        gen_lay.addWidget(gen_desc)
+        gen_btn = QPushButton("Generate Statistics...")
+        gen_lay.addWidget(gen_btn)
+        layout.addWidget(gen_grp)
+
+        # ── View Individual Summaries ────────────────────────────────────
+        combo_ind = None
+        view_ind_btn = None
+        if ind_files:
+            ind_grp = QGroupBox("Individual Summaries")
+            ind_lay = QVBoxLayout(ind_grp)
+            ind_lay.setSpacing(6)
+            ind_desc = QLabel(
+                f"{len(ind_files)} individual summary file"
+                f"{'s' if len(ind_files) != 1 else ''} available.")
+            ind_desc.setStyleSheet(
+                f"color: {theme.color('text_secondary')}; background: transparent;")
+            ind_lay.addWidget(ind_desc)
+            row = QHBoxLayout()
+            combo_ind = QComboBox()
+            for fname in ind_files:
+                title = fname.replace("_Summary.csv", "").replace("_", " ")
+                combo_ind.addItem(title, os.path.join(ind_dir, fname))
+            row.addWidget(combo_ind, 1)
+            view_ind_btn = QPushButton("View")
+            row.addWidget(view_ind_btn)
+            ind_lay.addLayout(row)
+            layout.addWidget(ind_grp)
+
+        # ── View Combined Summaries ──────────────────────────────────────
+        combo_comb = None
+        view_comb_btn = None
+        if comb_files:
+            comb_grp = QGroupBox("Combined Summaries")
+            comb_lay = QVBoxLayout(comb_grp)
+            comb_lay.setSpacing(6)
+            comb_desc = QLabel(
+                f"{len(comb_files)} combined summary file"
+                f"{'s' if len(comb_files) != 1 else ''} available.")
+            comb_desc.setStyleSheet(
+                f"color: {theme.color('text_secondary')}; background: transparent;")
+            comb_lay.addWidget(comb_desc)
+            row2 = QHBoxLayout()
+            combo_comb = QComboBox()
+            for fname in comb_files:
+                title = (fname.replace("_Combined_Summary.csv", "")
+                              .replace("_", " "))
+                combo_comb.addItem(title, os.path.join(comb_dir, fname))
+            row2.addWidget(combo_comb, 1)
+            view_comb_btn = QPushButton("View")
+            row2.addWidget(view_comb_btn)
+            comb_lay.addLayout(row2)
+            layout.addWidget(comb_grp)
+
+        # ── Visualize section ────────────────────────────────────────────
+        viz_grp = QGroupBox("Visualize")
+        viz_lay = QVBoxLayout(viz_grp)
+        viz_lay.setSpacing(6)
+        viz_desc = QLabel(
+            "View box plots of combined summary data across videos.")
+        viz_desc.setWordWrap(True)
+        viz_desc.setStyleSheet(
+            f"color: {theme.color('text_secondary')}; background: transparent;")
+        viz_lay.addWidget(viz_desc)
+        boxplot_btn = QPushButton("Summary Box Plots...")
+        viz_lay.addWidget(boxplot_btn)
+        layout.addWidget(viz_grp)
+
+        # ── Close ────────────────────────────────────────────────────────
+        layout.addStretch()
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        # Wire up actions using a post-exec action slot so the dialog is
+        # fully closed before secondary dialogs open.
+        action = [None]
+
+        gen_btn.clicked.connect(lambda: _set("generate"))
+        if view_ind_btn:
+            view_ind_btn.clicked.connect(lambda: _open_viewer(
+                combo_ind.currentData(), combo_ind.currentText()))
+        if view_comb_btn:
+            view_comb_btn.clicked.connect(lambda: _open_viewer(
+                combo_comb.currentData(), combo_comb.currentText()))
+        boxplot_btn.clicked.connect(lambda: _set("boxplots"))
+
+        def _open_viewer(path, title):
+            from summary_viewer import show_table_viewer
+            show_table_viewer(dlg, path, title)
+
+        def _set(val):
+            action[0] = val
+            dlg.accept()
+
+        dlg.exec()
+
+        # Execute chosen action after dialog is gone
+        if action[0] == "generate":
+            self._open_summary_statistics()
+        elif action[0] == "boxplots":
+            self._open_boxplot_viewer()
+
+    def _open_boxplot_viewer(self):
+        from summary_viewer import show_boxplot_viewer
+        comb_dir = ""
+        if self.output_dir:
+            comb_dir = os.path.join(
+                self.output_dir, "Summary", "Combined_summaries")
+        show_boxplot_viewer(self, comb_dir)
+
     # ------------------------------------------------------------------
     # Settings menu
     # ------------------------------------------------------------------
 
     def _show_settings_menu(self):
-        from config_manager import ConfigManager
-
         menu = QMenu(self)
         menu.setStyleSheet(theme.menu_stylesheet())
 
@@ -463,13 +891,6 @@ class FilesManager(QDialog):
             action.setChecked(name == current)
             action.triggered.connect(
                 lambda checked, n=name: self._apply_theme(n))
-
-        cfg = ConfigManager()
-        float_action = menu.addAction("Show Floating Controls")
-        float_action.setCheckable(True)
-        float_action.setChecked(cfg.get_show_floating_controls())
-        float_action.triggered.connect(
-            lambda checked: cfg.update_show_floating_controls(checked))
 
         btn = self.sender()
         if btn:

@@ -316,45 +316,31 @@ class SummaryStatisticsManager(QDialog):
                 missing.append((path, video_name))
 
         if missing:
-            names = [n for _, n in missing]
-            resp = QMessageBox.question(
-                self, "Missing Summary Files",
-                "Some summary files don't exist yet. Generate them first?\n\n"
-                f"Missing: {', '.join(names)}",
-                (QMessageBox.StandardButton.Yes
-                 | QMessageBox.StandardButton.No
-                 | QMessageBox.StandardButton.Cancel))
+            empty, failed = [], []
+            for path, video_name in missing:
+                try:
+                    out = os.path.join(
+                        individual_dir, f"{video_name}_Summary.csv")
+                    result = generate_summary_statistics(path, out)
+                    if result:
+                        existing.append(result)
+                    else:
+                        empty.append(video_name)
+                except Exception as exc:
+                    failed.append((video_name, str(exc)))
 
-            if resp == QMessageBox.StandardButton.Cancel:
-                return
-            if resp == QMessageBox.StandardButton.Yes:
-                empty, failed = [], []
-                for path, video_name in missing:
-                    try:
-                        out = os.path.join(
-                            individual_dir, f"{video_name}_Summary.csv")
-                        result = generate_summary_statistics(path, out)
-                        if result:
-                            existing.append(result)
-                        else:
-                            empty.append(video_name)
-                    except Exception as exc:
-                        failed.append((video_name, str(exc)))
-
-                if empty or failed:
-                    msg = f"Generated {len(existing)} summaries."
-                    if empty:
-                        msg += "\n\nEmpty: " + ", ".join(empty)
-                    if failed:
-                        msg += "\n\nFailed: " + ", ".join(
-                            f"{n}: {e}" for n, e in failed)
-                    resp2 = QMessageBox.question(
-                        self, "Some Files Could Not Be Processed",
-                        f"{msg}\n\nContinue with available files?",
-                        (QMessageBox.StandardButton.Yes
-                         | QMessageBox.StandardButton.No))
-                    if resp2 == QMessageBox.StandardButton.No:
-                        return
+            if empty or failed:
+                msg = ""
+                if empty:
+                    msg += "The following annotation files were empty and could not be summarised:\n"
+                    msg += "\n".join(f"\u2022 {n}" for n in empty)
+                if failed:
+                    if msg:
+                        msg += "\n\n"
+                    msg += "The following files failed to process:\n"
+                    msg += "\n".join(f"\u2022 {n}: {e}" for n, e in failed)
+                QMessageBox.information(
+                    self, "Some Files Skipped", msg)
 
         if not existing:
             QMessageBox.information(
@@ -373,10 +359,8 @@ class SummaryStatisticsManager(QDialog):
 
             ann_name = (os.path.basename(combined_ann)
                         if combined_ann else "Could not be created")
-            QMessageBox.information(
-                self, "Combined Analysis",
-                f"Combined Summary:\n{os.path.basename(combined_sum_path)}"
-                f"\n\nCombined Annotations:\n{ann_name}")
+            self._show_combined_result(
+                combined_sum_path, existing, experiment_name, ann_name)
         except Exception as exc:
             QMessageBox.critical(
                 self, "Error",
@@ -408,7 +392,7 @@ class SummaryStatisticsManager(QDialog):
 
         for path in file_paths:
             try:
-                with open(path, "r", newline="") as fh:
+                with open(path, "r", newline="", encoding="utf-8-sig") as fh:
                     reader = csv.DictReader(fh)
                     rows = list(reader)
                     if not rows:
@@ -451,6 +435,38 @@ class SummaryStatisticsManager(QDialog):
                 self, "Error",
                 f"Error saving combined annotations: {exc}")
             return None
+
+    def _show_combined_result(self, combined_sum_path, individual_paths,
+                              experiment_name, ann_name):
+        """Show result dialog with option to open the summary viewer."""
+        result_dlg = QDialog(self)
+        result_dlg.setWindowTitle("Combined Analysis Complete")
+        result_dlg.setStyleSheet(theme.dialog_stylesheet())
+        rdl = QVBoxLayout(result_dlg)
+        rdl.setSpacing(10)
+        rdl.setContentsMargins(15, 15, 15, 15)
+
+        rdl.addWidget(QLabel(
+            f"Combined Summary:\n  {os.path.basename(combined_sum_path)}"
+            f"\n\nCombined Annotations:\n  {ann_name}"))
+
+        btn_row = QHBoxLayout()
+        view_btn = QPushButton("View Summary…")
+        close_btn = QPushButton("Close")
+        btn_row.addStretch()
+        btn_row.addWidget(view_btn)
+        btn_row.addWidget(close_btn)
+        rdl.addLayout(btn_row)
+
+        def _view():
+            result_dlg.accept()
+            from summary_viewer import show_table_viewer
+            title = os.path.basename(combined_sum_path).replace(".csv", "").replace("_", " ")
+            show_table_viewer(self, combined_sum_path, title)
+
+        view_btn.clicked.connect(_view)
+        close_btn.clicked.connect(result_dlg.reject)
+        result_dlg.exec()
 
     def _ensure_summary_dir(self, base_dir):
         summary_dir = os.path.join(base_dir, "Summary")

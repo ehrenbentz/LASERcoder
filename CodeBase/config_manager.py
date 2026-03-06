@@ -5,6 +5,12 @@ import json
 from pathlib import Path
 from PySide6.QtCore import QStandardPaths, QDir
 
+DEFAULT_VIDEO_SETTINGS = {
+    "brightness": 0, "contrast": 0, "gamma": 0,
+    "saturation": 0, "hue": 0
+}
+
+
 class ConfigManager:
     """
     Manages LaserTAG configuration settings.
@@ -46,6 +52,9 @@ class ConfigManager:
         if self.config.get('theme') not in ('dark', 'light', 'system'):
             self.config['theme'] = 'system'
 
+        if 'video_settings' not in self.config:
+            self.config['video_settings'] = DEFAULT_VIDEO_SETTINGS.copy()
+
         self.save_config()
 
     def create_default_config(self):
@@ -55,6 +64,7 @@ class ConfigManager:
             'video_dir': self.home_dir,
             'last_event_key': None,
             'theme': 'system',
+            'video_settings': DEFAULT_VIDEO_SETTINGS.copy(),
         }
 
     def save_config(self):
@@ -107,6 +117,15 @@ class ConfigManager:
             self.config['theme'] = name
             self.save_config()
 
+    def get_video_settings(self):
+        """Get the global video display settings."""
+        return self.config.get('video_settings', DEFAULT_VIDEO_SETTINGS.copy())
+
+    def update_video_settings(self, settings):
+        """Update and persist global video display settings."""
+        self.config['video_settings'] = settings
+        self.save_config()
+
     def get_show_floating_controls(self):
         """Get whether floating controls should be visible."""
         return self.config.get('show_floating_controls', True)
@@ -114,4 +133,25 @@ class ConfigManager:
     def update_show_floating_controls(self, visible):
         """Update whether floating controls should be visible."""
         self.config['show_floating_controls'] = bool(visible)
+        self.save_config()
+
+    def get_show_video_controls_toggle(self):
+        return self.config.get('show_video_controls_toggle', True)
+
+    def set_show_video_controls_toggle(self, visible):
+        self.config['show_video_controls_toggle'] = bool(visible)
+        self.save_config()
+
+    def get_show_events_toggle(self):
+        return self.config.get('show_events_toggle', True)
+
+    def set_show_events_toggle(self, visible):
+        self.config['show_events_toggle'] = bool(visible)
+        self.save_config()
+
+    def get_show_zoom_button(self):
+        return self.config.get('show_zoom_button', True)
+
+    def set_show_zoom_button(self, visible):
+        self.config['show_zoom_button'] = bool(visible)
         self.save_config()

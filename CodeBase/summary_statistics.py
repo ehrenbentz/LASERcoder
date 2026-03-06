@@ -4,16 +4,18 @@ import csv
 import json
 
 
-def generate_summary_statistics(annotations_file, custom_output_file=None):
-    """
-    Generate summary statistics from an annotation CSV file.
+def compute_summary_rows(annotations_file, use_whole_video=False):
+    """Compute per-event summary rows from an annotation CSV.
 
+    Returns a list of dicts (one per event) or ``None`` when the file
+    contains no annotations.  When *use_whole_video* is ``True`` the
+    coding-start / coding-duration session parameters are ignored and
+    the full data span is used instead.
     """
     base_name = os.path.basename(annotations_file)
     video_name = base_name.replace("_Annotations.csv", "")
 
-    # Read annotation rows
-    with open(annotations_file, "r", newline="") as fh:
+    with open(annotations_file, "r", newline="", encoding="utf-8-sig") as fh:
         rows = list(csv.DictReader(fh))
 
     if not rows:
@@ -23,22 +25,24 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
     coding_start = 0.0
     coding_duration = None
 
-    annotations_dir = os.path.dirname(annotations_file)
-    base_dir = os.path.dirname(annotations_dir)
-    session_state_file = os.path.join(
-        base_dir, "Resume", f"{video_name}_session_state.json")
+    if not use_whole_video:
+        annotations_dir = os.path.dirname(annotations_file)
+        base_dir = os.path.dirname(annotations_dir)
+        session_state_file = os.path.join(
+            base_dir, "Resume", f"{video_name}_session_state.json")
 
-    if os.path.exists(session_state_file):
-        try:
-            with open(session_state_file, "r") as fh:
-                state = json.load(fh)
-                coding_start = float(state.get("coding_start", 0))
-                if state.get("coding_duration") is not None:
-                    coding_duration = float(state["coding_duration"])
-                elif state.get("coding_end") is not None:
-                    coding_duration = float(state["coding_end"]) - coding_start
-        except (json.JSONDecodeError, ValueError, OSError):
-            pass
+        if os.path.exists(session_state_file):
+            try:
+                with open(session_state_file, "r") as fh:
+                    state = json.load(fh)
+                    coding_start = float(state.get("coding_start", 0))
+                    if state.get("coding_duration") is not None:
+                        coding_duration = float(state["coding_duration"])
+                    elif state.get("coding_end") is not None:
+                        coding_duration = (float(state["coding_end"])
+                                           - coding_start)
+            except (json.JSONDecodeError, ValueError, OSError):
+                pass
 
     # --- total duration from the data ------------------------------------
     total_duration_seconds = 0.0
@@ -98,8 +102,23 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
             })
 
     summary_rows.sort(key=lambda r: (r["Type"], r["Event"]))
+    return summary_rows
 
-    # --- write output CSV ------------------------------------------------
+
+def generate_summary_statistics(annotations_file, custom_output_file=None):
+    """
+    Generate summary statistics from an annotation CSV file.
+
+    """
+    summary_rows = compute_summary_rows(annotations_file)
+    if summary_rows is None:
+        return None
+
+    base_name = os.path.basename(annotations_file)
+    video_name = base_name.replace("_Annotations.csv", "")
+    annotations_dir = os.path.dirname(annotations_file)
+    base_dir = os.path.dirname(annotations_dir)
+
     if custom_output_file is None:
         summary_dir = os.path.join(base_dir, "Summary")
         os.makedirs(summary_dir, exist_ok=True)
@@ -128,7 +147,7 @@ def combine_summaries(summary_files, output_file):
     all_rows = []
     for path in summary_files:
         try:
-            with open(path, "r", newline="") as fh:
+            with open(path, "r", newline="", encoding="utf-8-sig") as fh:
                 all_rows.extend(csv.DictReader(fh))
         except OSError:
             pass

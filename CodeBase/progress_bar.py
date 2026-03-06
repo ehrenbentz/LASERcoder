@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QWidget
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QColor, QPainter, QPen
 
 import theme
@@ -17,6 +17,7 @@ class ProgressBarWithText(QWidget):
         self._center_text = "(1.0x)"
         self._right_text = "Total Time"
         self._annotator = annotator
+        self._hover_x = None
         self.setMouseTracking(True)
         self.setAutoFillBackground(True)
         palette = self.palette()
@@ -89,12 +90,60 @@ class ProgressBarWithText(QWidget):
         rx = self.width() - painter.fontMetrics().horizontalAdvance(self._right_text) - 10
         painter.drawText(rx, text_y, self._right_text)
 
+        # Hover timestamp tooltip
+        if self._hover_x is not None and self._annotator is not None:
+            total = getattr(getattr(self._annotator, "player", None), "duration", None)
+            if total and total > 0:
+                ratio = max(0.0, min(1.0, self._hover_x / self.width()))
+                secs = ratio * total
+                label = _format_hover_time(secs)
+
+                fm = painter.fontMetrics()
+                text_w = fm.horizontalAdvance(label)
+                text_h = fm.height()
+                pad_x, pad_y = 5, 2
+                box_w = text_w + pad_x * 2
+                box_h = text_h + pad_y * 2
+
+                # Align right edge of box to cursor; clamp to widget edges
+                bx = int(self._hover_x) - box_w
+                bx = max(0, min(bx, self.width() - box_w))
+                by = 2  # top of bar
+
+                bg = theme.qcolor("progress_bg")
+                border = theme.qcolor("progress_text")
+                painter.setBrush(bg)
+                painter.setPen(QPen(border, 1))
+                painter.drawRect(QRect(bx, by, box_w, box_h))
+
+                painter.setPen(theme.qcolor("progress_text"))
+                painter.drawText(bx + pad_x, by + pad_y + fm.ascent(), label)
+
         painter.end()
 
     # --- mouse ---------------------------------------------------------
+
+    def mouseMoveEvent(self, event):
+        self._hover_x = event.position().x()
+        self.update()
+
+    def leaveEvent(self, event):
+        self._hover_x = None
+        self.update()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._annotator is not None:
             ratio = event.position().x() / self.width()
             ratio = max(0.0, min(1.0, ratio))
             self._annotator.on_progress_click(ratio)
+
+
+def _format_hover_time(secs):
+    """Format seconds as H:MM:SS or M:SS for the hover tooltip."""
+    secs = int(secs)
+    h = secs // 3600
+    m = (secs % 3600) // 60
+    s = secs % 60
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"

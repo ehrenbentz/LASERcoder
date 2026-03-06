@@ -40,6 +40,22 @@ from dialogs import (
 import theme
 
 
+def _fmt_current(secs):
+    """Format seconds as H:MM:SS.ss for the progress bar current time."""
+    h = int(secs) // 3600
+    m = (int(secs) % 3600) // 60
+    s = secs % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def _fmt_total(secs):
+    """Format seconds as H:MM:SS for the progress bar total time."""
+    h = int(secs) // 3600
+    m = (int(secs) % 3600) // 60
+    s = int(secs) % 60
+    return f"{h}:{m:02d}:{s:02d}"
+
+
 class MpvOpenGLWidget(QOpenGLWidget):
     """OpenGL widget that lets libmpv render frames into a Qt GL surface."""
 
@@ -153,6 +169,7 @@ class VideoAnnotator(QFrame):
         self.coding_duration = None
         self.coding_end = None
         self.coding_end_reached = False
+        self._video_completed = False
         self.active_state_events = {}
         self.used_point_events = set()
 
@@ -282,20 +299,12 @@ class VideoAnnotator(QFrame):
                 send_long(ns_window, sel_setLevel, 25)
 
             # --- NSApplication: auto-hide dock & menubar ---
-            NSApp_cls = _objc.objc_getClass(b"NSApplication")
-            sel_shared = _objc.sel_registerName(b"sharedApplication")
-            ns_app = send(NSApp_cls, sel_shared)
-            if ns_app:
-                sel_setPresentation = _objc.sel_registerName(
-                    b"setPresentationOptions:")
-                # NSApplicationPresentationAutoHideDock      = 1 << 0
-                # NSApplicationPresentationAutoHideMenuBar   = 1 << 2
-                send_ulong(ns_app, sel_setPresentation, (1 << 0) | (1 << 2))
+            self._reapply_macos_autohide()
         except Exception as exc:
             print(f"macOS fullscreen setup failed: {exc}")
 
-    def _restore_macos_presentation(self):
-        """Restore default dock/menubar presentation on exit."""
+    def _set_macos_presentation(self, options):
+        """Set NSApplication presentationOptions to the given bitmask."""
         try:
             import ctypes.util as _cu
 
@@ -325,10 +334,20 @@ class VideoAnnotator(QFrame):
             if ns_app:
                 sel_setPresentation = _objc.sel_registerName(
                     b"setPresentationOptions:")
-                # NSApplicationPresentationDefault = 0
-                send_ulong(ns_app, sel_setPresentation, 0)
+                send_ulong(ns_app, sel_setPresentation, options)
         except Exception:
             pass
+
+    def _reapply_macos_autohide(self):
+        """Re-apply auto-hide dock/menubar after focus changes."""
+        # NSApplicationPresentationAutoHideDock    = 1 << 0
+        # NSApplicationPresentationAutoHideMenuBar = 1 << 2
+        self._set_macos_presentation((1 << 0) | (1 << 2))
+
+    def _restore_macos_presentation(self):
+        """Restore default dock/menubar presentation on exit."""
+        # NSApplicationPresentationDefault = 0
+        self._set_macos_presentation(0)
 
     # ------------------------------------------------------------------
     # Layout
@@ -400,14 +419,46 @@ class VideoAnnotator(QFrame):
                 self.event_buttons_window.move(x, y)
 
     def _set_floating_visible(self, visible):
-        """Show or hide all floating windows, pruning any deleted C++ objects."""
+        """Show or hide all floating windows, pruning any deleted C++ objects.
+
+        When *visible* is True, per-item settings are respected so that
+        individually disabled toggles stay hidden.
+        """
+        if visible:
+            from config_manager import ConfigManager
+            cfg = ConfigManager()
+            hidden = set()
+            if not cfg.get_show_video_controls_toggle():
+                w = getattr(self, "controls_window", None)
+                if w:
+                    hidden.add(w)
+                w2 = getattr(self, "floating_controls_window", None)
+                if w2:
+                    hidden.add(w2)
+            if not cfg.get_show_events_toggle():
+                w = getattr(self, "event_toggle_window", None)
+                if w:
+                    hidden.add(w)
+                w2 = getattr(self, "event_buttons_window", None)
+                if w2:
+                    hidden.add(w2)
+            if not cfg.get_show_zoom_button():
+                w = getattr(self, "zoom_toggle_window", None)
+                if w:
+                    hidden.add(w)
+        else:
+            hidden = None
+
         live = []
         for w in self.floating_windows:
             if w is None:
                 continue
             try:
                 w.winId()  # raises RuntimeError if C++ object is deleted
-                w.setVisible(visible)
+                if hidden is not None and w in hidden:
+                    w.setVisible(False)
+                else:
+                    w.setVisible(visible)
                 live.append(w)
             except RuntimeError:
                 pass
@@ -466,9 +517,9 @@ class VideoAnnotator(QFrame):
             return
 
         self.progress_bar.set_progress(current / total)
-        self.progress_bar.set_left_text(format_time_human(current))
+        self.progress_bar.set_left_text(_fmt_current(current))
         self.progress_bar.set_center_text(f"({self.player.speed:.1f}x)")
-        self.progress_bar.set_right_text(format_time_human(total))
+        self.progress_bar.set_right_text(_fmt_total(total))
 
         # Check coding-end
         if (self.coding_duration is not None
@@ -521,9 +572,9 @@ class VideoAnnotator(QFrame):
             QTimer.singleShot(250, self._init_progress_bar)
             return
 
-        self.progress_bar.set_left_text("0m0.00s")
+        self.progress_bar.set_left_text("0:00:00.00")
         self.progress_bar.set_center_text("(1.0x)")
-        self.progress_bar.set_right_text(format_time_human(total))
+        self.progress_bar.set_right_text(_fmt_total(total))
 
         if self.coding_duration is not None and self.coding_duration > 0:
             end_time = self.coding_start + self.coding_duration
@@ -598,14 +649,27 @@ class VideoAnnotator(QFrame):
         self.parent.raise_()
         self.player.play(self.video_path)
 
+        # Apply saved video settings after player starts
+        QTimer.singleShot(300, self._apply_video_settings)
         # Delay floating windows until after video starts
         QTimer.singleShot(500, self._show_floating_controls)
 
     def _show_floating_controls(self):
         from config_manager import ConfigManager
         create_toggle_buttons(self)
-        if not ConfigManager().get_show_floating_controls():
-            self._set_floating_visible(False)
+        cfg = ConfigManager()
+        if not cfg.get_show_video_controls_toggle():
+            w = getattr(self, "controls_window", None)
+            if w:
+                w.setVisible(False)
+        if not cfg.get_show_events_toggle():
+            w = getattr(self, "event_toggle_window", None)
+            if w:
+                w.setVisible(False)
+        if not cfg.get_show_zoom_button():
+            w = getattr(self, "zoom_toggle_window", None)
+            if w:
+                w.setVisible(False)
         QTimer.singleShot(100, self._scroll_annotations_to_bottom)
 
     # ------------------------------------------------------------------
@@ -617,7 +681,8 @@ class VideoAnnotator(QFrame):
         heading_font = "12px"
 
         available_h = self.panel_height - self.progress_bar_height
-        pane_h = (available_h - 15) // 4
+        btn_area_h = 90
+        pane_h = (available_h - btn_area_h - 15) // 4
 
         self.annotation_frame = QFrame(self)
         self.annotation_frame.setFrameStyle(
@@ -730,12 +795,15 @@ class VideoAnnotator(QFrame):
         pal.addWidget(self.point_annotations_tree)
         main_layout.addWidget(paf)
 
-        # Bottom buttons
+        # Bottom buttons — two rows
         btn_frame = QFrame()
-        btn_lay = QHBoxLayout(btn_frame)
-        btn_lay.setContentsMargins(0, 3, 0, 0)
-        btn_lay.setSpacing(6)
+        btn_frame.setFixedHeight(btn_area_h)
+        btn_outer = QVBoxLayout(btn_frame)
+        btn_outer.setContentsMargins(0, 3, 0, 0)
+        btn_outer.setSpacing(4)
 
+        top_row = QHBoxLayout()
+        top_row.setSpacing(6)
         for text, callback in [
             ("Set\nCoding Start", self.set_coding_start),
             ("Visualize\nAnnotations", self.visualize_annotations),
@@ -745,7 +813,22 @@ class VideoAnnotator(QFrame):
             b.setStyleSheet(big_btn_style)
             b.clicked.connect(callback)
             self._big_buttons.append(b)
-            btn_lay.addWidget(b)
+            top_row.addWidget(b)
+        btn_outer.addLayout(top_row)
+
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(6)
+        self._mark_complete_btn = QPushButton("Mark Video\nComplete")
+        self._mark_complete_btn.setStyleSheet(big_btn_style)
+        self._mark_complete_btn.clicked.connect(self._mark_video_complete)
+        self._big_buttons.append(self._mark_complete_btn)
+        bottom_row.addWidget(self._mark_complete_btn)
+        for _ in range(2):
+            spacer = QPushButton()
+            spacer.setStyleSheet(big_btn_style + "QPushButton { border: none; background: transparent; }")
+            spacer.setEnabled(False)
+            bottom_row.addWidget(spacer)
+        btn_outer.addLayout(bottom_row)
 
         main_layout.addWidget(btn_frame)
 
@@ -833,19 +916,82 @@ class VideoAnnotator(QFrame):
                 lambda checked, n=name: self._apply_theme(n))
 
         cfg = ConfigManager()
-        float_action = menu.addAction("Show Floating Controls")
-        float_action.setCheckable(True)
-        float_action.setChecked(cfg.get_show_floating_controls())
-        float_action.triggered.connect(self._toggle_floating_controls_setting)
+
+        controls_action = menu.addAction("Show Video Controls Toggle")
+        controls_action.setCheckable(True)
+        controls_action.setChecked(cfg.get_show_video_controls_toggle())
+        controls_action.triggered.connect(
+            lambda checked: self._toggle_floating_item(
+                "video_controls", checked))
+
+        events_action = menu.addAction("Show Events Toggle")
+        events_action.setCheckable(True)
+        events_action.setChecked(cfg.get_show_events_toggle())
+        events_action.triggered.connect(
+            lambda checked: self._toggle_floating_item(
+                "events", checked))
+
+        zoom_action = menu.addAction("Show Zoom Button")
+        zoom_action.setCheckable(True)
+        zoom_action.setChecked(cfg.get_show_zoom_button())
+        zoom_action.triggered.connect(
+            lambda checked: self._toggle_floating_item(
+                "zoom", checked))
+
+        menu.addSeparator()
+        menu.addAction("Video Settings...").triggered.connect(
+            self._show_video_settings_dialog)
 
         btn = self.sender()
         if btn:
             menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
-    def _toggle_floating_controls_setting(self, checked):
+    def _toggle_floating_item(self, item, checked):
         from config_manager import ConfigManager
-        ConfigManager().update_show_floating_controls(checked)
-        self._set_floating_visible(checked)
+        cfg = ConfigManager()
+        if item == "video_controls":
+            cfg.set_show_video_controls_toggle(checked)
+            w = getattr(self, "controls_window", None)
+            if w:
+                w.setVisible(checked)
+            # Also hide/show the expanded controls panel
+            w2 = getattr(self, "floating_controls_window", None)
+            if w2 and not checked:
+                w2.setVisible(False)
+        elif item == "events":
+            cfg.set_show_events_toggle(checked)
+            w = getattr(self, "event_toggle_window", None)
+            if w:
+                w.setVisible(checked)
+            # Also hide/show the expanded event buttons panel
+            w2 = getattr(self, "event_buttons_window", None)
+            if w2 and not checked:
+                w2.setVisible(False)
+        elif item == "zoom":
+            cfg.set_show_zoom_button(checked)
+            w = getattr(self, "zoom_toggle_window", None)
+            if w:
+                w.setVisible(checked)
+
+    def _show_video_settings_dialog(self):
+        from dialogs import show_video_settings_dialog
+        show_video_settings_dialog(self)
+
+    def _apply_video_settings(self):
+        """Apply saved video settings to the player. Per-video overrides global."""
+        per_video = self.store.load_video_settings()
+        if per_video:
+            settings = per_video
+        else:
+            from config_manager import ConfigManager
+            settings = ConfigManager().get_video_settings()
+        for prop in ("brightness", "contrast", "gamma", "saturation", "hue"):
+            val = settings.get(prop, 0)
+            if val != 0:
+                try:
+                    setattr(self.player, prop, val)
+                except Exception:
+                    pass
 
     def _apply_theme(self, name):
         from config_manager import ConfigManager
@@ -960,6 +1106,7 @@ class VideoAnnotator(QFrame):
     def _load_session_state(self):
         state = self.store.load_session_state()
         if state is None:
+            self._update_mark_complete_btn(False)
             self.update_coding_info_display()
             return
 
@@ -967,6 +1114,7 @@ class VideoAnnotator(QFrame):
         self.coding_duration = state["coding_duration"]
         self.coding_end = state["coding_end"]
         self.coding_end_reached = state["coding_end_reached"]
+        self._update_mark_complete_btn(state.get("completed", False))
         self.update_coding_info_display()
 
         ts = state["timestamp_sec"]
@@ -1064,6 +1212,10 @@ class VideoAnnotator(QFrame):
                                 50, self._raise_floating_windows)
                             QTimer.singleShot(
                                 200, self._raise_floating_windows)
+                            # Re-apply dock/menubar auto-hide after
+                            # dialogs or app switching
+                            QTimer.singleShot(
+                                100, self._reapply_macos_autohide)
                         else:
                             self._set_floating_visible(False)
                 else:
@@ -1230,6 +1382,19 @@ class VideoAnnotator(QFrame):
         if key in self.active_state_events:
             start = self.active_state_events[key]
             dur = frame_ts - start
+            if dur <= 0:
+                if self.player:
+                    self.player.pause = True
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self.parent,
+                    "Invalid Annotation",
+                    f"Cannot end \"{name}\": the current time "
+                    f"({format_time_human(frame_ts)}) is not after the start time "
+                    f"({format_time_human(start)}).\n\n"
+                    "Please seek to a point after the start time and try again."
+                )
+                return False
             record = {
                 "Video": self.video_name, "Event": name, "Type": "State",
                 "Mutually_Exclusive": "True" if me_group else "False",
@@ -1288,6 +1453,19 @@ class VideoAnnotator(QFrame):
             start = self.active_state_events[key]
             name = self.store.state_event_keys.get(key)
             dur = frame_ts - start
+            if dur <= 0:
+                if self.player:
+                    self.player.pause = True
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self.parent,
+                    "Invalid Annotation",
+                    f"Cannot end \"{name}\": the current time "
+                    f"({format_time_human(frame_ts)}) is not after the start time "
+                    f"({format_time_human(start)}).\n\n"
+                    "Please seek to a point after the start time and try again."
+                )
+                return False
             record = {
                 "Video": self.video_name, "Event": name, "Type": "State",
                 "Mutually_Exclusive": "True",
@@ -1614,7 +1792,7 @@ class VideoAnnotator(QFrame):
 
     def load_annotation_data(self, annotation, *fields):
         result = {f: "" for f in fields}
-        with open(self.store.annotations_file, "r") as fh:
+        with open(self.store.annotations_file, "r", encoding="utf-8-sig") as fh:
             for row in csv.DictReader(fh):
                 if (row.get("Event", "") == annotation["Event"]
                         and row["H_Start"] == format_time_human(
@@ -1684,7 +1862,7 @@ class VideoAnnotator(QFrame):
             return list(self.store.state_events), list(self.store.point_events)
 
         try:
-            with open(self.store.annotations_file, "r", newline="") as fh:
+            with open(self.store.annotations_file, "r", newline="", encoding="utf-8-sig") as fh:
                 for row in csv.DictReader(fh):
                     atype = row.get("Type", "").strip().lower()
                     if atype == "state":
@@ -1727,6 +1905,40 @@ class VideoAnnotator(QFrame):
     # ------------------------------------------------------------------
     # Event key editor
     # ------------------------------------------------------------------
+
+    def _mark_video_complete(self):
+        is_complete = self._video_completed
+        if is_complete:
+            action_text = "Mark this video as in progress?"
+            title = "Mark In Progress"
+        else:
+            action_text = "Mark this video as complete?"
+            title = "Mark Complete"
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle(title)
+        msg.setText(action_text)
+        msg.setStyleSheet(theme.dialog_stylesheet())
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
+        if msg.exec() != QMessageBox.StandardButton.Yes:
+            return
+
+        if is_complete:
+            self.store.unmark_completed()
+            self._update_mark_complete_btn(False)
+        else:
+            self.store.mark_completed()
+            self._update_mark_complete_btn(True)
+
+    def _update_mark_complete_btn(self, completed):
+        self._video_completed = completed
+        if hasattr(self, "_mark_complete_btn"):
+            if completed:
+                self._mark_complete_btn.setText("Mark\nIn Progress")
+            else:
+                self._mark_complete_btn.setText("Mark Video\nComplete")
 
     def _edit_event_key(self):
         was_playing = False
@@ -1862,13 +2074,15 @@ class VideoAnnotator(QFrame):
 
     def return_to_file_selection(self):
         if getattr(self, "_returning", False):
-            QApplication.exit(0)
             return
 
         self._returning = True
         try:
             if sys.platform == "darwin":
                 self._restore_macos_presentation()
+
+            if hasattr(self, "progress_timer") and self.progress_timer:
+                self.progress_timer.stop()
 
             if hasattr(self, "player") and self.player:
                 try:
@@ -1887,6 +2101,17 @@ class VideoAnnotator(QFrame):
                     pass
                 self.player = None
 
+            for attr in ("floating_controls_window", "event_buttons_window",
+                         "event_toggle_window", "controls_window",
+                         "zoom_toggle_window", "edit_dialog"):
+                w = getattr(self, attr, None)
+                if w is not None:
+                    try:
+                        w.hide()
+                        w.deleteLater()
+                    except Exception:
+                        pass
+
             for w in list(self.floating_windows):
                 if w is not None:
                     try:
@@ -1897,35 +2122,10 @@ class VideoAnnotator(QFrame):
             self.floating_windows.clear()
 
             if self.parent:
-                from setup_manager import SetupManager
-                from config_manager import ConfigManager
-
                 main_window = self.parent
-                if hasattr(main_window, "video_annotator"):
-                    old = main_window.video_annotator
-                    main_window.video_annotator = None
-                    if old:
-                        try:
-                            old.hide()
-                            old.deleteLater()
-                        except Exception:
-                            pass
-
-                setup = SetupManager(config_manager=ConfigManager())
-                try:
-                    setup.exec()
-                    if (setup.start_video_flag and setup.video_path
-                            and setup.event_key_file):
-                        main_window.init_video_annotator(
-                            video_path=setup.video_path,
-                            session_state_file=setup.session_state_file,
-                            event_file=setup.event_key_file,
-                            output_dir=setup.output_dir)
-                        main_window.show()
-                    else:
-                        main_window.close()
-                except Exception:
-                    main_window.close()
+                main_window._return_to_setup = True
+                main_window.hide()
+                QApplication.exit(0)
             else:
                 QApplication.quit()
         except Exception as exc:

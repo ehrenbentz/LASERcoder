@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QLineEdit, QTextEdit, QGroupBox,
     QGridLayout, QDialogButtonBox, QMessageBox, QWidget,
-    QRadioButton,
+    QRadioButton, QSlider,
 )
 from PySide6.QtCore import Qt
 
@@ -601,6 +601,147 @@ def show_edit_point_dialog(annotator):
     layout.addWidget(bbox)
 
     dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
+    dlg.exec()
+
+
+def show_video_settings_dialog(annotator):
+    """Show a dialog to adjust MPV video display properties."""
+    from config_manager import ConfigManager
+
+    PROPS = ("brightness", "contrast", "gamma", "saturation", "hue")
+
+    # Snapshot current player values for Cancel rollback
+    originals = {}
+    for prop in PROPS:
+        try:
+            originals[prop] = int(getattr(annotator.player, prop, 0) or 0)
+        except Exception:
+            originals[prop] = 0
+
+    cfg = ConfigManager()
+    per_video = annotator.store.load_video_settings()
+    global_settings = cfg.get_video_settings()
+
+    dlg = QDialog(annotator.parent)
+    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+    dlg.setWindowTitle("Video Settings")
+    dlg.setModal(True)
+    _apply_dialog_theme(dlg)
+    center_window(dlg, 480, 380)
+
+    layout = QVBoxLayout(dlg)
+    layout.setSpacing(8)
+
+    # --- Sliders for each property ---
+    sliders = {}
+    value_labels = {}
+
+    sliders_group = QGroupBox("Display Adjustments")
+    sliders_layout = QGridLayout(sliders_group)
+    sliders_layout.setColumnStretch(1, 1)
+
+    for row, prop in enumerate(PROPS):
+        lbl = QLabel(prop.capitalize() + ":")
+        sliders_layout.addWidget(lbl, row, 0, Qt.AlignmentFlag.AlignLeft)
+
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setMinimum(-100)
+        slider.setMaximum(100)
+        slider.setTickInterval(25)
+        slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        sliders[prop] = slider
+        sliders_layout.addWidget(slider, row, 1)
+
+        val_lbl = QLabel("0")
+        val_lbl.setFixedWidth(30)
+        val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        value_labels[prop] = val_lbl
+        sliders_layout.addWidget(val_lbl, row, 2)
+
+        reset_btn = QPushButton("↺")
+        reset_btn.clicked.connect(lambda _, p=prop: sliders[p].setValue(0))
+        sliders_layout.addWidget(reset_btn, row, 3)
+
+    layout.addWidget(sliders_group)
+
+    # --- Scope selection ---
+    scope_group = QGroupBox("Apply to:")
+    scope_layout = QHBoxLayout(scope_group)
+    all_radio = QRadioButton("All Videos")
+    video_radio = QRadioButton("This Video Only")
+    scope_layout.addWidget(all_radio)
+    scope_layout.addWidget(video_radio)
+    layout.addWidget(scope_group)
+
+    # --- Buttons ---
+    btn_frame = QWidget()
+    btn_lay = QHBoxLayout(btn_frame)
+    save_btn = QPushButton("Save")
+    cancel_btn = QPushButton("Cancel")
+    btn_lay.addStretch()
+    btn_lay.addWidget(save_btn)
+    btn_lay.addWidget(cancel_btn)
+    layout.addWidget(btn_frame)
+
+    def _load_scope_values(settings):
+        """Load settings dict into sliders and update player preview."""
+        for prop in PROPS:
+            val = int(settings.get(prop, 0)) if settings else 0
+            sliders[prop].blockSignals(True)
+            sliders[prop].setValue(val)
+            sliders[prop].blockSignals(False)
+            value_labels[prop].setText(str(val))
+            try:
+                setattr(annotator.player, prop, val)
+            except Exception:
+                pass
+
+    def _on_scope_changed():
+        if all_radio.isChecked():
+            _load_scope_values(global_settings)
+        else:
+            _load_scope_values(per_video or {})
+
+    def _on_slider_changed(val, prop):
+        value_labels[prop].setText(str(val))
+        try:
+            setattr(annotator.player, prop, val)
+        except Exception:
+            pass
+
+    for prop in PROPS:
+        sliders[prop].valueChanged.connect(
+            lambda val, p=prop: _on_slider_changed(val, p))
+
+    all_radio.toggled.connect(lambda _: _on_scope_changed())
+
+    def _save():
+        current = {prop: sliders[prop].value() for prop in PROPS}
+        if all_radio.isChecked():
+            cfg.update_video_settings(current)
+        else:
+            annotator.store.save_video_settings(current)
+        dlg.accept()
+
+    def _cancel():
+        for prop in PROPS:
+            try:
+                setattr(annotator.player, prop, originals[prop])
+            except Exception:
+                pass
+        dlg.reject()
+
+    save_btn.clicked.connect(_save)
+    cancel_btn.clicked.connect(_cancel)
+
+    # Set initial scope and load values
+    if per_video:
+        video_radio.setChecked(True)
+        _load_scope_values(per_video)
+    else:
+        all_radio.setChecked(True)
+        _load_scope_values(global_settings)
+
     dlg.exec()
 
 
