@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout,
-                             QPushButton, QLabel, QSizePolicy)
+                             QPushButton, QLabel, QSizePolicy,
+                             QApplication)
 from PySide6.QtCore import Qt, QPoint
 
 import theme
@@ -252,8 +253,8 @@ def _create_event_buttons(annotator):
 
 def _hidden_by_settings(annotator):
     """Return the set of floating windows the user has hidden via settings."""
-    from config_manager import ConfigManager
-    cfg = ConfigManager()
+    from config_manager import get_config
+    cfg = get_config()
     hidden = set()
     if not cfg.get_show_video_controls_toggle():
         for attr in ("controls_window", "floating_controls_window"):
@@ -274,7 +275,6 @@ def _hidden_by_settings(annotator):
 
 def update_floating_visibility(annotator):
     """Hide/show floating windows when the main window is minimised or deactivated."""
-    from PySide6.QtWidgets import QApplication
 
     is_minimized = bool(
         annotator.parent.windowState() & Qt.WindowState.WindowMinimized)

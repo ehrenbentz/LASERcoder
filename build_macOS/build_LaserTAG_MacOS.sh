@@ -4,17 +4,20 @@
 #
 # Directory structure:
 #   LaserTAG/
-#     CodeBase/          Python source files including LaserTAG.py
-#     build_MacOS/       This script, libs/, Icons.icns, collect_dylibs.sh,
-#                        create_dmg.sh, create_pkg.sh, Info.plist
-#       output/          Created by this script: .build, .dist, .app,
-#                        .dmg, .pkg
+#     CodeBase/              Python source files including LaserTAG.py
+#     build_MacOS/           This script, Icons.icns, collect_dylibs.sh,
+#                            create_dmg.sh, create_pkg.sh, Info.plist
+#       libs_arm64/          Pre-collected dylibs for Apple Silicon
+#       libs_x86_64/         Pre-collected dylibs for Intel
+#       dist_arm64/          Build output for Apple Silicon
+#       dist_x86_64/         Build output for Intel
 #
-# Auto-detects architecture (arm64 or x86_64) and adjusts paths,
-# output filenames, and compiler flags accordingly.
+# Auto-detects architecture (arm64 or x86_64) and uses the matching
+# libs and output directories. The compiled binary always references
+# libs/ (no architecture suffix) so the CodeBase stays universal.
 #
 # Prerequisites:
-#   brew install mpv (only needed if libs/ directory does not exist yet)
+#   brew install mpv (only needed if libs_<arch>/ does not exist yet)
 #   pip install nuitka PySide6 python-mpv
 #
 # Usage:
@@ -49,18 +52,56 @@ fi
 # Configuration
 # ==================================================================
 APP_NAME="LaserTAG"
-APP_VERSION="1.2.0"
+APP_VERSION="1.3.0"
 MAIN_SCRIPT="LaserTAG.py"
 CODBASE_DIR="../CodeBase"
-LIBS_DIR="./libs"
-OUTPUT_DIR="./output"
+LIBS_DIR="./libs_${ARCH_LABEL}"
+OUTPUT_DIR="./dist_${ARCH_LABEL}"
 
+APP_BUNDLE="${APP_NAME}.app"
 SETUP_DMG="${APP_NAME}_v${APP_VERSION}_macOS_${ARCH_LABEL}.dmg"
 SETUP_PKG="${APP_NAME}_v${APP_VERSION}_macOS_${ARCH_LABEL}.pkg"
 ZIP_NAME="${APP_NAME}_v${APP_VERSION}_macOS_${ARCH_LABEL}_portable.zip"
 
 export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
+
+# ==================================================================
+# Retry helper — retries a command when macOS holds file locks
+# (Spotlight indexing, quarantine scanning, etc.)
+# ==================================================================
+MAX_RETRIES=5
+RETRY_DELAY=5
+
+retry_busy() {
+    local attempt=1
+    local delay="$RETRY_DELAY"
+    while true; do
+        if "$@" 2>retry_stderr_$$.tmp; then
+            rm -f retry_stderr_$$.tmp
+            return 0
+        fi
+        local rc=$?
+        local err
+        err=$(cat retry_stderr_$$.tmp 2>/dev/null)
+        rm -f retry_stderr_$$.tmp
+        if echo "$err" | grep -qi "resource busy\|file.*busy"; then
+            if [ "$attempt" -ge "$MAX_RETRIES" ]; then
+                echo "ERROR: Command still failing after $MAX_RETRIES attempts: $*"
+                echo "  $err"
+                return $rc
+            fi
+            echo "  Resource busy (attempt $attempt/$MAX_RETRIES), waiting ${delay}s..."
+            sleep "$delay"
+            attempt=$((attempt + 1))
+            delay=$((delay + 5))
+        else
+            # Not a busy error — print stderr and fail immediately
+            echo "$err" >&2
+            return $rc
+        fi
+    done
+}
 
 echo "============================================"
 echo "  LaserTAG macOS Build"
@@ -94,7 +135,7 @@ if [ ! -f "Info.plist" ]; then
 fi
 
 # ==================================================================
-# Collect dylibs (only if libs/ does not exist)
+# Collect dylibs (only if libs_<arch>/ does not exist)
 # ==================================================================
 if [ ! -d "$LIBS_DIR" ] || [ -z "$(ls "$LIBS_DIR"/*.dylib 2>/dev/null)" ]; then
     if [ ! -f "./collect_dylibs.sh" ]; then
@@ -104,8 +145,8 @@ if [ ! -d "$LIBS_DIR" ] || [ -z "$(ls "$LIBS_DIR"/*.dylib 2>/dev/null)" ]; then
     chmod +x ./collect_dylibs.sh
     ./collect_dylibs.sh "$LIBS_DIR"
 else
-    echo "libs/ directory exists, skipping dylib collection"
-    echo "  (Delete libs/ and re-run to regenerate from Homebrew)"
+    echo "${LIBS_DIR}/ directory exists, skipping dylib collection"
+    echo "  (Delete ${LIBS_DIR}/ and re-run to regenerate from Homebrew)"
 fi
 
 # ==================================================================
@@ -118,7 +159,7 @@ mkdir -p "$OUTPUT_DIR"
 # Copy Python source into output for Nuitka to compile
 cp "$CODBASE_DIR"/*.py "$OUTPUT_DIR/"
 
-# Copy build resources into output
+# Copy build resources into output (libs/ without arch suffix for the binary)
 cp Icons.icns "$OUTPUT_DIR/"
 cp -R "$LIBS_DIR" "$OUTPUT_DIR/libs"
 chmod 755 "$OUTPUT_DIR"/libs/*.dylib
@@ -139,6 +180,7 @@ $PYTHON -m nuitka \
     --macos-app-name="$APP_NAME" \
     --output-filename="$APP_NAME" \
     --enable-plugin=pyside6 \
+    --nofollow-import-to=PIL \
     "--include-data-files=libs/*.dylib=libs/" \
     "$MAIN_SCRIPT"
 
@@ -147,19 +189,22 @@ rm -f *.py *.icns
 rm -rf libs
 
 ## Replace Nuitka's auto-generated Info.plist with our custom one
+## and stamp the version from APP_VERSION
 echo ""
-echo "Installing custom Info.plist..."
-cp ../Info.plist "${APP_NAME}.app/Contents/Info.plist"
+echo "Installing custom Info.plist (v${APP_VERSION})..."
+sed "s/__APP_VERSION__/${APP_VERSION}/g" ../Info.plist \
+    > "${APP_NAME}.app/Contents/Info.plist"
+
 cd ..
 
 # ==================================================================
 # Create installers
 # ==================================================================
 chmod +x ./create_dmg.sh
-./create_dmg.sh "$OUTPUT_DIR/${APP_NAME}.app" "$OUTPUT_DIR" "$APP_VERSION"
+./create_dmg.sh "$OUTPUT_DIR/${APP_BUNDLE}" "$OUTPUT_DIR" "$APP_VERSION"
 
 chmod +x ./create_pkg.sh
-./create_pkg.sh "$OUTPUT_DIR/${APP_NAME}.app" "$OUTPUT_DIR" "$APP_VERSION"
+./create_pkg.sh "$OUTPUT_DIR/${APP_BUNDLE}" "$OUTPUT_DIR" "$APP_VERSION"
 
 # ==================================================================
 # Create portable .zip for release upload
@@ -167,13 +212,13 @@ chmod +x ./create_pkg.sh
 echo ""
 echo "Creating portable zip..."
 
-( cd "$OUTPUT_DIR" && zip -r -y "$ZIP_NAME" "${APP_NAME}.app" )
-
-if [ $? -ne 0 ]; then
-    echo "WARNING: Failed to create zip file."
-else
+pushd "$OUTPUT_DIR" > /dev/null
+if retry_busy zip -r -y "$ZIP_NAME" "${APP_BUNDLE}"; then
     echo "Zip created: $OUTPUT_DIR/$ZIP_NAME"
+else
+    echo "WARNING: Failed to create zip file."
 fi
+popd > /dev/null
 
 # ==================================================================
 # Summary
@@ -182,17 +227,17 @@ echo ""
 echo "============================================"
 echo "  Build Complete (${ARCH_LABEL})"
 echo "============================================"
-echo "  App bundle:  $OUTPUT_DIR/${APP_NAME}.app"
+echo "  App bundle:  $OUTPUT_DIR/${APP_BUNDLE}"
 echo "  DMG:         $OUTPUT_DIR/${SETUP_DMG}"
 echo "  PKG:         $OUTPUT_DIR/${SETUP_PKG}"
 [ -f "$OUTPUT_DIR/$ZIP_NAME" ] && echo "  Portable:    $OUTPUT_DIR/${ZIP_NAME}"
 echo ""
 echo "  --- Installing locally ---"
-echo "  cp -R $OUTPUT_DIR/${APP_NAME}.app /Applications/"
+echo "  cp -R $OUTPUT_DIR/${APP_BUNDLE} /Applications/"
 echo ""
 echo "  --- Distributing to others ---"
 echo "  Option A: Send ${SETUP_DMG}. They open it and drag"
-echo "    ${APP_NAME}.app to the Applications folder."
+echo "    ${APP_BUNDLE} to the Applications folder."
 echo ""
 echo "  Option B: Send ${SETUP_PKG}. They double-click to"
 echo "    install. The pkg clears quarantine automatically."
@@ -202,11 +247,11 @@ echo "  This app is not signed with an Apple Developer ID,"
 echo "  so macOS Gatekeeper will block it on first launch."
 echo ""
 echo "  Option 1 (GUI):"
-echo "    Right-click ${APP_NAME}.app > Open > click Open"
+echo "    Right-click ${APP_BUNDLE} > Open > click Open"
 echo "    in the dialog. Only needed once."
 echo ""
 echo "  Option 2 (Terminal):"
-echo "    xattr -cr /Applications/${APP_NAME}.app"
+echo "    xattr -cr /Applications/${APP_BUNDLE}"
 echo ""
 echo "  Option 3 (System Settings):"
 echo "    After a blocked launch attempt, open System Settings,"

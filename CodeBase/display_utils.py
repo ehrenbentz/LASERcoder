@@ -1,9 +1,11 @@
 import locale
 locale.setlocale(locale.LC_NUMERIC, "C")
 
+import colorsys
 import os
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen, QBrush
 
 
 def get_screen_geometry():
@@ -54,3 +56,30 @@ def center_window(window, width, height, screen_info=None):
     window.setGeometry(x, y, width, height)
     window.resize(width, height)
     window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMaximized)
+
+
+_HUE_ANGLE = 30
+_HUE_OFFSET = 30.0
+
+
+def generate_default_colors(event_names):
+    """Generate distinct colors for a set of event names using golden-angle hue spacing."""
+    cmap = {}
+    for i, name in enumerate(sorted(event_names)):
+        hue = (_HUE_OFFSET + i * _HUE_ANGLE) % 360
+        r, g, b = colorsys.hls_to_rgb(hue / 360.0, 0.55, 0.65)
+        cmap[name] = QColor(int(r * 255), int(g * 255), int(b * 255))
+    return cmap
+
+
+def make_color_icon(color, size=16):
+    """Create a small colored rounded-rect icon."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QPen(QColor(color).darker(150), 1))
+    p.setBrush(QBrush(color))
+    p.drawRoundedRect(1, 1, size - 2, size - 2, 2, 2)
+    p.end()
+    return QIcon(pm)

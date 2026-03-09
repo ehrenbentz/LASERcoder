@@ -1,7 +1,6 @@
 # annotations_visualizer.py
 
 import os
-import colorsys
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                             QComboBox, QLabel, QSpinBox, QFileDialog, QFrame,
                             QMessageBox, QGroupBox, QCheckBox, QScrollArea,
@@ -11,21 +10,8 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QBrush, QFont,
                         QLinearGradient, QPainterPath, QImage, QFontMetrics,
                         QPixmap, QIcon)
 
+from display_utils import generate_default_colors, make_color_icon
 import theme
-
-# ---------------------------------------------------------------------------
-# Color palette: golden-angle spacing for distinct per-event hues
-# ---------------------------------------------------------------------------
-_HUE_ANGLE = 30
-_HUE_OFFSET   = 30.0
-
-def _generate_default_colors(event_names):
-    cmap = {}
-    for i, name in enumerate(sorted(event_names)):
-        hue = (_HUE_OFFSET + i * _HUE_ANGLE) % 360
-        r, g, b = colorsys.hls_to_rgb(hue / 360.0, 0.55, 0.65)
-        cmap[name] = QColor(int(r * 255), int(g * 255), int(b * 255))
-    return cmap
 
 def _state_fill(base_color):
     c = QColor(base_color)
@@ -40,18 +26,6 @@ def _point_marker(base_color):
 
 def _legend_swatch(base_color):
     return QColor(base_color)
-
-def _make_color_icon(color, size=16):
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(QPen(QColor(color).darker(150), 1))
-    p.setBrush(QBrush(color))
-    p.drawRoundedRect(1, 1, size - 2, size - 2, 2, 2)
-    p.end()
-    return QIcon(pm)
-
 
 class AnnotationsVisualizer(QFrame):
     """Timeline visualization widget for annotations."""
@@ -111,7 +85,7 @@ class AnnotationsVisualizer(QFrame):
         for e in self._all_point_events:
             if e['Event']:
                 all_events.add(e['Event'])
-        self._color_map = _generate_default_colors(all_events)
+        self._color_map = generate_default_colors(all_events)
 
         # Canonical order lists — all known events in each type
         self._state_order = sorted(
@@ -624,7 +598,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             color_btn.setFixedSize(20, 20)
             color_btn.setStyleSheet(color_btn_style)
             base = timeline_widget._color_map.get(name, QColor("#888888"))
-            color_btn.setIcon(_make_color_icon(base))
+            color_btn.setIcon(make_color_icon(base))
             color_btn.setIconSize(QSize(16, 16))
             color_btn.setToolTip(f"Change color for {name}")
             color_buttons[name] = color_btn
@@ -873,7 +847,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                 if chosen.isValid():
                     timeline_widget.set_event_color(event_name, chosen)
                     color_buttons[event_name].setIcon(
-                        _make_color_icon(chosen))
+                        make_color_icon(chosen))
                     # Persist custom colors to session state
                     if store is not None:
                         custom = {}

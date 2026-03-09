@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt
 
 from display_utils import get_screen_geometry, center_window
 from summary_statistics import generate_summary_statistics, combine_summaries
+from summary_viewer import show_table_viewer
 import theme
 
 
@@ -460,7 +461,6 @@ class SummaryStatisticsManager(QDialog):
 
         def _view():
             result_dlg.accept()
-            from summary_viewer import show_table_viewer
             title = os.path.basename(combined_sum_path).replace(".csv", "").replace("_", " ")
             show_table_viewer(self, combined_sum_path, title)
 

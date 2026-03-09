@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer
 
-from config_manager import ConfigManager
+from config_manager import get_config
 from files_manager import FilesManager
 from event_key_editor import EventKeyEditor
 import theme

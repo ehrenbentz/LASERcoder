@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import shutil
@@ -6,12 +7,16 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QListWidget, QListWidgetItem, QFrame, QMessageBox, QSplitter, QWidget,
-    QInputDialog, QApplication, QFileDialog, QMenu,
+    QInputDialog, QApplication, QFileDialog, QMenu, QComboBox, QGroupBox,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen
 
 from display_utils import get_screen_geometry, center_window
+from annotation_store import AnnotationStore, parse_time
+from annotations_visualizer import show_visualization_dialog
+from summary_statistics_manager import SummaryStatisticsManager
+from summary_viewer import show_table_viewer, show_boxplot_viewer
 import theme
 
 
@@ -355,9 +360,10 @@ class FilesManager(QDialog):
                 f for f in os.listdir(directory)
                 if os.path.isfile(os.path.join(directory, f))
                 and f.lower().endswith(extensions))
+            statuses = self._get_all_video_statuses(files)
             for fname in files:
                 item = QListWidgetItem(fname)
-                status = self._get_video_status(fname)
+                status = statuses.get(fname, "not_started")
                 if status == "complete":
                     item.setIcon(self._status_icon("complete"))
                 elif status == "in_progress":
@@ -366,26 +372,35 @@ class FilesManager(QDialog):
         except OSError:
             pass
 
-    def _get_video_status(self, filename):
-        """Check session state JSON to determine video status."""
+    def _get_all_video_statuses(self, filenames):
+        """Check session state JSONs for all videos at once."""
+        result = {}
         if not self.output_dir:
-            return "not_started"
-        video_name = os.path.splitext(filename)[0]
-        state_path = os.path.join(
-            self.output_dir, "Resume",
-            f"{video_name}_session_state.json")
-        if not os.path.exists(state_path):
-            return "not_started"
+            return result
+        resume_dir = os.path.join(self.output_dir, "Resume")
+        if not os.path.isdir(resume_dir):
+            return result
+        # Read all session state files in one pass
+        existing = set()
         try:
-            with open(state_path, "r") as f:
-                data = json.load(f)
-            if data.get("completed"):
-                return "complete"
-            if data.get("timestamp_sec"):
-                return "in_progress"
-        except (json.JSONDecodeError, ValueError, OSError):
-            pass
-        return "not_started"
+            existing = set(os.listdir(resume_dir))
+        except OSError:
+            return result
+        for fname in filenames:
+            video_name = os.path.splitext(fname)[0]
+            state_file = f"{video_name}_session_state.json"
+            if state_file not in existing:
+                continue
+            try:
+                with open(os.path.join(resume_dir, state_file), "r") as f:
+                    data = json.load(f)
+                if data.get("completed"):
+                    result[fname] = "complete"
+                elif data.get("timestamp_sec"):
+                    result[fname] = "in_progress"
+            except (json.JSONDecodeError, ValueError, OSError):
+                pass
+        return result
 
     @staticmethod
     def _status_icon(status):
@@ -511,9 +526,6 @@ class FilesManager(QDialog):
     # ------------------------------------------------------------------
 
     def _show_view_annotations(self):
-        from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QGroupBox)
-
         ann_dir = ""
         if self.output_dir:
             ann_dir = os.path.join(self.output_dir, "Annotations")
@@ -588,14 +600,9 @@ class FilesManager(QDialog):
         dlg.exec()
 
     def _view_annotation_file(self, parent_dlg, path, title):
-        from summary_viewer import show_table_viewer
         show_table_viewer(parent_dlg, path, title + " Annotations")
 
     def _visualize_annotation_file(self, parent_dlg, path, title):
-        import csv
-        from annotation_store import AnnotationStore, parse_time
-        from annotations_visualizer import show_visualization_dialog
-
         state_ann, point_ann = [], []
         try:
             with open(path, "r", newline="", encoding="utf-8-sig") as fh:
@@ -708,8 +715,6 @@ class FilesManager(QDialog):
     # ------------------------------------------------------------------
 
     def _open_summary_statistics(self):
-        from summary_statistics_manager import SummaryStatisticsManager
-
         if self.output_dir:
             annotations_dir = os.path.join(self.output_dir, "Annotations")
             start_dir = (annotations_dir if os.path.exists(annotations_dir)
@@ -725,9 +730,6 @@ class FilesManager(QDialog):
                 f"Failed to open Summary Statistics Manager: {exc}")
 
     def _show_summary_menu(self):
-        from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QFrame, QGroupBox)
-
         # Scan for existing summary files
         ind_files, comb_files = [], []
         summary_base = os.path.join(self.output_dir, "Summary") if self.output_dir else ""
@@ -852,7 +854,6 @@ class FilesManager(QDialog):
         boxplot_btn.clicked.connect(lambda: _set("boxplots"))
 
         def _open_viewer(path, title):
-            from summary_viewer import show_table_viewer
             show_table_viewer(dlg, path, title)
 
         def _set(val):
@@ -868,7 +869,6 @@ class FilesManager(QDialog):
             self._open_boxplot_viewer()
 
     def _open_boxplot_viewer(self):
-        from summary_viewer import show_boxplot_viewer
         comb_dir = ""
         if self.output_dir:
             comb_dir = os.path.join(
@@ -897,9 +897,9 @@ class FilesManager(QDialog):
             menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
     def _apply_theme(self, name):
-        from config_manager import ConfigManager
+        from config_manager import get_config
         theme.load_theme(name)
-        ConfigManager().update_theme(name)
+        get_config().update_theme(name)
 
         app = QApplication.instance()
         app.setStyleSheet(theme.app_stylesheet())

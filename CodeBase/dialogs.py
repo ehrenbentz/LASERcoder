@@ -2,12 +2,13 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QLineEdit, QTextEdit, QGroupBox,
     QGridLayout, QDialogButtonBox, QMessageBox, QWidget,
-    QRadioButton, QSlider,
+    QRadioButton, QSlider, QFrame,
 )
 from PySide6.QtCore import Qt
 
 from display_utils import center_window
 from annotation_store import format_time_human, parse_time
+from config_manager import get_config
 import theme
 
 
@@ -383,7 +384,6 @@ def show_annotation_details(annotator):
         grid.addWidget(l, row, 0)
         grid.addWidget(QLabel(val), row, 1)
 
-    from PySide6.QtWidgets import QFrame
     sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
     sep.setFrameShadow(QFrame.Shadow.Sunken)
     main_lay.addWidget(sep)
@@ -495,37 +495,21 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
                 QMessageBox.warning(annotator.parent, "Invalid Time Format",
                                     "Could not parse time values.")
                 return
-            for evt in annotator.store.state_events:
-                if evt["Event"] == annotation["Event"] and evt["start_time"] == annotation["start_time"]:
-                    if evt["Event"] != vals["Event"] or evt["start_time"] != new_start or evt["end_time"] != new_end:
-                        evt["Manual_Edit"] = True
-                    evt["Event"] = vals["Event"]
-                    evt["start_time"] = new_start
-                    evt["end_time"] = new_end
-                    evt["Notes"] = new_note
-                    break
+            if annotation["Event"] != vals["Event"] or annotation["start_time"] != new_start or annotation["end_time"] != new_end:
+                annotation["Manual_Edit"] = True
+            annotation["Event"] = vals["Event"]
+            annotation["start_time"] = new_start
+            annotation["end_time"] = new_end
+            annotation["Notes"] = new_note
         else:
-            for evt in annotator.store.point_events:
-                if evt["Event"] == annotation["Event"] and evt["time"] == annotation["time"]:
-                    if evt["Event"] != vals["Event"] or evt["time"] != vals["H_Start"]:
-                        evt["Manual_Edit"] = True
-                    evt["Event"] = vals["Event"]
-                    evt["time"] = vals["H_Start"]
-                    evt["Notes"] = new_note
-                    break
+            if annotation["Event"] != vals["Event"] or annotation["time"] != vals["H_Start"]:
+                annotation["Manual_Edit"] = True
+            annotation["Event"] = vals["Event"]
+            annotation["time"] = vals["H_Start"]
+            annotation["Notes"] = new_note
 
         if not annotator.store.save_sorted_annotations():
-            # Rollback
-            if annotation_type == "State":
-                for evt in annotator.store.state_events:
-                    if evt["Event"] == vals["Event"]:
-                        evt.update(originals)
-                        break
-            else:
-                for evt in annotator.store.point_events:
-                    if evt["Event"] == vals["Event"]:
-                        evt.update(originals)
-                        break
+            annotation.update(originals)
             return
 
         annotator.update_annotations()
@@ -606,8 +590,6 @@ def show_edit_point_dialog(annotator):
 
 def show_video_settings_dialog(annotator):
     """Show a dialog to adjust MPV video display properties."""
-    from config_manager import ConfigManager
-
     PROPS = ("brightness", "contrast", "gamma", "saturation", "hue")
 
     # Snapshot current player values for Cancel rollback
@@ -618,7 +600,7 @@ def show_video_settings_dialog(annotator):
         except Exception:
             originals[prop] = 0
 
-    cfg = ConfigManager()
+    cfg = get_config()
     per_video = annotator.store.load_video_settings()
     global_settings = cfg.get_video_settings()
 

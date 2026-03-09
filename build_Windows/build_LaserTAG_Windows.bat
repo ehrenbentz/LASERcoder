@@ -4,13 +4,14 @@ REM Run from inside LaserTAG\build_Windows\
 REM
 REM Directory structure:
 REM   LaserTAG\
-REM     CodeBase\          Python source files including LaserTAG.py
-REM     build_Windows\     This script, libmpv-2.dll, laser.ico, LaserTAG.iss
-REM       output\          Created by this script
+REM     CodeBase\              Python source files including LaserTAG.py
+REM     build_Windows\         This script, libmpv-2.dll, laser.ico, LaserTAG.iss
+REM       dist_Windows\        Created by this script
 REM         LaserTAG.build\
-REM         LaserTAG.dist\   Complete application folder
+REM         LaserTAG.dist\       Complete application folder
 REM           LaserTAG.exe
 REM           libmpv-2.dll
+REM         version_info.txt
 REM         LaserTAG_v{ver}_windows_x64_setup.exe    Installer
 REM         LaserTAG_v{ver}_windows_x64_portable.zip Portable zip
 REM
@@ -24,17 +25,20 @@ REM   build_LaserTAG_Windows.bat
 setlocal enabledelayedexpansion
 
 set APP_NAME=LaserTAG
-set APP_VERSION=1.2.0
+set APP_VERSION=1.3.0
 set MAIN_SCRIPT=LaserTAG.py
 set CODBASE_DIR=..\CodeBase
-set OUTPUT_DIR=output
+set OUTPUT_DIR=dist_Windows
 
 set SETUP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_setup.exe
 set ZIP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_portable.zip
 
-REM Code signing (leave empty to skip)
-set CERT_FILE=C:\Software\Development\LaserTAG\MyCert.pfx
-set CERT_PASS=Sirtalis1111
+REM Code signing — set these environment variables before running,
+REM or leave unset to skip signing:
+REM   set LASERTAG_CERT_FILE=C:\path\to\MyCert.pfx
+REM   set LASERTAG_CERT_PASS=YourPassword
+if defined LASERTAG_CERT_FILE (set CERT_FILE=%LASERTAG_CERT_FILE%) else (set CERT_FILE=)
+if defined LASERTAG_CERT_PASS (set CERT_PASS=%LASERTAG_CERT_PASS%) else (set CERT_PASS=)
 
 REM =====================================================================
 REM Verify directory structure
@@ -61,6 +65,15 @@ if not exist "laser.ico" (
 )
 
 REM =====================================================================
+REM Parse version components from APP_VERSION (e.g. 1.3.0)
+REM =====================================================================
+for /f "tokens=1,2,3 delims=." %%a in ("%APP_VERSION%") do (
+    set VER_MAJOR=%%a
+    set VER_MINOR=%%b
+    set VER_PATCH=%%c
+)
+
+REM =====================================================================
 REM Prepare output directory
 REM =====================================================================
 echo Preparing output directory...
@@ -70,6 +83,42 @@ if exist "%OUTPUT_DIR%" (
     rmdir /s /q "%OUTPUT_DIR%"
 )
 mkdir "%OUTPUT_DIR%"
+
+REM =====================================================================
+REM Generate version_info.txt in output directory
+REM =====================================================================
+echo Generating version_info.txt for v%APP_VERSION%...
+(
+echo # UTF-8
+echo VSVersionInfo(
+echo   ffi=FixedFileInfo(
+echo     filevers=(%VER_MAJOR%, %VER_MINOR%, %VER_PATCH%^),
+echo     prodvers=(%VER_MAJOR%, %VER_MINOR%, %VER_PATCH%^),
+echo     mask=0x3f,
+echo     flags=0x0,
+echo     OS=0x40004,
+echo     fileType=0x1,
+echo     subtype=0x0,
+echo     date=(0, 0^)
+echo     ^),
+echo   kids=[
+echo     StringFileInfo(
+echo       [
+echo       StringTable(
+echo         u'040904b0',
+echo         [StringStruct(u'CompanyName', u'Cornell University'^),
+echo         StringStruct(u'FileDescription', u'LaserTAG - Lightweight application for scoring ethology recordings and Tracking Animals Gooder'^),
+echo         StringStruct(u'FileVersion', u'%APP_VERSION%'^),
+echo         StringStruct(u'InternalName', u'LaserTAG'^),
+echo         StringStruct(u'LegalCopyright', u'Copyright 2025 Ehren Bentz. Licensed under GNU GPL v3. See https://github.com/ehrenbentz/LaserTAG'^),
+echo         StringStruct(u'OriginalFilename', u'LaserTAG.exe'^),
+echo         StringStruct(u'ProductName', u'LaserTAG'^),
+echo         StringStruct(u'ProductVersion', u'%APP_VERSION%'^)]^)
+echo       ]^),
+echo     VarFileInfo([VarStruct(u'Translation', [1033, 1200]^)^]^)
+echo   ]
+echo ^)
+) > "%OUTPUT_DIR%\version_info.txt"
 
 REM Copy Python source into output for Nuitka to compile
 echo Copying source from %CODBASE_DIR%...
@@ -93,6 +142,7 @@ python -m nuitka ^
     --windows-icon-from-ico=laser.ico ^
     --output-filename=%APP_NAME%.exe ^
     --enable-plugin=pyside6 ^
+    --nofollow-import-to=PIL ^
     --include-data-files=libmpv-2.dll=libmpv-2.dll ^
     --include-data-files=laser.ico=laser.ico ^
     --windows-file-version=%APP_VERSION% ^
@@ -151,13 +201,10 @@ echo Creating installer...
 set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist %ISCC% (
     if exist "LaserTAG.iss" (
-        %ISCC% "LaserTAG.iss"
+        %ISCC% /DAppVer=%APP_VERSION% "LaserTAG.iss"
         if %errorlevel% neq 0 (
             echo WARNING: Inno Setup compilation failed.
         ) else (
-            if exist "%OUTPUT_DIR%\LaserTAGSetup.exe" (
-                move /y "%OUTPUT_DIR%\LaserTAGSetup.exe" "%OUTPUT_DIR%\%SETUP_NAME%" >nul
-            )
             echo Installer created: %OUTPUT_DIR%\%SETUP_NAME%
         )
     ) else (

@@ -155,3 +155,13 @@ class ConfigManager:
     def set_show_zoom_button(self, visible):
         self.config['show_zoom_button'] = bool(visible)
         self.save_config()
+
+
+_instance = None
+
+def get_config():
+    """Return the shared ConfigManager singleton."""
+    global _instance
+    if _instance is None:
+        _instance = ConfigManager()
+    return _instance

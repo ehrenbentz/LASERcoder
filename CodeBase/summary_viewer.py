@@ -1,6 +1,5 @@
 import os
 import csv
-import colorsys
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -17,35 +16,8 @@ from PySide6.QtCharts import (
 )
 
 import theme
-from display_utils import get_screen_geometry, center_window
-
-# ---------------------------------------------------------------------------
-# Color helpers (mirrors annotations_visualizer)
-# ---------------------------------------------------------------------------
-
-_HUE_ANGLE  = 30
-_HUE_OFFSET = 30.0
-
-
-def _generate_default_colors(event_names):
-    cmap = {}
-    for i, name in enumerate(sorted(event_names)):
-        hue = (_HUE_OFFSET + i * _HUE_ANGLE) % 360
-        r, g, b = colorsys.hls_to_rgb(hue / 360.0, 0.55, 0.65)
-        cmap[name] = QColor(int(r * 255), int(g * 255), int(b * 255))
-    return cmap
-
-
-def _make_color_icon(color, size=16):
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(QPen(QColor(color).darker(150), 1))
-    p.setBrush(QBrush(QColor(color)))
-    p.drawRoundedRect(1, 1, size - 2, size - 2, 2, 2)
-    p.end()
-    return QIcon(pm)
+from display_utils import (get_screen_geometry, center_window,
+                           generate_default_colors, make_color_icon)
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +354,7 @@ class _BoxplotViewer(QDialog):
                 new_order.append(e)
         self._event_order = new_order
 
-        defaults = _generate_default_colors(new_order)
+        defaults = generate_default_colors(new_order)
         for e in new_order:
             if e not in self._color_map:
                 self._color_map[e] = defaults[e]
@@ -489,7 +461,7 @@ class _BoxplotViewer(QDialog):
             color_btn = QPushButton()
             color_btn.setFixedSize(20, 20)
             color_btn.setStyleSheet(self._BTN_STYLE)
-            color_btn.setIcon(_make_color_icon(
+            color_btn.setIcon(make_color_icon(
                 self._color_map.get(event, QColor("#888888"))))
             color_btn.setIconSize(QSize(16, 16))
             color_btn.clicked.connect(self._make_color_cb(event))
@@ -753,7 +725,7 @@ class _BoxplotViewer(QDialog):
                 self._color_map[event_name] = chosen
                 btn = self._color_btns.get(event_name)
                 if btn:
-                    btn.setIcon(_make_color_icon(chosen))
+                    btn.setIcon(make_color_icon(chosen))
                 self._generate()
         return _pick
 

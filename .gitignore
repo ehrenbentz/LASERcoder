@@ -4,8 +4,10 @@ output/
 *.build/
 *.dist/
 *.dmg
+*.pkg
 *.exe
 *.zip
+dist*
 
 # mpv libraries
 #libs/
@@ -23,6 +25,7 @@ venv/
 
 # OS files
 .DS_Store
+._*
 Thumbs.db
 desktop.ini
 

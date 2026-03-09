@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, QSysInfo
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QOpenGLContext
 
 from display_utils import get_screen_geometry, center_window
 from progress_bar import ProgressBarWithText
@@ -32,11 +32,13 @@ from annotation_store import (
 from floating_controls import (
     create_toggle_buttons, toggle_floating_controls,
     toggle_event_buttons, update_floating_visibility,
+    _create_event_buttons,
 )
 from dialogs import (
     show_coding_start_dialog, show_note_dialog, show_annotation_details,
     show_comprehensive_edit, show_edit_point_dialog, show_edit_state_dialog,
 )
+from config_manager import get_config
 import theme
 
 
@@ -65,7 +67,16 @@ class MpvOpenGLWidget(QOpenGLWidget):
         super().__init__(parent)
         self.player = None
         self.render_ctx = None
-        self._frame_ready.connect(self.update)
+        self._has_first_frame = False
+        self._first_frame_cb = None
+        self._frame_ready.connect(self._on_frame_signal)
+
+    def _on_frame_signal(self):
+        first = not self._has_first_frame
+        self._has_first_frame = True
+        self.update()
+        if first and self._first_frame_cb:
+            self._first_frame_cb()
 
     def init_mpv_render(self, player):
         """Create the mpv render context. Widget must be visible first."""
@@ -91,10 +102,6 @@ class MpvOpenGLWidget(QOpenGLWidget):
 
         self._proc_addr_func = _GL_GET_PROC_ADDR(get_proc_address)
 
-        # Temporary debug: check that GL functions resolve
-        test_addr = glctx.getProcAddress(b"glGetString")
-        print(f"GL context valid: {glctx is not None}, glGetString addr: {test_addr}, type: {type(test_addr)}")
-
         self.render_ctx = MpvRenderContext(
             self.player, "opengl",
             opengl_init_params={"get_proc_address": self._proc_addr_func},
@@ -109,11 +116,18 @@ class MpvOpenGLWidget(QOpenGLWidget):
         except RuntimeError:
             pass
 
+    def _gl_clear_black(self):
+        """Clear the framebuffer to solid black using Qt's OpenGL functions."""
+        funcs = QOpenGLContext.currentContext().functions()
+        funcs.glClearColor(0.0, 0.0, 0.0, 1.0)
+        funcs.glClear(0x00004000)  # GL_COLOR_BUFFER_BIT
+
     def initializeGL(self):
-        pass
+        self._gl_clear_black()
 
     def paintGL(self):
-        if self.render_ctx is None:
+        if self.render_ctx is None or not self._has_first_frame:
+            self._gl_clear_black()
             return
         ratio = self.devicePixelRatioF()
         w = int(self.width() * ratio)
@@ -227,6 +241,14 @@ class VideoAnnotator(QFrame):
         self.video_height = self.panel_height
         self.progress_bar_width = self.video_width
 
+        # Black splash overlay – hides all init flashes until first frame
+        self._splash_overlay = QWidget(self.parent)
+        self._splash_overlay.setStyleSheet("background-color: black;")
+        self._splash_overlay.setFixedSize(self.display_width, self.display_height)
+        self._splash_overlay.move(0, 0)
+        self._splash_overlay.raise_()
+        self._splash_overlay.show()
+
         # Build UI
         self._setup_layout()
         self._create_video_frame()
@@ -235,6 +257,7 @@ class VideoAnnotator(QFrame):
         self._setup_key_bindings()
         self.gl_widget.setMouseTracking(True)
         self.gl_widget.installEventFilter(self)
+        self.gl_widget._first_frame_cb = self._remove_splash_overlay
         self.app.installEventFilter(self)
         self._init_mpv_player()
         self._load_data_and_start()
@@ -425,8 +448,7 @@ class VideoAnnotator(QFrame):
         individually disabled toggles stay hidden.
         """
         if visible:
-            from config_manager import ConfigManager
-            cfg = ConfigManager()
+            cfg = get_config()
             hidden = set()
             if not cfg.get_show_video_controls_toggle():
                 w = getattr(self, "controls_window", None)
@@ -621,6 +643,13 @@ class VideoAnnotator(QFrame):
     # MPV player
     # ------------------------------------------------------------------
 
+    def _remove_splash_overlay(self):
+        """Remove the black splash overlay once the first video frame is ready."""
+        if self._splash_overlay is not None:
+            self._splash_overlay.hide()
+            self._splash_overlay.deleteLater()
+            self._splash_overlay = None
+
     def _init_mpv_player(self):
         self.parent.show()
         QApplication.processEvents()
@@ -647,7 +676,15 @@ class VideoAnnotator(QFrame):
         self.parent.show()
         self.parent.activateWindow()
         self.parent.raise_()
+
+        # Keep splash on top after all show() calls
+        if self._splash_overlay is not None:
+            self._splash_overlay.raise_()
+
         self.player.play(self.video_path)
+
+        # Safety: remove splash after 2s even if first-frame callback never fires
+        QTimer.singleShot(2000, self._remove_splash_overlay)
 
         # Apply saved video settings after player starts
         QTimer.singleShot(300, self._apply_video_settings)
@@ -655,9 +692,8 @@ class VideoAnnotator(QFrame):
         QTimer.singleShot(500, self._show_floating_controls)
 
     def _show_floating_controls(self):
-        from config_manager import ConfigManager
         create_toggle_buttons(self)
-        cfg = ConfigManager()
+        cfg = get_config()
         if not cfg.get_show_video_controls_toggle():
             w = getattr(self, "controls_window", None)
             if w:
@@ -901,8 +937,6 @@ class VideoAnnotator(QFrame):
     # ------------------------------------------------------------------
 
     def _show_settings_menu(self):
-        from config_manager import ConfigManager
-
         menu = QMenu(self)
         menu.setStyleSheet(theme.menu_stylesheet())
 
@@ -915,7 +949,7 @@ class VideoAnnotator(QFrame):
             action.triggered.connect(
                 lambda checked, n=name: self._apply_theme(n))
 
-        cfg = ConfigManager()
+        cfg = get_config()
 
         controls_action = menu.addAction("Show Video Controls Toggle")
         controls_action.setCheckable(True)
@@ -947,8 +981,7 @@ class VideoAnnotator(QFrame):
             menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
     def _toggle_floating_item(self, item, checked):
-        from config_manager import ConfigManager
-        cfg = ConfigManager()
+        cfg = get_config()
         if item == "video_controls":
             cfg.set_show_video_controls_toggle(checked)
             w = getattr(self, "controls_window", None)
@@ -983,8 +1016,7 @@ class VideoAnnotator(QFrame):
         if per_video:
             settings = per_video
         else:
-            from config_manager import ConfigManager
-            settings = ConfigManager().get_video_settings()
+            settings = get_config().get_video_settings()
         for prop in ("brightness", "contrast", "gamma", "saturation", "hue"):
             val = settings.get(prop, 0)
             if val != 0:
@@ -994,9 +1026,8 @@ class VideoAnnotator(QFrame):
                     pass
 
     def _apply_theme(self, name):
-        from config_manager import ConfigManager
         theme.load_theme(name)
-        cfg = ConfigManager()
+        cfg = get_config()
         cfg.update_theme(name)
 
         heading_font = "12px"
@@ -1062,11 +1093,9 @@ class VideoAnnotator(QFrame):
 
         # Recreate floating controls if open (to pick up new styles)
         if hasattr(self, "floating_controls_window") and self.floating_controls_window:
-            from floating_controls import toggle_floating_controls
             toggle_floating_controls(self)
             toggle_floating_controls(self)
         if hasattr(self, "event_buttons_window") and self.event_buttons_window:
-            from floating_controls import toggle_event_buttons
             toggle_event_buttons(self)
             toggle_event_buttons(self)
 
@@ -1385,7 +1414,6 @@ class VideoAnnotator(QFrame):
             if dur <= 0:
                 if self.player:
                     self.player.pause = True
-                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(
                     self.parent,
                     "Invalid Annotation",
@@ -1456,7 +1484,6 @@ class VideoAnnotator(QFrame):
             if dur <= 0:
                 if self.player:
                     self.player.pause = True
-                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(
                     self.parent,
                     "Invalid Annotation",
@@ -1959,10 +1986,8 @@ class VideoAnnotator(QFrame):
 
         try:
             from event_key_editor import EventKeyEditor
-            from config_manager import ConfigManager
-
             bk_dir = os.path.dirname(self.event_key_file)
-            cfg = ConfigManager()
+            cfg = get_config()
 
             def on_close(bk_file):
                 if bk_file and os.path.exists(bk_file):
@@ -1978,7 +2003,6 @@ class VideoAnnotator(QFrame):
                             and self.event_buttons_window):
                         self.event_buttons_window.deleteLater()
                         self.event_buttons_window = None
-                        from floating_controls import _create_event_buttons
                         _create_event_buttons(self)
 
                     QTimer.singleShot(100, self._scroll_annotations_to_bottom)

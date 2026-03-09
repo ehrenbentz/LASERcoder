@@ -42,7 +42,7 @@ from pathlib import Path
 
 # Import modules
 from setup_manager import SetupManager
-from config_manager import ConfigManager
+from config_manager import get_config
 from video_annotator import VideoAnnotator
 import theme
 
@@ -90,7 +90,7 @@ def main():
         app.setStyle('Fusion')
 
         # Initialize config manager and load theme
-        config_manager = ConfigManager()
+        config_manager = get_config()
         theme.load_theme(config_manager.get_theme())
         app.setStyleSheet(theme.app_stylesheet())
 
