@@ -611,10 +611,8 @@ class VideoAnnotator(QFrame):
     def _create_progress_bar(self):
         self.progress_frame = QFrame()
         self.progress_frame.setStyleSheet("background-color: black;")  # Video area stays black
-        self.progress_info_height = 30
         self.progress_frame.setFixedSize(
-            self.progress_bar_width,
-            self.progress_bar_height + self.progress_info_height)
+            self.progress_bar_width, self.progress_bar_height + 20)
 
         frame_layout = QVBoxLayout(self.progress_frame)
         frame_layout.setContentsMargins(0, 0, 0, 0)
@@ -623,7 +621,7 @@ class VideoAnnotator(QFrame):
         self.coding_info_label = QLabel()
         self.coding_info_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.coding_info_label.setStyleSheet(theme.coding_info_label_style())
-        self.coding_info_label.setFixedHeight(self.progress_info_height)
+        self.coding_info_label.setFixedHeight(20)
         frame_layout.addWidget(self.coding_info_label)
 
         self.progress_bar = ProgressBarWithText(

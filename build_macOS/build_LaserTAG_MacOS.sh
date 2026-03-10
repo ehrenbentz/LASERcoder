@@ -52,7 +52,7 @@ fi
 # Configuration
 # ==================================================================
 APP_NAME="LaserTAG"
-APP_VERSION="1.3.0"
+APP_VERSION="1.3.1"
 MAIN_SCRIPT="LaserTAG.py"
 CODBASE_DIR="../CodeBase"
 LIBS_DIR="./libs_${ARCH_LABEL}"

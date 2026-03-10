@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QWidget, QLabel
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QPoint
 from PySide6.QtGui import QColor, QPainter, QPen
 
 import theme
@@ -19,21 +19,9 @@ class ProgressBarWithText(QWidget):
         self._annotator = annotator
         self.setMouseTracking(True)
 
-        # Floating hover-timestamp label (parented to our parent so it can
-        # appear above the progress bar without being clipped).
-        parent_widget = self.parent()
-        if parent_widget is not None:
-            self._hover_label = QLabel(parent_widget)
-            self._hover_label.setStyleSheet(
-                f"background-color: {theme.color('progress_bg')};"
-                f" color: {theme.color('progress_text')};"
-                " font-weight: bold;"
-                " padding: 2px 5px;"
-                f" border: 1px solid {theme.color('progress_text')};"
-            )
-            self._hover_label.hide()
-        else:
-            self._hover_label = None
+        # Floating hover-timestamp label — parented to the top-level window
+        # so it is never clipped by intermediate containers.
+        self._hover_label = None  # created lazily on first hover
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(self.backgroundRole(), QColor(0, 0, 0))
@@ -109,12 +97,38 @@ class ProgressBarWithText(QWidget):
 
     # --- mouse ---------------------------------------------------------
 
+    def _ensure_hover_label(self):
+        """Lazily create the hover label parented to the left_container.
+
+        Using left_container (not the top-level window) avoids disrupting
+        the z-order of floating Tool windows on macOS.
+        """
+        if self._hover_label is not None:
+            return
+        container = getattr(self._annotator, "left_container", None)
+        if container is None:
+            return
+        self._hover_label = QLabel(container)
+        self._hover_label.setStyleSheet(
+            f"background-color: {theme.color('progress_bg')};"
+            f" color: {theme.color('progress_text')};"
+            " font-weight: bold;"
+            " padding: 2px 5px;"
+            f" border: 1px solid {theme.color('progress_text')};"
+        )
+        self._hover_label.hide()
+
     def mouseMoveEvent(self, event):
-        if self._hover_label is None or self._annotator is None:
+        if self._annotator is None:
             return
         total = getattr(getattr(self._annotator, "player", None), "duration", None)
         if not total or total <= 0:
-            self._hover_label.hide()
+            if self._hover_label is not None:
+                self._hover_label.hide()
+            return
+
+        self._ensure_hover_label()
+        if self._hover_label is None:
             return
 
         hover_x = event.position().x()
@@ -123,12 +137,15 @@ class ProgressBarWithText(QWidget):
         self._hover_label.setText(_format_hover_time(secs))
         self._hover_label.adjustSize()
 
-        # Position in parent coordinates: centered on cursor, above the bar
+        # Map progress bar position to left_container coordinates
+        container = self._hover_label.parentWidget()
+        bar_top_left = self.mapTo(container, QPoint(0, 0))
         label_w = self._hover_label.width()
         label_h = self._hover_label.height()
-        lx = self.x() + int(hover_x) - label_w // 2
-        lx = max(self.x(), min(lx, self.x() + self.width() - label_w))
-        ly = self.y() - label_h - 2
+        lx = bar_top_left.x() + int(hover_x) - label_w // 2
+        lx = max(bar_top_left.x(),
+                 min(lx, bar_top_left.x() + self.width() - label_w))
+        ly = bar_top_left.y() - label_h - 2
         self._hover_label.move(lx, ly)
         self._hover_label.show()
         self._hover_label.raise_()

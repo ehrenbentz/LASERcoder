@@ -25,6 +25,7 @@ LaserTAG\
 ## Prerequisites
 
 ```
+Currently complilation with nuitka requires python 3.12
 pip install nuitka PySide6 python-mpv
 ```
 

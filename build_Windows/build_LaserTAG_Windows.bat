@@ -25,7 +25,7 @@ REM   build_LaserTAG_Windows.bat
 setlocal enabledelayedexpansion
 
 set APP_NAME=LaserTAG
-set APP_VERSION=1.3.0
+set APP_VERSION=1.3.1
 set MAIN_SCRIPT=LaserTAG.py
 set CODBASE_DIR=..\CodeBase
 set OUTPUT_DIR=dist_Windows

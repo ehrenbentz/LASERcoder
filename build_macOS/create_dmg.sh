@@ -16,7 +16,7 @@ set -e
 # ==================================================================
 # Version — update this when bumping the app version
 # ==================================================================
-DEFAULT_VERSION="1.3.0"
+DEFAULT_VERSION="1.3.1"
 
 ARCH=$(uname -m)
 if [ "$ARCH" = "arm64" ]; then
