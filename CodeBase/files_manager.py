@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen
 
-from display_utils import get_screen_geometry, center_window
+from display_utils import get_screen_geometry, center_window, is_macos_resource_fork
 from annotation_store import AnnotationStore, parse_time
 from annotations_visualizer import show_visualization_dialog
 from summary_statistics_manager import SummaryStatisticsManager
@@ -359,7 +359,8 @@ class FilesManager(QDialog):
             files = sorted(
                 f for f in os.listdir(directory)
                 if os.path.isfile(os.path.join(directory, f))
-                and f.lower().endswith(extensions))
+                and f.lower().endswith(extensions)
+                and not f.startswith("._"))
             statuses = self._get_all_video_statuses(files)
             for fname in files:
                 item = QListWidgetItem(fname)
@@ -383,7 +384,8 @@ class FilesManager(QDialog):
         # Read all session state files in one pass
         existing = set()
         try:
-            existing = set(os.listdir(resume_dir))
+            existing = {f for f in os.listdir(resume_dir)
+                        if not is_macos_resource_fork(f)}
         except OSError:
             return result
         for fname in filenames:
@@ -534,7 +536,8 @@ class FilesManager(QDialog):
         if ann_dir and os.path.isdir(ann_dir):
             ann_files = sorted(
                 f for f in os.listdir(ann_dir)
-                if f.endswith("_Annotations.csv"))
+                if f.endswith("_Annotations.csv")
+                and not f.startswith("._"))
 
         dlg = QDialog(self)
         dlg.setWindowTitle("View Annotations")
@@ -738,10 +741,12 @@ class FilesManager(QDialog):
 
         if os.path.isdir(ind_dir):
             ind_files = sorted(
-                f for f in os.listdir(ind_dir) if f.endswith(".csv"))
+                f for f in os.listdir(ind_dir)
+                if f.endswith(".csv") and not f.startswith("._"))
         if os.path.isdir(comb_dir):
             comb_files = sorted(
-                f for f in os.listdir(comb_dir) if f.endswith(".csv"))
+                f for f in os.listdir(comb_dir)
+                if f.endswith(".csv") and not f.startswith("._"))
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Summary Statistics")

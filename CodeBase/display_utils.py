@@ -8,6 +8,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen, QBrush
 
 
+def is_macos_resource_fork(name):
+    """Return True if *name* is a macOS resource-fork / indexing file."""
+    return name.startswith("._") or name == ".DS_Store"
+
+
 def get_screen_geometry():
     """Return the available screen geometry for the primary monitor.
 

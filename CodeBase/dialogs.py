@@ -1,10 +1,12 @@
+import sys
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QLineEdit, QTextEdit, QGroupBox,
     QGridLayout, QDialogButtonBox, QMessageBox, QWidget,
     QRadioButton, QSlider, QFrame,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from display_utils import center_window
 from annotation_store import format_time_human, parse_time
@@ -14,6 +16,26 @@ import theme
 
 def _apply_dialog_theme(dialog):
     dialog.setStyleSheet(theme.dialog_stylesheet())
+
+
+def _prepare_for_dialog(annotator):
+    """Lower macOS window level before showing a modal dialog."""
+    if hasattr(annotator, "_prepare_for_dialog"):
+        annotator._prepare_for_dialog()
+
+
+def _cleanup_dialog(dlg, annotator):
+    """Detach a modal dialog and reactivate the parent window."""
+    dlg.setParent(None)
+    dlg.deleteLater()
+    if hasattr(annotator, "_reactivate_after_dialog"):
+        annotator._reactivate_after_dialog()
+    elif sys.platform == "darwin" and hasattr(annotator, "parent") and annotator.parent:
+        annotator.parent.activateWindow()
+        annotator.parent.raise_()
+
+
+
 
 
 # ======================================================================
@@ -243,7 +265,9 @@ def show_coding_start_dialog(annotator):
     layout.addWidget(bbox)
 
     dialog.finished.connect(lambda: setattr(annotator, "dialog_open", False))
+    _prepare_for_dialog(annotator)
     dialog.exec()
+    _cleanup_dialog(dialog, annotator)
 
     if hasattr(annotator, "player") and annotator.player and was_playing:
         annotator.player.pause = False
@@ -321,7 +345,9 @@ def show_note_dialog(annotator):
     layout.addWidget(btn_frame)
 
     dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
+    _prepare_for_dialog(annotator)
     dlg.exec()
+    _cleanup_dialog(dlg, annotator)
 
 
 # ======================================================================
@@ -411,7 +437,9 @@ def show_annotation_details(annotator):
         dlg.accept()
 
     dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
+    _prepare_for_dialog(annotator)
     dlg.exec()
+    _cleanup_dialog(dlg, annotator)
 
 
 # ======================================================================
@@ -526,7 +554,9 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
     main_lay.addWidget(btn_f)
 
     dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
+    _prepare_for_dialog(annotator)
     dlg.exec()
+    _cleanup_dialog(dlg, annotator)
 
 
 # ======================================================================
@@ -585,7 +615,9 @@ def show_edit_point_dialog(annotator):
     layout.addWidget(bbox)
 
     dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
+    _prepare_for_dialog(annotator)
     dlg.exec()
+    _cleanup_dialog(dlg, annotator)
 
 
 def show_video_settings_dialog(annotator):
@@ -724,7 +756,9 @@ def show_video_settings_dialog(annotator):
         all_radio.setChecked(True)
         _load_scope_values(global_settings)
 
+    _prepare_for_dialog(annotator)
     dlg.exec()
+    _cleanup_dialog(dlg, annotator)
 
 
 def show_edit_state_dialog(annotator):
@@ -782,4 +816,6 @@ def show_edit_state_dialog(annotator):
     layout.addWidget(bbox)
 
     dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
+    _prepare_for_dialog(annotator)
     dlg.exec()
+    _cleanup_dialog(dlg, annotator)

@@ -296,9 +296,8 @@ def update_floating_visibility(annotator):
             continue
         try:
             w.winId()
-            if should_hide or w in hidden:
-                w.hide()
-            else:
-                w.show()
+            want_visible = not (should_hide or w in hidden)
+            if w.isVisible() != want_visible:
+                w.setVisible(want_visible)
         except RuntimeError:
             pass

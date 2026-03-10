@@ -228,7 +228,7 @@ class EventKeyEditor(QDialog):
 
     def _get_event_files(self):
         files = [f for f in os.listdir(self.event_key_dir)
-                 if f.endswith("_events.csv")]
+                 if f.endswith("_events.csv") and not f.startswith("._")]
         self._event_key_files = {
             f: os.path.join(self.event_key_dir, f) for f in files}
 

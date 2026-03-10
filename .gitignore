@@ -10,7 +10,7 @@ output/
 dist*
 
 # mpv libraries
-#libs/
+libs/
 libmpv-2.dll
 
 # Python

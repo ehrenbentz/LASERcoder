@@ -182,7 +182,8 @@ class SummaryStatisticsManager(QDialog):
             files = sorted(
                 f for f in os.listdir(directory)
                 if os.path.isfile(os.path.join(directory, f))
-                and f.endswith("_Annotations.csv"))
+                and f.endswith("_Annotations.csv")
+                and not f.startswith("._"))
 
             for name in files:
                 item = QListWidgetItem(name)
@@ -401,7 +402,11 @@ class SummaryStatisticsManager(QDialog):
                         continue
 
                     if fieldnames is None:
-                        fieldnames = reader.fieldnames
+                        fieldnames = list(reader.fieldnames)
+                    else:
+                        for f in reader.fieldnames:
+                            if f not in fieldnames:
+                                fieldnames.append(f)
 
                     # Ensure Video column exists
                     for row in rows:
@@ -420,8 +425,10 @@ class SummaryStatisticsManager(QDialog):
 
         try:
             temp = out_path + ".tmp"
+            fieldnames = [f for f in fieldnames if f is not None]
             with open(temp, "w", newline="") as fh:
-                writer = csv.DictWriter(fh, fieldnames=fieldnames)
+                writer = csv.DictWriter(
+                    fh, fieldnames=fieldnames, extrasaction="ignore")
                 writer.writeheader()
                 writer.writerows(all_rows)
             os.replace(temp, out_path)
