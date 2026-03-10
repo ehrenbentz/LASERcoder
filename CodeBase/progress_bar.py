@@ -1,5 +1,5 @@
-from PySide6.QtWidgets import QWidget
-from PySide6.QtCore import Qt, QRect
+from PySide6.QtWidgets import QWidget, QLabel
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 
 import theme
@@ -17,8 +17,23 @@ class ProgressBarWithText(QWidget):
         self._center_text = "(1.0x)"
         self._right_text = "Total Time"
         self._annotator = annotator
-        self._hover_x = None
         self.setMouseTracking(True)
+
+        # Floating hover-timestamp label (parented to our parent so it can
+        # appear above the progress bar without being clipped).
+        parent_widget = self.parent()
+        if parent_widget is not None:
+            self._hover_label = QLabel(parent_widget)
+            self._hover_label.setStyleSheet(
+                f"background-color: {theme.color('progress_bg')};"
+                f" color: {theme.color('progress_text')};"
+                " font-weight: bold;"
+                " padding: 2px 5px;"
+                f" border: 1px solid {theme.color('progress_text')};"
+            )
+            self._hover_label.hide()
+        else:
+            self._hover_label = None
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(self.backgroundRole(), QColor(0, 0, 0))
@@ -90,46 +105,37 @@ class ProgressBarWithText(QWidget):
         rx = self.width() - painter.fontMetrics().horizontalAdvance(self._right_text) - 10
         painter.drawText(rx, text_y, self._right_text)
 
-        # Hover timestamp tooltip
-        if self._hover_x is not None and self._annotator is not None:
-            total = getattr(getattr(self._annotator, "player", None), "duration", None)
-            if total and total > 0:
-                ratio = max(0.0, min(1.0, self._hover_x / self.width()))
-                secs = ratio * total
-                label = _format_hover_time(secs)
-
-                fm = painter.fontMetrics()
-                text_w = fm.horizontalAdvance(label)
-                text_h = fm.height()
-                pad_x, pad_y = 5, 2
-                box_w = text_w + pad_x * 2
-                box_h = text_h + pad_y * 2
-
-                # Align right edge of box to cursor; clamp to widget edges
-                bx = int(self._hover_x) - box_w
-                bx = max(0, min(bx, self.width() - box_w))
-                by = 2  # top of bar
-
-                bg = theme.qcolor("progress_bg")
-                border = theme.qcolor("progress_text")
-                painter.setBrush(bg)
-                painter.setPen(QPen(border, 1))
-                painter.drawRect(QRect(bx, by, box_w, box_h))
-
-                painter.setPen(theme.qcolor("progress_text"))
-                painter.drawText(bx + pad_x, by + pad_y + fm.ascent(), label)
-
         painter.end()
 
     # --- mouse ---------------------------------------------------------
 
     def mouseMoveEvent(self, event):
-        self._hover_x = event.position().x()
-        self.update()
+        if self._hover_label is None or self._annotator is None:
+            return
+        total = getattr(getattr(self._annotator, "player", None), "duration", None)
+        if not total or total <= 0:
+            self._hover_label.hide()
+            return
+
+        hover_x = event.position().x()
+        ratio = max(0.0, min(1.0, hover_x / self.width()))
+        secs = ratio * total
+        self._hover_label.setText(_format_hover_time(secs))
+        self._hover_label.adjustSize()
+
+        # Position in parent coordinates: centered on cursor, above the bar
+        label_w = self._hover_label.width()
+        label_h = self._hover_label.height()
+        lx = self.x() + int(hover_x) - label_w // 2
+        lx = max(self.x(), min(lx, self.x() + self.width() - label_w))
+        ly = self.y() - label_h - 2
+        self._hover_label.move(lx, ly)
+        self._hover_label.show()
+        self._hover_label.raise_()
 
     def leaveEvent(self, event):
-        self._hover_x = None
-        self.update()
+        if self._hover_label is not None:
+            self._hover_label.hide()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._annotator is not None:

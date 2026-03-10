@@ -611,8 +611,10 @@ class VideoAnnotator(QFrame):
     def _create_progress_bar(self):
         self.progress_frame = QFrame()
         self.progress_frame.setStyleSheet("background-color: black;")  # Video area stays black
+        self.progress_info_height = 30
         self.progress_frame.setFixedSize(
-            self.progress_bar_width, self.progress_bar_height + 20)
+            self.progress_bar_width,
+            self.progress_bar_height + self.progress_info_height)
 
         frame_layout = QVBoxLayout(self.progress_frame)
         frame_layout.setContentsMargins(0, 0, 0, 0)
@@ -621,7 +623,7 @@ class VideoAnnotator(QFrame):
         self.coding_info_label = QLabel()
         self.coding_info_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.coding_info_label.setStyleSheet(theme.coding_info_label_style())
-        self.coding_info_label.setFixedHeight(20)
+        self.coding_info_label.setFixedHeight(self.progress_info_height)
         frame_layout.addWidget(self.coding_info_label)
 
         self.progress_bar = ProgressBarWithText(
@@ -900,7 +902,7 @@ class VideoAnnotator(QFrame):
         sb_hlay.addWidget(lbl)
         sb_hlay.addStretch()
         self._gear_btn = QPushButton("Settings"); self._gear_btn.setStyleSheet(btn_style)
-        self._gear_btn.setFixedWidth(60); self._gear_btn.setFixedHeight(22)
+        self._gear_btn.setFixedHeight(22)
         self._gear_btn.clicked.connect(self._show_settings_menu)
         self._panel_buttons.append(self._gear_btn)
         sb_hlay.addWidget(self._gear_btn)
