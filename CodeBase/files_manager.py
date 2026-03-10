@@ -25,7 +25,28 @@ class FilesManager(QDialog):
 
     def __init__(self, parent=None, initial_output_dir=str(Path.home()),
                  initial_video_dir=str(Path.home()),
-                 file_types=(".mp4", ".avi", ".mov", ".mts", ".mkv")):
+                 file_types=(
+                     # Common containers
+                     ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
+                     # MPEG transport / program streams
+                     ".ts", ".mts", ".m2ts", ".mpg", ".mpeg", ".m2v", ".vob",
+                     # Matroska / WebM variants
+                     ".mk3d",
+                     # MP4 variants
+                     ".m4v", ".3gp", ".3g2",
+                     # Professional / camera formats
+                     ".mxf", ".r3d",
+                     # Ogg / Nut
+                     ".ogv", ".ogm", ".nut",
+                     # RealMedia / DivX / ASF
+                     ".rm", ".rmvb", ".divx", ".asf",
+                     # Flash
+                     ".f4v", ".swf",
+                     # DVD / Blu-ray
+                     ".ifo",
+                     # Raw / lossless
+                     ".y4m", ".dv",
+                 )):
         super().__init__(parent)
 
         self.file_types = file_types
