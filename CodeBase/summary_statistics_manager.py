@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from display_utils import get_screen_geometry, center_window
+from display_utils import get_screen_geometry, center_window, is_os_junk
 from summary_statistics import generate_summary_statistics, combine_summaries
 from summary_viewer import show_table_viewer
 import theme
@@ -183,7 +183,7 @@ class SummaryStatisticsManager(QDialog):
                 f for f in os.listdir(directory)
                 if os.path.isfile(os.path.join(directory, f))
                 and f.endswith("_Annotations.csv")
-                and not f.startswith("._"))
+                and not is_os_junk(f))
 
             for name in files:
                 item = QListWidgetItem(name)

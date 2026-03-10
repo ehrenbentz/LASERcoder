@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QButtonGroup, QGridLayout, QInputDialog, QApplication, QSizePolicy,
 )
 from PySide6.QtCore import Qt
-from display_utils import get_screen_geometry, center_window
+from display_utils import get_screen_geometry, center_window, is_os_junk
 import theme
 
 class EventKeyEditor(QDialog):
@@ -228,7 +228,7 @@ class EventKeyEditor(QDialog):
 
     def _get_event_files(self):
         files = [f for f in os.listdir(self.event_key_dir)
-                 if f.endswith("_events.csv") and not f.startswith("._")]
+                 if f.endswith("_events.csv") and not is_os_junk(f)]
         self._event_key_files = {
             f: os.path.join(self.event_key_dir, f) for f in files}
 

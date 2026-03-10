@@ -17,7 +17,8 @@ from PySide6.QtCharts import (
 
 import theme
 from display_utils import (get_screen_geometry, center_window,
-                           generate_default_colors, make_color_icon)
+                           generate_default_colors, make_color_icon,
+                           is_os_junk)
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +173,7 @@ class _BoxplotViewer(QDialog):
             self._available = sorted(
                 os.path.join(combined_dir, f)
                 for f in os.listdir(combined_dir)
-                if f.endswith(".csv") and not f.startswith("._"))
+                if f.endswith(".csv") and not is_os_junk(f))
 
         # Individual summaries directory (sibling of Combined_summaries)
         self._ind_dir = ""
@@ -338,7 +339,7 @@ class _BoxplotViewer(QDialog):
         self._ind_rows = []
         if self._ind_dir and os.path.isdir(self._ind_dir):
             for fname in sorted(os.listdir(self._ind_dir)):
-                if fname.endswith("_Summary.csv") and not fname.startswith("._"):
+                if fname.endswith("_Summary.csv") and not is_os_junk(fname):
                     self._ind_rows.extend(
                         _load_csv(os.path.join(self._ind_dir, fname)))
 
@@ -381,7 +382,7 @@ class _BoxplotViewer(QDialog):
         from summary_statistics import compute_summary_rows
 
         for fname in sorted(os.listdir(self._ann_dir)):
-            if fname.endswith("_Annotations.csv") and not fname.startswith("._"):
+            if fname.endswith("_Annotations.csv") and not is_os_junk(fname):
                 path = os.path.join(self._ann_dir, fname)
                 rows = compute_summary_rows(path, use_whole_video=True)
                 if rows:

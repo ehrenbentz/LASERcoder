@@ -8,9 +8,33 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen, QBrush
 
 
-def is_macos_resource_fork(name):
-    """Return True if *name* is a macOS resource-fork / indexing file."""
-    return name.startswith("._") or name == ".DS_Store"
+_OS_JUNK_FILES = frozenset({
+    ".DS_Store",            # macOS Finder metadata
+    ".Spotlight-V100",      # macOS Spotlight index
+    ".Trashes",             # macOS trash
+    ".fseventsd",           # macOS filesystem events
+    ".TemporaryItems",      # macOS temporary files
+    ".AppleDouble",         # macOS resource fork container
+    ".LSOverride",          # macOS Launch Services override
+    "Thumbs.db",            # Windows Explorer thumbnails
+    "ehthumbs.db",          # Windows Media Center thumbnails
+    "ehthumbs_vista.db",    # Windows Vista thumbnails
+    "desktop.ini",          # Windows folder settings
+    ".directory",           # KDE folder settings
+})
+
+_OS_JUNK_PREFIXES = ("._", "~", ".Trash-")
+
+
+def is_os_junk(name):
+    """Return True if *name* is an OS-generated metadata/index file."""
+    if name in _OS_JUNK_FILES or name.lower() in _OS_JUNK_FILES:
+        return True
+    return any(name.startswith(p) for p in _OS_JUNK_PREFIXES)
+
+
+# Keep the old name as an alias for backward compatibility
+is_macos_resource_fork = is_os_junk
 
 
 def get_screen_geometry():
