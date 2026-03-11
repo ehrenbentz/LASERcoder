@@ -125,20 +125,6 @@ Annotation files are saved as `VideoName_Annotations.csv` with 11 columns, forma
 ```
 LaserTAG/
 ├── CodeBase/                          Source code
-│   ├── LaserTAG.py                    Main entry point
-│   ├── video_annotator.py             Core annotation module
-│   ├── annotation_store.py            Atomic file I/O
-│   ├── behavior_key_editor.py
-│   ├── setup_manager.py               File/directory selection UI
-│   ├── annotations_visualizer.py
-│   ├── summary_statistics.py
-│   ├── summary_statistics_manager.py
-│   ├── config_manager.py
-│   ├── dialogs.py
-│   ├── display_utils.py
-│   ├── files_manager.py
-│   ├── floating_controls.py
-│   └── progress_bar.py
 ├── build_Windows/                     Windows build scripts and resources
 ├── build_macOS/                       macOS build scripts and resources
 ├── build_Linux/                       Linux build scripts and resources
