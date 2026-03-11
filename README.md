@@ -14,13 +14,13 @@ Runs natively on **Windows**, **macOS**, and **Linux**.
 
 - **No save button.** Annotations are written to disk in real time using atomic write operations. Your data is safe even if the app crashes, your laptop dies, or you accidentally close the window.
 - **Clean CSV output.** Annotation files are properly formatted `.csv` ready for direct import into R, Python, or whatever you use. No reformatting, no export step.
-- **Point and state behaviors.** Score instantaneous events and behaviors with duration from the same interface.
-- **Mutually exclusive groups.** Starting one state behavior automatically ends the others in its group, so your annotations stay logically consistent without extra effort.
+- **Point and state events.** Score instantaneous (point) events and events with duration (state) from the same interface.
+- **Mutually exclusive groups.** Starting one state event automatically ends the others in its group, so your annotations stay logically consistent without extra effort.
 - **Keyboard shortcuts and on-screen buttons.** Use hotkeys for speed or floating buttons for mouse/touchscreen workflows.
 - **Annotation timelines.** Visualize all annotated behaviors on a timeline and export as high-resolution images (JPG/PNG, 100-900 DPI).
-- **Summary statistics.** Generate per-video and per-experiment summaries and combined annotation files for batch analysis.
+- **Summary statistics.** Generate per-video and per-experiment summaries and summary box plots, as well as combined annotation files properly formatted for downstream statistical analysis.
 - **Resume anywhere.** Stop and restart coding sessions without losing your place.
-- **Coding windows.** Define a start time and duration to standardize observation periods across videos without editing video files.
+- **Coding windows.** Define a coding window (per-video segments of time) to standardize observation periods across videos without editing video files.
 
 
 ## Installation
@@ -41,7 +41,7 @@ Download the latest release for your platform from the [Releases](../../releases
 | **Linux** | `LaserTAG_v*_linux_amd64_portable.tar.gz` | Portable tarball, extract and run |
 
 
-### macOS Gatekeeper
+### Note about macOS Gatekeeper
 
 LaserTAG is not signed with an Apple Developer ID, so macOS will block it on first launch. To get around this:
 
