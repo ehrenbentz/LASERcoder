@@ -141,14 +141,14 @@ collect_deps() {
 }
 
 # ==================================================================
-# Phase 1: Recursively collect all dependencies
+# Recursively collect all dependencies
 # ==================================================================
 echo ""
 echo "Collecting dependencies..."
 collect_deps "$DEST/$(basename "$SEED")"
 
 # ==================================================================
-# Phase 2: Remove Python framework and create vapoursynth stub
+# Remove Python framework and create vapoursynth stub
 # ==================================================================
 echo ""
 echo "Cleaning up..."
@@ -165,7 +165,7 @@ install_name_tool -id "@loader_path/libvapoursynth-script.0.dylib" \
     "$DEST/libvapoursynth-script.0.dylib"
 
 # ==================================================================
-# Phase 3: Rewrite all load paths to @loader_path/
+# Rewrite all load paths to @loader_path/
 # ==================================================================
 echo ""
 echo "Rewriting load paths..."
@@ -195,7 +195,7 @@ for lib in "$DEST"/*.dylib; do
 done
 
 # ==================================================================
-# Phase 4: Codesign all dylibs
+# Codesign all dylibs
 # ==================================================================
 echo ""
 echo "Codesigning all dylibs..."
@@ -207,7 +207,7 @@ done
 echo "Signed $(ls "$DEST"/*.dylib | wc -l | tr -d ' ') libraries."
 
 # ==================================================================
-# Phase 5: Verify
+# Verify
 # ==================================================================
 echo ""
 echo "Verifying..."

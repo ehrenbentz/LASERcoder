@@ -16,17 +16,29 @@
 # Arguments:
 #   APP_PATH      Path to the .app bundle
 #   OUTPUT_DIR    Directory for the .pkg output (default: directory containing APP_PATH)
-#   APP_VERSION   Version string (default: DEFAULT_VERSION below)
+#   APP_VERSION   Version string (read from current_version.txt)
 
 set -e
 
 # ==================================================================
-# Version — update this when bumping the app version
+# Version — read from current_version.txt if no argument provided
 # ==================================================================
-DEFAULT_VERSION="1.3.1"
+if [ -z "$3" ]; then
+    if [ ! -f "current_version.txt" ]; then
+        echo "ERROR: No version argument provided and current_version.txt not found."
+        exit 1
+    fi
+    APP_VERSION=$(grep '^VERSION_NUMBER=' current_version.txt | cut -d'=' -f2)
+    if [ -z "$APP_VERSION" ]; then
+        echo "ERROR: Could not parse version from current_version.txt"
+        exit 1
+    fi
+else
+    APP_VERSION="$3"
+fi
 
 # ==================================================================
-# Auto-detect architecture
+# Detect hardware architecture
 # ==================================================================
 ARCH=$(uname -m)
 if [ "$ARCH" = "arm64" ]; then
@@ -41,7 +53,6 @@ fi
 APP_PATH="${1:-./dist_${ARCH_LABEL}/LaserTAG.app}"
 OUTPUT_DIR="${2:-$(dirname "$APP_PATH")}"
 APP_NAME="LaserTAG"
-APP_VERSION="${3:-$DEFAULT_VERSION}"
 PKG_NAME="${APP_NAME}_v${APP_VERSION}_macOS_${ARCH_LABEL}.pkg"
 INSTALL_LOCATION="/Applications"
 SCRIPTS_DIR="$(mktemp -d)"

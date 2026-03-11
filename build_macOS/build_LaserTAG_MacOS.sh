@@ -6,7 +6,8 @@
 #   LaserTAG/
 #     CodeBase/              Python source files including LaserTAG.py
 #     build_MacOS/           This script, Icons.icns, collect_dylibs.sh,
-#                            create_dmg.sh, create_pkg.sh, Info.plist
+#                            create_dmg.sh, create_pkg.sh, Info.plist,
+#                            current_version.txt
 #       libs_arm64/          Pre-collected dylibs for Apple Silicon
 #       libs_x86_64/         Pre-collected dylibs for Intel
 #       dist_arm64/          Build output for Apple Silicon
@@ -49,10 +50,24 @@ else
 fi
 
 # ==================================================================
+# Read version from current_version.txt
+# ==================================================================
+if [ ! -f "current_version.txt" ]; then
+    echo "ERROR: current_version.txt not found in current directory."
+    exit 1
+fi
+
+APP_VERSION=$(grep '^VERSION_NUMBER=' current_version.txt | cut -d'=' -f2)
+
+if [ -z "$APP_VERSION" ]; then
+    echo "ERROR: Could not parse version from current_version.txt"
+    exit 1
+fi
+
+# ==================================================================
 # Configuration
 # ==================================================================
 APP_NAME="LaserTAG"
-APP_VERSION="1.3.1"
 MAIN_SCRIPT="LaserTAG.py"
 CODBASE_DIR="../CodeBase"
 LIBS_DIR="./libs_${ARCH_LABEL}"

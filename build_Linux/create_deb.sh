@@ -10,14 +10,26 @@
 # Arguments:
 #   APP_DIR       Path to the Nuitka .dist directory
 #   OUTPUT_DIR    Directory for the .deb output (default: directory containing APP_DIR)
-#   APP_VERSION   Version string (default: DEFAULT_VERSION below)
+#   APP_VERSION   Version string (read from current_version.txt)
 
 set -e
 
 # ==================================================================
-# Version — update this when bumping the app version
+# Version — read from current_version.txt if no argument provided
 # ==================================================================
-DEFAULT_VERSION="1.3.1"
+if [ -z "$3" ]; then
+    if [ ! -f "current_version.txt" ]; then
+        echo "ERROR: No version argument provided and current_version.txt not found."
+        exit 1
+    fi
+    APP_VERSION=$(grep '^VERSION_NUMBER=' current_version.txt | cut -d'=' -f2)
+    if [ -z "$APP_VERSION" ]; then
+        echo "ERROR: Could not parse version from current_version.txt"
+        exit 1
+    fi
+else
+    APP_VERSION="$3"
+fi
 
 # ==================================================================
 # Auto-detect architecture (dpkg naming: amd64, arm64, etc.)
@@ -39,7 +51,6 @@ fi
 APP_DIR="${1:-./dist_Linux/LaserTAG.dist}"
 OUTPUT_DIR="${2:-$(dirname "$APP_DIR")}"
 APP_NAME="LaserTAG"
-APP_VERSION="${3:-$DEFAULT_VERSION}"
 DEB_NAME="${APP_NAME}_v${APP_VERSION}_linux_${DEB_ARCH}.deb"
 INSTALL_DIR="/opt/${APP_NAME}"
 
