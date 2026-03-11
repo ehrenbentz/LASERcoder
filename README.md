@@ -70,6 +70,7 @@ Each platform directory (`build_Windows/`, `build_macOS/`, `build_Linux/`) conta
 **Linux:** You may need additional system libraries beyond the base install. At minimum:
 ```bash
 sudo apt install libxcb-cursor0
+sudo apt install patchelf
 ```
 
 ## Quick Start

@@ -136,10 +136,6 @@ $PYTHON -m nuitka \
     --include-data-files=libmpv.so.2=libmpv.so.2 \
     "$MAIN_SCRIPT"
 
-# Clean up source copies and Nuitka build cache
-rm -f *.py libmpv.so.2
-rm -rf "${APP_NAME}.build"
-
 cd ..
 
 # ==================================================================
@@ -160,6 +156,15 @@ echo "Creating portable tarball..."
 
 tar -czf "$OUTPUT_DIR/$TAR_NAME" -C "$OUTPUT_DIR" "${APP_NAME}.dist"
 echo "Tarball created: $OUTPUT_DIR/$TAR_NAME"
+
+
+# ==================================================================
+# Clean up build artifacts
+# ==================================================================
+echo ""
+echo "Cleaning up..."
+rm -rf "$OUTPUT_DIR/${APP_NAME}.build"
+rm -rf "$OUTPUT_DIR/${APP_NAME}.dist"
 
 # ==================================================================
 # Summary
