@@ -134,17 +134,6 @@ LaserTAG/
 ```
 
 
-## Citation
-
-If you use LaserTAG in published research, please cite:
-
-<!-- TODO: Update with DOI once published -->
-
-> Bentz, E.J., Laser, R.S., ...[Other Authors]... Ophir, A.G. (2026). LaserTAG: Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder. (in preparation)
-
-See [CITATION.cff](CITATION.cff) for machine-readable citation information.
-
-
 ## Contributing
 
 Contributions are welcome. Please open an [issue](../../issues) to report bugs or suggest features before submitting a pull request.
@@ -155,6 +144,7 @@ Contributions are welcome. Please open an [issue](../../issues) to report bugs o
 git clone https://github.com/ehrenbentz/LaserTAG.git
 cd LaserTAG
 pip install PySide6 python-mpv
+pip install nuitka # if compiling from source
 cd CodeBase
 python LaserTAG.py
 ```
@@ -170,3 +160,14 @@ LaserTAG is licensed under the [GNU General Public License v3.0](LICENSE).
 LaserTAG was developed in the [Ophir Lab of Integrative Neuroethology](https://www.ophirlab.com/), Department of Psychology, Cornell University.
 
 <!-- TODO: Add specific acknowledgments (funding, contributors) -->
+
+
+## Citation
+
+If you use LaserTAG in published research, please cite:
+
+<!-- TODO: Update with DOI once published -->
+
+> Bentz, E.J., Laser, R.S., ...[Other Authors]... Ophir, A.G. (2026). LaserTAG: Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder. (in preparation)
+
+See [CITATION.cff](CITATION.cff) for machine-readable citation information.
