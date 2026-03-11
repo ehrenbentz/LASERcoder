@@ -29,6 +29,18 @@ if sys.platform == "darwin":
             return _original_find_library(name)
         ctypes.util.find_library = _patched_find_library
 
+# Linux
+elif sys.platform.startswith("linux"):
+    libmpv_path = os.path.join(current_dir, "libmpv.so.2")
+    if os.path.exists(libmpv_path):
+        import ctypes.util
+        _original_find_library = ctypes.util.find_library
+        def _patched_find_library(name):
+            if name == "mpv":
+                return libmpv_path
+            return _original_find_library(name)
+        ctypes.util.find_library = _patched_find_library
+
 # Windows
 if sys.platform == "win32":
     os.environ["PATH"] = current_dir + os.pathsep + os.environ.get("PATH", "")
@@ -60,7 +72,14 @@ class MainWindow(QMainWindow):
             if self.video_annotator:
                 self.video_annotator.deleteLater()
                 self.video_annotator = None
-            
+
+            # Hide before creating the GL widget so the native window
+            # surface is recreated with OpenGL support.
+            was_visible = self.isVisible()
+            if was_visible:
+                self.hide()
+                QApplication.processEvents()
+
             # Create new video annotator
             self.video_annotator = VideoAnnotator(
                 self,
@@ -69,17 +88,16 @@ class MainWindow(QMainWindow):
                 event_key_file=event_file,
                 output_dir=output_dir
             )
-            
+
             # Set as central widget
             self.setCentralWidget(self.video_annotator)
-            
-            # Show the main window if it's not already visible
-            if not self.isVisible():
-                self.show()
-            
+            self.show()
+
             return True
         except Exception as e:
             print(f"Failed to initialize VideoAnnotator: {e}")
+            if was_visible:
+                self.show()
             return False
 
 def main():
@@ -94,9 +112,11 @@ def main():
         theme.load_theme(config_manager.get_theme())
         app.setStyleSheet(theme.app_stylesheet())
 
-        # Create main window
+        # Create main window and show as fullscreen background
         main_window = MainWindow()
-        
+        main_window.showMaximized()
+        app.processEvents()
+
         while True:
             # Create and show SetupManager dialog
             setup_dialog = SetupManager(config_manager=config_manager)
@@ -129,6 +149,8 @@ def main():
                         main_window.video_annotator.deleteLater()
                         main_window.video_annotator = None
                     main_window.setCentralWidget(None)
+                    main_window.setStyleSheet("")
+                    main_window.showMaximized()
                     app.processEvents()
 
                     # Check if we should return to file selection or exit

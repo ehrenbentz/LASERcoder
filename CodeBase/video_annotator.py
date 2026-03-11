@@ -180,6 +180,7 @@ class VideoAnnotator(QFrame):
         self._zoom_pan_y = 0.0
         self._shutting_down = False
         self._activation_pending = False
+        self._suppress_floating_hide = False
 
         # UI selection state
         self.dialog_open = False
@@ -257,14 +258,6 @@ class VideoAnnotator(QFrame):
         self.video_height = self.panel_height
         self.progress_bar_width = self.video_width
 
-        # Black splash overlay – hides all init flashes until first frame
-        self._splash_overlay = QWidget(self.parent)
-        self._splash_overlay.setStyleSheet("background-color: black;")
-        self._splash_overlay.setFixedSize(self.display_width, self.display_height)
-        self._splash_overlay.move(0, 0)
-        self._splash_overlay.raise_()
-        self._splash_overlay.show()
-
         # Build UI
         self._setup_layout()
         self._create_video_frame()
@@ -273,7 +266,6 @@ class VideoAnnotator(QFrame):
         self._setup_key_bindings()
         self.gl_widget.setMouseTracking(True)
         self.gl_widget.installEventFilter(self)
-        self.gl_widget._first_frame_cb = self._remove_splash_overlay
         self.app.installEventFilter(self)
         self._init_mpv_player()
         self._load_data_and_start()
@@ -410,10 +402,12 @@ class VideoAnnotator(QFrame):
         except Exception:
             pass
 
-    def _set_macos_window_level(self, level):
-        """Set the NSWindow level of the parent window."""
+    def _set_macos_window_level(self, level, widget=None):
+        """Set the NSWindow level of a widget (defaults to the parent window)."""
         if sys.platform != "darwin":
             return
+        if widget is None:
+            widget = self.parent
         try:
             import ctypes.util as _cu
             objc_path = _cu.find_library("objc")
@@ -431,7 +425,7 @@ class VideoAnnotator(QFrame):
                 ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
                 ctypes.c_long,
             )(("objc_msgSend", _objc))
-            view_ptr = int(self.parent.winId())
+            view_ptr = int(widget.winId())
             sel_window = _objc.sel_registerName(b"window")
             ns_window = send(view_ptr, sel_window)
             if ns_window:
@@ -447,10 +441,23 @@ class VideoAnnotator(QFrame):
     def _reactivate_after_dialog(self):
         """Restore window level and reactivate after a modal dialog on macOS."""
         if sys.platform == "darwin":
+            self._suppress_floating_hide = True
             self._set_macos_window_level(25)
             self.parent.activateWindow()
             self.parent.raise_()
+            self._set_floating_visible(True)
+            self._raise_floating_windows()
             QTimer.singleShot(50, self._reapply_macos_autohide)
+            # Clear suppression and re-show after all deferred
+            # ActivationChange handlers have settled.
+            QTimer.singleShot(200, self._finish_dialog_reactivation)
+
+    def _finish_dialog_reactivation(self):
+        """Final step of dialog reactivation — clear suppression, re-show floats."""
+        self._suppress_floating_hide = False
+        if not self._shutting_down:
+            self._set_floating_visible(True)
+            self._raise_floating_windows()
 
     # ------------------------------------------------------------------
     # Layout
@@ -584,7 +591,7 @@ class VideoAnnotator(QFrame):
             self._set_floating_visible(True)
             self._raise_floating_windows()
             self._reapply_macos_autohide()
-        else:
+        elif not self.dialog_open and not self._suppress_floating_hide:
             self._set_floating_visible(False)
 
     def _raise_floating_windows(self):
@@ -599,6 +606,8 @@ class VideoAnnotator(QFrame):
                 w.winId()  # raises RuntimeError if C++ object is deleted
                 if w.isVisible():
                     w.raise_()
+                    if sys.platform == "darwin":
+                        self._set_macos_window_level(26, w)
                 live.append(w)
             except RuntimeError:
                 pass
@@ -755,16 +764,6 @@ class VideoAnnotator(QFrame):
     # MPV player
     # ------------------------------------------------------------------
 
-    def _remove_splash_overlay(self):
-        """Remove the black splash overlay once the first video frame is ready."""
-        # Ensure GL widget is visible (safety fallback if first-frame never fired)
-        if hasattr(self, "gl_widget") and self.gl_widget and not self.gl_widget.isVisible():
-            self.gl_widget.show()
-        if self._splash_overlay is not None:
-            self._splash_overlay.hide()
-            self._splash_overlay.deleteLater()
-            self._splash_overlay = None
-
     def _init_mpv_player(self):
         if not self.parent.isVisible():
             self.parent.show()
@@ -809,14 +808,14 @@ class VideoAnnotator(QFrame):
         self.parent.activateWindow()
         self.parent.raise_()
 
-        # Keep splash on top after all show() calls
-        if self._splash_overlay is not None:
-            self._splash_overlay.raise_()
-
         self.player.play(self.video_path)
 
-        # Safety: remove splash after 2s even if first-frame callback never fires
-        QTimer.singleShot(2000, self._remove_splash_overlay)
+        # Safety: ensure GL widget is visible even if first-frame signal
+        # never fires (e.g. codec issues or slow decode).
+        def _ensure_gl_visible():
+            if hasattr(self, "gl_widget") and self.gl_widget and not self.gl_widget.isVisible():
+                self.gl_widget.show()
+        QTimer.singleShot(2000, _ensure_gl_visible)
 
         # Apply saved video settings after player starts
         QTimer.singleShot(300, self._apply_video_settings)
@@ -1966,6 +1965,14 @@ class VideoAnnotator(QFrame):
             self.player.pause = True
 
         self.dialog_open = True
+
+        for w in self.floating_windows:
+            try:
+                if w and w.isVisible():
+                    w.hide()
+            except RuntimeError:
+                continue
+
         try:
             from annotations_visualizer import show_visualization_dialog
 
@@ -2006,6 +2013,12 @@ class VideoAnnotator(QFrame):
         finally:
             self.dialog_open = False
             self._reactivate_after_dialog()
+            for w in self.floating_windows:
+                try:
+                    if w and not w.isVisible():
+                        w.show()
+                except RuntimeError:
+                    continue
             if self.player and was_playing:
                 self.player.pause = False
 

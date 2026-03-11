@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 
 from config_manager import get_config
+from display_utils import center_window
 from files_manager import FilesManager
 from event_key_editor import EventKeyEditor
 import theme
@@ -44,7 +45,23 @@ class SetupManager(QDialog):
         self.setStyleSheet(theme.dialog_stylesheet())
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
+    def setVisible(self, visible):
+        """Prevent the SetupManager window from becoming visible.
+
+        On Linux/X11, Qt may attempt to show a parent widget when a
+        child modal dialog is exec'd. Since SetupManager is an invisible
+        coordinator (all UI lives in child dialogs), suppress any
+        attempt to make it visible.
+        """
+        if visible:
+            return
+        super().setVisible(False)
+
+    def exec(self):
+        """Run the setup flow. The SetupManager itself is never shown;
+        all user interaction occurs through child dialogs."""
         self._show_files_manager()
+        return self.result()
 
     # ------------------------------------------------------------------
     # Files manager
@@ -216,7 +233,8 @@ class SetupManager(QDialog):
         dialog = QDialog(self)
         dialog.setWindowTitle("Resume Session")
         dialog.setWindowFlags(
-            Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+            dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        dialog.setModal(True)
         dialog.setStyleSheet(theme.dialog_stylesheet())
         layout = QVBoxLayout(dialog)
 
@@ -249,6 +267,7 @@ class SetupManager(QDialog):
         layout.addSpacing(20)
         layout.addLayout(btn_row)
 
+        center_window(dialog, 400, 200)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         dialog.rejected.connect(
             lambda: self._handle_resume("cancel", dialog))

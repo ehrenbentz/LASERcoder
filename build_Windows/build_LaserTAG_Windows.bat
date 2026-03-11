@@ -5,13 +5,9 @@ REM
 REM Directory structure:
 REM   LaserTAG\
 REM     CodeBase\              Python source files including LaserTAG.py
-REM     build_Windows\         This script, libmpv-2.dll, laser.ico, LaserTAG.iss
+REM     build_Windows\         This script, libmpv-2.dll, laser.ico, LaserTAG.iss,
+REM                            current_version.txt
 REM       dist_Windows\        Created by this script
-REM         LaserTAG.build\
-REM         LaserTAG.dist\       Complete application folder
-REM           LaserTAG.exe
-REM           libmpv-2.dll
-REM         version_info.txt
 REM         LaserTAG_v{ver}_windows_x64_setup.exe    Installer
 REM         LaserTAG_v{ver}_windows_x64_portable.zip Portable zip
 REM
@@ -25,13 +21,9 @@ REM   build_LaserTAG_Windows.bat
 setlocal enabledelayedexpansion
 
 set APP_NAME=LaserTAG
-set APP_VERSION=1.3.1
 set MAIN_SCRIPT=LaserTAG.py
 set CODBASE_DIR=..\CodeBase
 set OUTPUT_DIR=dist_Windows
-
-set SETUP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_setup.exe
-set ZIP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_portable.zip
 
 REM Code signing — set these environment variables before running,
 REM or leave unset to skip signing:
@@ -63,6 +55,29 @@ if not exist "laser.ico" (
     echo ERROR: laser.ico not found in current directory.
     exit /b 1
 )
+
+if not exist "current_version.txt" (
+    echo ERROR: current_version.txt not found in current directory.
+    exit /b 1
+)
+
+REM =====================================================================
+REM Read version from current_version.txt
+REM =====================================================================
+set APP_VERSION=
+for /f "tokens=2 delims==" %%a in ('findstr /C:"VERSION_NUMBER" current_version.txt') do (
+    set APP_VERSION=%%a
+)
+
+if not defined APP_VERSION (
+    echo ERROR: Could not parse version from current_version.txt
+    exit /b 1
+)
+
+echo Detected version: %APP_VERSION%
+
+set SETUP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_setup.exe
+set ZIP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_portable.zip
 
 REM =====================================================================
 REM Parse version components from APP_VERSION (e.g. 1.3.0)
@@ -165,11 +180,12 @@ REM =====================================================================
 REM Clean up staged source from output
 REM =====================================================================
 echo.
-echo Cleaning up...
+echo Cleaning up staged files...
 
 del "%OUTPUT_DIR%\*.py" >nul 2>&1
 del "%OUTPUT_DIR%\laser.ico" >nul 2>&1
 del "%OUTPUT_DIR%\libmpv-2.dll" >nul 2>&1
+del "%OUTPUT_DIR%\version_info.txt" >nul 2>&1
 
 REM =====================================================================
 REM Code signing
@@ -233,23 +249,29 @@ if %errorlevel% neq 0 (
 )
 
 REM =====================================================================
+REM Clean up build and distribution directories
+REM =====================================================================
+echo.
+echo Cleaning up...
+if exist "%OUTPUT_DIR%\%APP_NAME%.build" (
+    echo Removing build directory...
+    rmdir /s /q "%OUTPUT_DIR%\%APP_NAME%.build"
+)
+if exist "%OUTPUT_DIR%\%APP_NAME%.dist" (
+    echo Removing distribution directory...
+    rmdir /s /q "%OUTPUT_DIR%\%APP_NAME%.dist"
+)
+
+REM =====================================================================
 REM Summary
 REM =====================================================================
 echo.
 echo ============================================
-echo   Build Complete
+echo   Build Complete  (v%APP_VERSION%)
 echo ============================================
-echo   Executable: %OUTPUT_DIR%\%APP_NAME%.dist\%APP_NAME%.exe
-echo.
 if exist "%OUTPUT_DIR%\%SETUP_NAME%" (
-    echo   Installer:  %OUTPUT_DIR%\%SETUP_NAME%
-    echo.
+    echo   Installer:    %OUTPUT_DIR%\%SETUP_NAME%
 )
-echo   --- Testing ---
-echo   %OUTPUT_DIR%\%APP_NAME%.dist\%APP_NAME%.exe
-echo.
-echo   --- Distributing without installer ---
-echo   The %APP_NAME%.dist folder is the complete application.
 if exist "%OUTPUT_DIR%\%ZIP_NAME%" (
     echo   Portable zip: %OUTPUT_DIR%\%ZIP_NAME%
 )
