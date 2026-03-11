@@ -54,7 +54,7 @@ Only required once. The `.pkg` installer handles this automatically.
 
 ### Running from Source
 
-Requires Python 3.10+ and [MPV](https://mpv.io/) (or prebuilt libraries).
+Requires Python 3.11+ and [MPV](https://mpv.io/) (or prebuilt libraries).
 ```bash
 pip install PySide6 python-mpv
 cd CodeBase
@@ -65,7 +65,7 @@ python LaserTAG.py
 
 Each platform directory (`build_Windows/`, `build_macOS/`, `build_Linux/`) contains a build script that compiles the application, creates installers, and packages portable archives. See the scripts and comments within for details.
 
-**Windows:** Nuitka currently requires Python 3.12 specifically. Builds will fail on 3.11 and 3.13+.
+**Windows:** Nuitka currently successfuly compiles on Python 3.12. Builds may fail on 3.11 and 3.13+. This may vary by system or Nuitka version.
 
 **Linux:** You may need additional system libraries beyond the base install. At minimum:
 ```bash
