@@ -9,6 +9,7 @@ Runs natively on **Windows**, **macOS**, and **Linux**.
 <!-- TODO: Add screenshot of main annotation window here -->
 <!-- ![LaserTAG Main Window](docs/images/screenshot.png) -->
 
+
 ## Features
 
 - **No save button.** Annotations are written to disk in real time using atomic write operations. Your data is safe even if the app crashes, your laptop dies, or you accidentally close the window.
@@ -20,6 +21,7 @@ Runs natively on **Windows**, **macOS**, and **Linux**.
 - **Summary statistics.** Generate per-video and per-experiment summaries and combined annotation files for batch analysis.
 - **Resume anywhere.** Stop and restart coding sessions without losing your place.
 - **Coding windows.** Define a start time and duration to standardize observation periods across videos without editing video files.
+
 
 ## Installation
 
@@ -38,6 +40,7 @@ Download the latest release for your platform from the [Releases](../../releases
 | **Linux** | `LaserTAG_v*_linux_amd64.deb` | Debian/Ubuntu package, installs to `/opt/LaserTAG` |
 | **Linux** | `LaserTAG_v*_linux_amd64_portable.tar.gz` | Portable tarball, extract and run |
 
+
 ### macOS Gatekeeper
 
 LaserTAG is not signed with an Apple Developer ID, so macOS will block it on first launch. To get around this:
@@ -47,6 +50,7 @@ LaserTAG is not signed with an Apple Developer ID, so macOS will block it on fir
 3. Go to **System Settings > Privacy & Security** and click **Open Anyway**
 
 Only required once. The `.pkg` installer handles this automatically.
+
 
 ### Running from Source
 
@@ -61,6 +65,13 @@ python LaserTAG.py
 
 Each platform directory (`build_Windows/`, `build_macOS/`, `build_Linux/`) contains a build script that compiles the application, creates installers, and packages portable archives. See the scripts and comments within for details.
 
+**Windows:** Nuitka currently requires Python 3.12 specifically. Builds will fail on 3.11 and 3.13+.
+
+**Linux:** You may need additional system libraries beyond the base install. At minimum:
+```bash
+sudo apt install libxcb-cursor0
+```
+
 ## Quick Start
 
 1. **Launch LaserTAG** and pick an output directory. Subdirectories for annotations, behaviors, resume files, and summaries are created automatically.
@@ -68,6 +79,7 @@ Each platform directory (`build_Windows/`, `build_macOS/`, `build_Linux/`) conta
 3. **Create or load a behavior key.** Define behaviors with names, keyboard shortcuts, and types (Point or State). Set up mutually exclusive groups as needed.
 4. **Annotate.** Use keyboard shortcuts or floating buttons to record behaviors as the video plays.
 5. **Generate summary statistics** from the file selection screen when finished.
+
 
 ### Keyboard Controls
 
@@ -89,6 +101,7 @@ Each platform directory (`build_Windows/`, `build_macOS/`, `build_Linux/`) conta
 | Undo delete | `Ctrl+Z` |
 | Close video and return to file selection | `Escape` |
 
+
 ## Output Format
 
 Annotation files are saved as `VideoName_Annotations.csv` with 11 columns, formatted for direct import into statistical software:
@@ -106,6 +119,7 @@ Annotation files are saved as `VideoName_Annotations.csv` with 11 columns, forma
 | `Duration` | Duration in seconds (state behaviors only) |
 | `Manual_Edit` | `TRUE` if the timestamp was manually edited |
 | `Notes` | User-added notes |
+
 
 ## Project Structure
 ```
@@ -133,6 +147,7 @@ LaserTAG/
 └── README.md
 ```
 
+
 ## Citation
 
 If you use LaserTAG in published research, please cite:
@@ -143,9 +158,11 @@ If you use LaserTAG in published research, please cite:
 
 See [CITATION.cff](CITATION.cff) for machine-readable citation information.
 
+
 ## Contributing
 
 Contributions are welcome. Please open an [issue](../../issues) to report bugs or suggest features before submitting a pull request.
+
 
 ### Development Setup
 ```bash
@@ -156,9 +173,11 @@ cd CodeBase
 python LaserTAG.py
 ```
 
+
 ## License
 
 LaserTAG is licensed under the [GNU General Public License v3.0](LICENSE).
+
 
 ## Acknowledgments
 
