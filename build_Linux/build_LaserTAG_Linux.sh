@@ -165,6 +165,8 @@ echo ""
 echo "Cleaning up..."
 rm -rf "$OUTPUT_DIR/${APP_NAME}.build"
 rm -rf "$OUTPUT_DIR/${APP_NAME}.dist"
+rm -f "$OUTPUT_DIR"/*.py
+rm -f "$OUTPUT_DIR/libmpv.so.2"
 
 # ==================================================================
 # Summary
@@ -177,12 +179,8 @@ echo "  App folder:  $OUTPUT_DIR/${APP_NAME}.dist/"
 [ -f "$OUTPUT_DIR/$DEB_NAME" ] && echo "  .deb:        $OUTPUT_DIR/$DEB_NAME"
 [ -f "$OUTPUT_DIR/$TAR_NAME" ] && echo "  Portable:    $OUTPUT_DIR/$TAR_NAME"
 echo ""
-echo "  --- Testing ---"
-echo "  $OUTPUT_DIR/${APP_NAME}.dist/${APP_NAME}"
-echo ""
 echo "  --- Installing .deb ---"
 echo "  sudo dpkg -i $OUTPUT_DIR/$DEB_NAME"
-echo "  sudo apt-get install -f   # resolves dependencies if needed"
 echo ""
 echo "  --- Portable usage ---"
 echo "  tar xzf $OUTPUT_DIR/$TAR_NAME"

@@ -38,7 +38,7 @@ class EventKeyEditor(QDialog):
         self.setWindowTitle("Event Key Editor")
         self.setWindowFlags(
             Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
-        self.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(self)
 
         self._screen = get_screen_geometry()
         self._editor_w = int(self._screen["width"] * 0.5)

@@ -65,6 +65,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.video_annotator = None
 
+    def apply_theme(self):
+        """Update the main window background and title bar to match the current theme."""
+        self.setStyleSheet(f"background-color: {theme.color('window_bg')};")
+        theme.apply_titlebar_theme(self)
+
     def init_video_annotator(self, video_path, session_state_file, event_file, output_dir):
         """Initialize the video annotator component."""
         try:
@@ -92,6 +97,7 @@ class MainWindow(QMainWindow):
             # Set as central widget
             self.setCentralWidget(self.video_annotator)
             self.show()
+            self.apply_theme()
 
             return True
         except Exception as e:
@@ -114,8 +120,10 @@ def main():
 
         # Create main window and show as fullscreen background
         main_window = MainWindow()
+        main_window.setStyleSheet(f"background-color: {theme.color('window_bg')};")
         main_window.showMaximized()
         app.processEvents()
+        main_window.apply_theme()
 
         while True:
             # Create and show SetupManager dialog
@@ -149,7 +157,7 @@ def main():
                         main_window.video_annotator.deleteLater()
                         main_window.video_annotator = None
                     main_window.setCentralWidget(None)
-                    main_window.setStyleSheet("")
+                    main_window.apply_theme()
                     main_window.showMaximized()
                     app.processEvents()
 

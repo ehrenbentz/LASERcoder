@@ -124,7 +124,7 @@ class MpvOpenGLWidget(QOpenGLWidget):
             pass
 
     def _gl_clear_black(self):
-        """Clear the framebuffer to solid black using Qt's OpenGL functions."""
+        """Clear the framebuffer to black."""
         funcs = QOpenGLContext.currentContext().functions()
         funcs.glClearColor(0.0, 0.0, 0.0, 1.0)
         funcs.glClear(0x00004000)  # GL_COLOR_BUFFER_BIT
@@ -231,7 +231,7 @@ class VideoAnnotator(QFrame):
             self.display_height = screen["height"]
 
         self.parent.setWindowTitle(f"LaserTag  {video_path}")
-        self.parent.setStyleSheet(f"background-color: {theme.color('window_bg')};")
+        self.parent.apply_theme()
 
         if sys.platform == "darwin":
             self.parent.hide()
@@ -619,7 +619,7 @@ class VideoAnnotator(QFrame):
 
     def _create_progress_bar(self):
         self.progress_frame = QFrame()
-        self.progress_frame.setStyleSheet("background-color: black;")  # Video area stays black
+        self.progress_frame.setStyleSheet("background-color: #000000;")
         self.progress_frame.setFixedSize(
             self.progress_bar_width, self.progress_bar_height + 20)
 
@@ -640,7 +640,7 @@ class VideoAnnotator(QFrame):
         frame_layout.addWidget(self.progress_bar)
 
         self.left_layout.addWidget(self.progress_frame)
-        self.left_container.setStyleSheet("background-color: black;")
+        self.left_container.setStyleSheet("background-color: #000000;")
         self.update_coding_info_display()
 
     def update_progress(self):
@@ -658,7 +658,7 @@ class VideoAnnotator(QFrame):
 
     def _show_coding_end_prompt(self, current_sec):
         dlg = QMessageBox(self.parent)
-        dlg.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(dlg)
         dlg.setWindowTitle("Coding Duration Reached")
         dlg.setWindowFlags(
             dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
@@ -1170,7 +1170,7 @@ class VideoAnnotator(QFrame):
         app.setStyleSheet(theme.app_stylesheet())
 
         # Re-apply main window background
-        self.parent.setStyleSheet(f"background-color: {theme.color('window_bg')};")
+        self.parent.apply_theme()
 
         # Re-apply annotation panel frame
         self.annotation_frame.setStyleSheet(theme.panel_frame_stylesheet())
@@ -2086,7 +2086,7 @@ class VideoAnnotator(QFrame):
             msg = QMessageBox(self.parent)
             msg.setWindowTitle(title)
             msg.setText(action_text)
-            msg.setStyleSheet(theme.dialog_stylesheet())
+            theme.apply_dialog_theme(msg)
             msg.setWindowFlags(
                 msg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
             msg.setStandardButtons(
@@ -2199,7 +2199,7 @@ class VideoAnnotator(QFrame):
 
         self.dialog_open = True
         dlg = QMessageBox(self.parent)
-        dlg.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(dlg)
         dlg.setIcon(QMessageBox.Icon.Warning)
         dlg.setWindowTitle("File Access Error")
         dlg.setText(message or

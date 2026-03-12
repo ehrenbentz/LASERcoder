@@ -27,7 +27,7 @@ class SummaryStatisticsManager(QDialog):
         self.current_dir = self.initial_dir
 
         self.setWindowTitle("LaserTAG - Generate Summary Statistics")
-        self.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(self)
 
         screen = get_screen_geometry()
         self._display_width = screen["width"]
@@ -449,7 +449,7 @@ class SummaryStatisticsManager(QDialog):
         """Show result dialog with option to open the summary viewer."""
         result_dlg = QDialog(self)
         result_dlg.setWindowTitle("Combined Analysis Complete")
-        result_dlg.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(result_dlg)
         rdl = QVBoxLayout(result_dlg)
         rdl.setSpacing(10)
         rdl.setContentsMargins(15, 15, 15, 15)

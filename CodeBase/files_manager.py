@@ -61,7 +61,7 @@ class FilesManager(QDialog):
         self._screen = get_screen_geometry()
 
         self.setWindowTitle("LaserTAG - Select Output Directory and Video File")
-        self.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(self)
 
         if self.parent():
             self.parent().showMaximized()
@@ -562,7 +562,7 @@ class FilesManager(QDialog):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("View Annotations")
-        dlg.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(dlg)
         dlg.setModal(True)
         dlg.setMinimumWidth(400)
 
@@ -771,7 +771,7 @@ class FilesManager(QDialog):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Summary Statistics")
-        dlg.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(dlg)
         dlg.setModal(True)
         dlg.setMinimumWidth(420)
 
@@ -930,10 +930,12 @@ class FilesManager(QDialog):
         app = QApplication.instance()
         app.setStyleSheet(theme.app_stylesheet())
 
-        self.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(self)
 
-        if self.parent():
-            self.parent().setStyleSheet(theme.dialog_stylesheet())
+        # Update the main window background (not a Qt parent of this dialog)
+        for w in QApplication.instance().topLevelWidgets():
+            if hasattr(w, 'apply_theme'):
+                w.apply_theme()
 
     # ------------------------------------------------------------------
     # Key handling

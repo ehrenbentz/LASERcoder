@@ -42,7 +42,7 @@ class SetupManager(QDialog):
         self._files_manager = None
 
         self.setWindowTitle("LaserTAG")
-        self.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(self)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
     def setVisible(self, visible):
@@ -235,7 +235,7 @@ class SetupManager(QDialog):
         dialog.setWindowFlags(
             dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         dialog.setModal(True)
-        dialog.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(dialog)
         layout = QVBoxLayout(dialog)
 
         msg = QLabel(

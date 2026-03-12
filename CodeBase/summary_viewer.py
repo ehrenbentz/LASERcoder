@@ -70,7 +70,7 @@ class _TableViewer(QDialog):
     def __init__(self, parent, rows, title):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(self)
 
         screen = get_screen_geometry()
         center_window(self,
@@ -189,7 +189,7 @@ class _BoxplotViewer(QDialog):
             self._col_vis[col] = True
 
         self.setWindowTitle("Summary Box Plots")
-        self.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(self)
 
         self.setMinimumSize(720, 520)
         self.showMaximized()
@@ -743,7 +743,7 @@ class _BoxplotViewer(QDialog):
         # Resolution picker
         dlg = QDialog(self)
         dlg.setWindowTitle("Export Options")
-        dlg.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(dlg)
         lay = QVBoxLayout(dlg)
 
         lay.addWidget(QLabel("Resolution (DPI):"))

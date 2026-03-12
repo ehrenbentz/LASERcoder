@@ -514,7 +514,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
     """Create and show the visualization dialog with event selection panel."""
     try:
         viz_dialog = QDialog(parent)
-        viz_dialog.setStyleSheet(theme.dialog_stylesheet())
+        theme.apply_dialog_theme(viz_dialog)
 
         viz_dialog.setWindowTitle(f"Annotation Visualization - {video_name}")
         viz_dialog.setModal(True)

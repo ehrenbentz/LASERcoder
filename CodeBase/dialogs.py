@@ -15,7 +15,7 @@ import theme
 
 
 def _apply_dialog_theme(dialog):
-    dialog.setStyleSheet(theme.dialog_stylesheet())
+    theme.apply_dialog_theme(dialog)
 
 
 def _prepare_for_dialog(annotator):

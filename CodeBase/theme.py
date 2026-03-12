@@ -1,6 +1,7 @@
 # theme.py — Centralized dark/light/system theme for LaserTAG
 
 import sys
+import ctypes
 import subprocess
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
@@ -12,9 +13,11 @@ _current_theme = "system"
 # ---------------------------------------------------------------------------
 _DARK = {
     # Core backgrounds
-    "window_bg": "#000000",
+    "window_bg": "#2b2b2b",
+    "titlebar_bg": "#1f1f1f",
     "panel_bg": "#2b2b2b",
     "dialog_bg": "#2b2b2b",
+    "video_bg": "#000000",
     "input_bg": "#333333",
     "menu_bg": "#2b2b2b",
     "tree_bg": "#333333",
@@ -71,8 +74,10 @@ _DARK = {
 _LIGHT = {
     # Core backgrounds
     "window_bg": "#e8e8e8",
+    "titlebar_bg": "#d0d0d0",
     "panel_bg": "#f5f5f5",
     "dialog_bg": "#f0f0f0",
+    "video_bg": "#000000",
     "input_bg": "#ffffff",
     "menu_bg": "#f5f5f5",
     "tree_bg": "#ffffff",
@@ -169,6 +174,106 @@ def color(role: str) -> str:
 
 def qcolor(role: str) -> QColor:
     return QColor(color(role))
+
+# ---------------------------------------------------------------------------
+# Title-bar theming (OS-level)
+# ---------------------------------------------------------------------------
+
+def _hex_to_colorref(hex_color: str) -> int:
+    """Convert '#RRGGBB' to a COLORREF (0x00BBGGRR) for the Windows DWM API."""
+    c = QColor(hex_color)
+    return c.red() | (c.green() << 8) | (c.blue() << 16)
+
+
+def apply_titlebar_theme(window) -> None:
+    """Apply the current theme colors to a window's native title bar.
+
+    Windows 11+: sets caption color, text color, and border color via DWM.
+    Windows 10:  enables/disables immersive dark mode for the title bar.
+    macOS:       sets NSWindow appearance to dark/light Aqua.
+    """
+    p = _resolved()
+    is_dark = (_current_theme == "dark") or (
+        _current_theme == "system" and _detect_system_theme() == "dark"
+    )
+
+    if sys.platform == "win32":
+        try:
+            hwnd = int(window.winId())
+            dwmapi = ctypes.windll.dwmapi
+
+            # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 10 1809+)
+            dark_val = ctypes.c_int(1 if is_dark else 0)
+            dwmapi.DwmSetWindowAttribute(
+                hwnd, 20, ctypes.byref(dark_val), ctypes.sizeof(dark_val)
+            )
+
+            # DWMWA_BORDER_COLOR = 34, DWMWA_CAPTION_COLOR = 35,
+            # DWMWA_TEXT_COLOR = 36  (Windows 11 22000+)
+            caption_cr = ctypes.c_uint32(_hex_to_colorref(p["titlebar_bg"]))
+            text_cr = ctypes.c_uint32(_hex_to_colorref(p["text"]))
+            border_cr = ctypes.c_uint32(_hex_to_colorref(p["border"]))
+
+            dwmapi.DwmSetWindowAttribute(
+                hwnd, 35, ctypes.byref(caption_cr), ctypes.sizeof(caption_cr)
+            )
+            dwmapi.DwmSetWindowAttribute(
+                hwnd, 36, ctypes.byref(text_cr), ctypes.sizeof(text_cr)
+            )
+            dwmapi.DwmSetWindowAttribute(
+                hwnd, 34, ctypes.byref(border_cr), ctypes.sizeof(border_cr)
+            )
+        except Exception:
+            pass  # graceful fallback on older Windows
+
+    elif sys.platform == "darwin":
+        try:
+            from ctypes import c_void_p, c_bool
+            objc = ctypes.cdll.LoadLibrary("libobjc.dylib")
+
+            sel = ctypes.CFUNCTYPE(c_void_p, ctypes.c_char_p)(
+                ("sel_registerName", objc)
+            )
+            msg = ctypes.CFUNCTYPE(c_void_p, c_void_p, c_void_p)(
+                ("objc_msgSend", objc)
+            )
+            msg_p = ctypes.CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_void_p)(
+                ("objc_msgSend", objc)
+            )
+            cls = ctypes.CFUNCTYPE(c_void_p, ctypes.c_char_p)(
+                ("objc_getClass", objc)
+            )
+
+            # Get NSWindow from the Qt window
+            nsview = c_void_p(int(window.winId()))
+            nswindow = msg(nsview, sel(b"window"))
+
+            # Create NSAppearance for dark or light
+            appearance_name = (
+                b"NSAppearanceNameDarkAqua" if is_dark
+                else b"NSAppearanceNameAqua"
+            )
+            NSAppearance = cls(b"NSAppearance")
+            ns_string = msg_p(
+                cls(b"NSString"),
+                sel(b"stringWithUTF8String:"),
+                ctypes.c_char_p(appearance_name),
+            )
+            appearance = msg_p(
+                NSAppearance,
+                sel(b"appearanceNamed:"),
+                ns_string,
+            )
+            msg_p(nswindow, sel(b"setAppearance:"), appearance)
+        except Exception:
+            pass  # graceful fallback
+
+
+def apply_dialog_theme(dialog) -> None:
+    """Apply dialog stylesheet and native title-bar colors in one call."""
+    dialog.setStyleSheet(dialog_stylesheet())
+    apply_titlebar_theme(dialog)
+
 
 # ---------------------------------------------------------------------------
 # Stylesheet generators
