@@ -109,6 +109,10 @@ def toggle_floating_controls(annotator):
     """Toggle the playback-controls floating panel."""
     if (hasattr(annotator, "floating_controls_window")
             and annotator.floating_controls_window):
+        try:
+            annotator.floating_windows.remove(annotator.floating_controls_window)
+        except ValueError:
+            pass
         annotator.floating_controls_window.deleteLater()
         annotator.floating_controls_window = None
         annotator.play_pause_btn = None
@@ -165,10 +169,28 @@ def toggle_event_buttons(annotator):
     """Toggle the floating behaviour-buttons panel."""
     if (hasattr(annotator, "event_buttons_window")
             and annotator.event_buttons_window):
+        try:
+            annotator.floating_windows.remove(annotator.event_buttons_window)
+        except ValueError:
+            pass
         annotator.event_buttons_window.deleteLater()
         annotator.event_buttons_window = None
     else:
         _create_event_buttons(annotator)
+
+
+def _custom_btn_stylesheet(hex_color):
+    """Generate a semi-transparent button stylesheet from a hex color."""
+    from PySide6.QtGui import QColor
+    c = QColor(hex_color)
+    r, g, b = c.red(), c.green(), c.blue()
+    return (
+        f"QPushButton {{ background-color: rgba({r},{g},{b},100); color: white;"
+        f"  border: 1px solid grey; border-radius: 3px; padding: 5px;"
+        f"  text-align: center; }}"
+        f"QPushButton:hover {{ background-color: rgba({r},{g},{b},160); color: white; }}"
+        f"QPushButton:pressed {{ background-color: rgba({r},{g},{b},200); color: white; }}"
+    )
 
 
 def _create_event_buttons(annotator):
@@ -235,8 +257,16 @@ def _create_event_buttons(annotator):
 
         main_layout.addWidget(container)
 
-    _add_section("Point Events", point_events, theme.point_btn_stylesheet())
-    _add_section("State Events", state_events, theme.state_btn_stylesheet())
+    from config_manager import get_config
+    cfg = get_config()
+
+    point_hex = cfg.get_point_button_color()
+    state_hex = cfg.get_state_button_color()
+    point_style = _custom_btn_stylesheet(point_hex) if point_hex else theme.point_btn_stylesheet()
+    state_style = _custom_btn_stylesheet(state_hex) if state_hex else theme.state_btn_stylesheet()
+
+    _add_section("Point Events", point_events, point_style)
+    _add_section("State Events", state_events, state_style)
 
     # Position
     video_pos = annotator.video_frame.mapToGlobal(QPoint(0, 0))

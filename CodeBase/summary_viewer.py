@@ -55,9 +55,10 @@ def show_table_viewer(parent, csv_path, title=None):
     """Open a plain read-only spreadsheet dialog for a summary CSV."""
     rows = _load_csv(csv_path)
     if not rows:
-        QMessageBox.information(
+        theme.show_message(
             parent, "Empty File",
-            f"No data found in:\n{os.path.basename(csv_path)}")
+            f"No data found in:\n{os.path.basename(csv_path)}",
+            icon="information")
         return
 
     clean = title or os.path.basename(csv_path).replace(".csv", "").replace("_", " ")
@@ -71,6 +72,7 @@ class _TableViewer(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         theme.apply_dialog_theme(self)
+        theme.stay_on_top(self)
 
         screen = get_screen_geometry()
         center_window(self,
@@ -190,6 +192,7 @@ class _BoxplotViewer(QDialog):
 
         self.setWindowTitle("Summary Box Plots")
         theme.apply_dialog_theme(self)
+        theme.stay_on_top(self)
 
         self.setMinimumSize(720, 520)
         self.showMaximized()
@@ -736,14 +739,15 @@ class _BoxplotViewer(QDialog):
 
     def _export(self):
         if not self._chart_views:
-            QMessageBox.warning(self, "No Figure",
-                                "Generate a chart first before exporting.")
+            theme.show_message(self, "No Figure",
+                               "Generate a chart first before exporting.")
             return
 
         # Resolution picker
         dlg = QDialog(self)
         dlg.setWindowTitle("Export Options")
         theme.apply_dialog_theme(dlg)
+        theme.stay_on_top(dlg)
         lay = QVBoxLayout(dlg)
 
         lay.addWidget(QLabel("Resolution (DPI):"))
@@ -798,7 +802,8 @@ class _BoxplotViewer(QDialog):
             painter.end()
             quality = 95 if fmt == "JPG" else -1
             pm.save(path, fmt, quality)
-            QMessageBox.information(
-                self, "Export Successful", f"Figure saved to:\n{path}")
+            theme.show_message(
+                self, "Export Successful", f"Figure saved to:\n{path}",
+                icon="information")
         except Exception as exc:
-            QMessageBox.critical(self, "Export Error", str(exc))
+            theme.show_message(self, "Export Error", str(exc))

@@ -515,6 +515,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
     try:
         viz_dialog = QDialog(parent)
         theme.apply_dialog_theme(viz_dialog)
+        theme.stay_on_top(viz_dialog)
 
         viz_dialog.setWindowTitle(f"Annotation Visualization - {video_name}")
         viz_dialog.setModal(True)
@@ -934,11 +935,12 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             try:
                 image, _ = timeline_widget.render_to_image(fmt, dpi)
                 image.save(file_path)
-                QMessageBox.information(viz_dialog, "Export Successful",
-                                        "Visualization exported successfully")
+                theme.show_message(viz_dialog, "Export Successful",
+                                   "Visualization exported successfully",
+                                   icon="information")
             except Exception as e:
-                QMessageBox.critical(viz_dialog, "Export Error",
-                                     f"Failed to export visualization: {e}")
+                theme.show_message(viz_dialog, "Export Error",
+                                   f"Failed to export visualization: {e}")
 
         export_button.clicked.connect(export_visualization)
 
@@ -948,6 +950,6 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
 
     except Exception as e:
         print(f"Error in visualization: {e}")
-        QMessageBox.critical(parent, "Visualization Error",
-                             f"Failed to create visualization: {e}")
+        theme.show_message(parent, "Visualization Error",
+                           f"Failed to create visualization: {e}")
         return False

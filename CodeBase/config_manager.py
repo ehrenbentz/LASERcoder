@@ -156,6 +156,49 @@ class ConfigManager:
         self.config['show_zoom_button'] = bool(visible)
         self.save_config()
 
+    def get_backup_dirs(self):
+        return self.config.get('backup_dirs', [])
+
+    def add_backup_dir(self, path):
+        dirs = self.config.get('backup_dirs', [])
+        norm = os.path.normpath(path)
+        if norm not in dirs:
+            dirs.append(norm)
+            self.config['backup_dirs'] = dirs
+            self.save_config()
+
+    def is_backup_dir(self, path):
+        norm = os.path.normpath(path)
+        return norm in self.config.get('backup_dirs', [])
+
+    def get_state_highlight_color(self):
+        return self.config.get('state_highlight_color', None)
+
+    def set_state_highlight_color(self, hex_color):
+        self.config['state_highlight_color'] = hex_color
+        self.save_config()
+
+    def get_point_highlight_color(self):
+        return self.config.get('point_highlight_color', None)
+
+    def set_point_highlight_color(self, hex_color):
+        self.config['point_highlight_color'] = hex_color
+        self.save_config()
+
+    def get_point_button_color(self):
+        return self.config.get('point_button_color', None)
+
+    def set_point_button_color(self, hex_color):
+        self.config['point_button_color'] = hex_color
+        self.save_config()
+
+    def get_state_button_color(self):
+        return self.config.get('state_button_color', None)
+
+    def set_state_button_color(self, hex_color):
+        self.config['state_button_color'] = hex_color
+        self.save_config()
+
 
 _instance = None
 

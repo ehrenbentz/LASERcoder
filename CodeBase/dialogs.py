@@ -257,8 +257,8 @@ def show_coding_start_dialog(annotator):
             annotator.save_session_state()
             dialog.accept()
         except ValueError as exc:
-            QMessageBox.warning(dialog, "Invalid Input",
-                                f"Please check your input values: {exc}")
+            theme.show_message(dialog, "Invalid Input",
+                               f"Please check your input values: {exc}")
 
     bbox.accepted.connect(_save)
     bbox.rejected.connect(dialog.reject)
@@ -520,8 +520,8 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
                 new_start = parse_time(vals["H_Start"])
                 new_end = parse_time(vals["H_End"])
             except ValueError:
-                QMessageBox.warning(annotator.parent, "Invalid Time Format",
-                                    "Could not parse time values.")
+                theme.show_message(annotator.parent, "Invalid Time Format",
+                                   "Could not parse time values.")
                 return
             if annotation["Event"] != vals["Event"] or annotation["start_time"] != new_start or annotation["end_time"] != new_end:
                 annotation["Manual_Edit"] = True
@@ -566,8 +566,8 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
 def show_edit_point_dialog(annotator):
     """Edit a point annotation's name and time."""
     if annotator.store.active_state_events if hasattr(annotator.store, 'active_state_events') else annotator.active_state_events:
-        QMessageBox.warning(annotator, "Active Annotation",
-                            "Please end the active state before editing.")
+        theme.show_message(annotator, "Active Annotation",
+                           "Please end the active state before editing.")
         return
     if annotator.selected_index is None:
         return
@@ -775,8 +775,8 @@ def show_edit_state_dialog(annotator):
     sel = annotator.store.state_events[annotator.selected_index]
 
     if sel["end_time"] is None:
-        QMessageBox.warning(annotator, "Edit Error",
-                            "Please end the state event before editing.")
+        theme.show_message(annotator, "Edit Error",
+                           "Please end the state event before editing.")
         return
 
     latest = annotator.load_annotation_data(sel, "Event", "H_Start", "H_End")

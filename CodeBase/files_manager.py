@@ -1,4 +1,5 @@
 import csv
+from datetime import datetime
 import json
 import os
 import shutil
@@ -17,6 +18,7 @@ from annotation_store import AnnotationStore, parse_time
 from annotations_visualizer import show_visualization_dialog
 from summary_statistics_manager import SummaryStatisticsManager
 from summary_viewer import show_table_viewer, show_boxplot_viewer
+from config_manager import get_config
 import theme
 
 
@@ -62,6 +64,7 @@ class FilesManager(QDialog):
 
         self.setWindowTitle("LaserTAG - Select Output Directory and Video File")
         theme.apply_dialog_theme(self)
+        theme.stay_on_top(self)
 
         if self.parent():
             self.parent().showMaximized()
@@ -149,14 +152,26 @@ class FilesManager(QDialog):
         view_ann_btn = QPushButton("View Annotations")
         view_ann_btn.clicked.connect(self._show_view_annotations)
         summary_layout.addWidget(view_ann_btn)
+        del_ann_btn = QPushButton("Delete Annotations")
+        del_ann_btn.clicked.connect(self._show_delete_annotations)
+        summary_layout.addWidget(del_ann_btn)
         summary_btn = QPushButton("Summary Statistics")
         summary_btn.clicked.connect(self._show_summary_menu)
         summary_layout.addWidget(summary_btn)
-        spacer = QPushButton()
-        spacer.setEnabled(False)
-        spacer.setStyleSheet("border: none; background: transparent;")
-        summary_layout.addWidget(spacer)
         layout.addWidget(summary_frame)
+
+        backup_frame = QFrame()
+        backup_layout = QHBoxLayout(backup_frame)
+        backup_layout.setContentsMargins(0, 5, 0, 0)
+        backup_btn = QPushButton("Backup Project")
+        backup_btn.clicked.connect(self._backup_project)
+        backup_layout.addWidget(backup_btn)
+        for _ in range(2):
+            spacer = QPushButton()
+            spacer.setEnabled(False)
+            spacer.setStyleSheet("border: none; background: transparent;")
+            backup_layout.addWidget(spacer)
+        layout.addWidget(backup_frame)
 
         self._populate_dir_list(self.initial_output_dir)
 
@@ -226,6 +241,10 @@ class FilesManager(QDialog):
         self.video_file_listbox = QListWidget()
         self.video_file_listbox.itemDoubleClicked.connect(
             self._select_video_file)
+        self.video_file_listbox.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.video_file_listbox.customContextMenuRequested.connect(
+            self._show_video_context_menu)
         file_layout.addWidget(self.video_file_listbox, 1)
 
         # Status legend
@@ -295,6 +314,12 @@ class FilesManager(QDialog):
             self, "Select Output Directory", self.current_output_dir,
             QFileDialog.Option.ShowDirsOnly)
         if path:
+            if self._is_backup_dir(path):
+                theme.show_message(
+                    self, "Backup Directory",
+                    "This directory is a LaserTAG backup and "
+                    "cannot be used as a project directory.")
+                return
             self.current_output_dir = path
             self.output_dir_entry.setText(path)
             self._populate_dir_list(path)
@@ -315,6 +340,12 @@ class FilesManager(QDialog):
     def _on_output_dir_update(self):
         path = self.output_dir_entry.text().strip()
         if os.path.isdir(path):
+            if self._is_backup_dir(path):
+                theme.show_message(
+                    self, "Backup Directory",
+                    "This directory is a LaserTAG backup and "
+                    "cannot be used as a project directory.")
+                return
             self.current_output_dir = path
             self._populate_dir_list(path)
             if path != self.output_dir:
@@ -332,6 +363,12 @@ class FilesManager(QDialog):
     def _on_output_dir_double_click(self, item):
         new_dir = os.path.join(self.current_output_dir, item.text())
         if os.path.isdir(new_dir):
+            if self._is_backup_dir(new_dir):
+                theme.show_message(
+                    self, "Backup Directory",
+                    "This directory is a LaserTAG backup and "
+                    "cannot be used as a project directory.")
+                return
             self.current_output_dir = new_dir
             self.output_dir_entry.setText(new_dir)
             self._populate_dir_list(new_dir)
@@ -450,11 +487,163 @@ class FilesManager(QDialog):
         return QIcon(pixmap)
 
     # ------------------------------------------------------------------
+    # Video context menu
+    # ------------------------------------------------------------------
+
+    def _show_video_context_menu(self, pos):
+        item = self.video_file_listbox.itemAt(pos)
+        if not item:
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet(theme.menu_stylesheet())
+
+        mark_complete = menu.addAction("Mark Complete")
+        mark_progress = menu.addAction("Mark In Progress")
+        mark_clear = menu.addAction("Clear Status")
+
+        action = menu.exec(
+            self.video_file_listbox.mapToGlobal(pos))
+        if action is None:
+            return
+
+        fname = item.text()
+        if action == mark_complete:
+            self._set_video_status(fname, "complete")
+        elif action == mark_progress:
+            self._set_video_status(fname, "in_progress")
+        elif action == mark_clear:
+            self._set_video_status(fname, "clear")
+
+    def _set_video_status(self, filename, status):
+        if not self.output_dir:
+            theme.show_message(
+                self, "Warning",
+                "Please select an output directory first.")
+            return
+
+        video_name = os.path.splitext(filename)[0]
+        resume_dir = os.path.join(self.output_dir, "Resume")
+        os.makedirs(resume_dir, exist_ok=True)
+        state_file = os.path.join(
+            resume_dir, f"{video_name}_session_state.json")
+
+        if status == "clear":
+            if os.path.exists(state_file):
+                try:
+                    os.remove(state_file)
+                except OSError as exc:
+                    theme.show_message(
+                        self, "Error",
+                        f"Failed to remove session state: {exc}")
+                    return
+        else:
+            # Load existing state or create a new one
+            data = {}
+            if os.path.exists(state_file):
+                try:
+                    with open(state_file, "r") as fh:
+                        data = json.load(fh)
+                except (json.JSONDecodeError, OSError):
+                    data = {}
+
+            if status == "complete":
+                data["completed"] = True
+                data.setdefault("timestamp_sec", 0)
+            elif status == "in_progress":
+                data.pop("completed", None)
+                data.setdefault("timestamp_sec", 1)
+
+            temp = state_file + ".tmp"
+            try:
+                with open(temp, "w") as fh:
+                    json.dump(data, fh)
+                os.replace(temp, state_file)
+            except OSError as exc:
+                try:
+                    os.remove(temp)
+                except OSError:
+                    pass
+                theme.show_message(
+                    self, "Error",
+                    f"Failed to update session state: {exc}")
+                return
+
+        self._populate_file_list(self.current_video_dir)
+
+    # ------------------------------------------------------------------
+    # Backup guard
+    # ------------------------------------------------------------------
+
+    def _is_backup_dir(self, path):
+        """Return True if *path* is a backup directory."""
+        if os.path.isfile(os.path.join(path, ".no_project")):
+            return True
+        return get_config().is_backup_dir(path)
+
+    # ------------------------------------------------------------------
+    # Backup project
+    # ------------------------------------------------------------------
+
+    def _backup_project(self):
+        if not self.output_dir:
+            theme.show_message(
+                self, "Warning",
+                "Please select an output directory first.")
+            return
+
+        dest_parent = QFileDialog.getExistingDirectory(
+            self, "Select Backup Location", str(Path.home()),
+            QFileDialog.Option.ShowDirsOnly)
+        if not dest_parent:
+            return
+
+        default_name = os.path.basename(self.output_dir)
+        name, ok = theme.get_text(
+            self, "Backup Name",
+            "Enter a name for the backup folder:",
+            text=default_name)
+        if not ok or not name or not name.strip():
+            return
+        date_stamp = datetime.now().strftime("%Y%m%d")
+        base_name = f"{name.strip()}_BKP_{date_stamp}"
+        name = base_name
+        dest = os.path.normpath(os.path.join(dest_parent, name))
+        counter = 1
+        while os.path.exists(dest):
+            name = f"{base_name}.{counter}"
+            dest = os.path.normpath(os.path.join(dest_parent, name))
+            counter += 1
+
+        try:
+            shutil.copytree(self.output_dir, dest)
+        except OSError as exc:
+            theme.show_message(
+                self, "Error", f"Backup failed: {exc}")
+            return
+
+        # Mark the backup so it cannot be opened as a project
+        try:
+            marker = os.path.join(dest, ".no_project")
+            with open(marker, "w") as fh:
+                fh.write("This directory is a LaserTAG backup and "
+                         "cannot be used as a project directory.\n")
+        except OSError:
+            pass
+
+        get_config().add_backup_dir(dest)
+
+        theme.show_message(
+            self, "Backup Complete",
+            f"Project backed up to:\n{dest}",
+            icon="information")
+
+    # ------------------------------------------------------------------
     # Directory actions
     # ------------------------------------------------------------------
 
     def _create_directory(self):
-        name, ok = QInputDialog.getText(
+        name, ok = theme.get_text(
             self, "Create Directory", "Enter new directory name:")
         if ok and name:
             new_path = os.path.join(self.current_output_dir, name)
@@ -467,46 +656,44 @@ class FilesManager(QDialog):
                 self.dir_selected_label.setText(
                     f"Selected Output Directory: {self.output_dir}")
             except OSError as exc:
-                QMessageBox.critical(
+                theme.show_message(
                     self, "Error", f"Could not create directory: {exc}")
 
     def _delete_directory(self):
         current_item = self.output_dir_listbox.currentItem()
         if not current_item:
-            QMessageBox.warning(
+            theme.show_message(
                 self, "Warning", "Please select a directory to delete.")
             return
 
         dir_name = current_item.text()
         dir_path = os.path.join(self.current_output_dir, dir_name)
 
-        reply = QMessageBox.question(
+        reply = theme.show_message(
             self, "Confirm Deletion",
             f"Are you sure you want to delete directory '{dir_name}'?\n"
             "This cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
+            icon="question")
         if reply != QMessageBox.StandardButton.Yes:
             return
 
         try:
             if os.listdir(dir_path):
-                confirm = QMessageBox.question(
+                confirm = theme.show_message(
                     self, "Non-empty Directory",
                     f"Directory '{dir_name}' is not empty. Delete anyway?",
-                    QMessageBox.StandardButton.Yes
-                    | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No)
+                    icon="question")
                 if confirm != QMessageBox.StandardButton.Yes:
                     return
 
             shutil.rmtree(dir_path)
             self._populate_dir_list(self.current_output_dir)
-            QMessageBox.information(
+            theme.show_message(
                 self, "Success",
-                f"Directory '{dir_name}' has been deleted.")
+                f"Directory '{dir_name}' has been deleted.",
+                icon="information")
         except OSError as exc:
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error", f"Could not delete directory: {exc}")
 
     def _select_directory(self):
@@ -515,12 +702,26 @@ class FilesManager(QDialog):
             new_dir = os.path.join(
                 self.current_output_dir, current_item.text())
             if os.path.isdir(new_dir):
+                if self._is_backup_dir(new_dir):
+                    theme.show_message(
+                        self, "Backup Directory",
+                        "This directory is a LaserTAG backup and "
+                        "cannot be used as a project directory.")
+                    return
                 self.current_output_dir = new_dir
                 self.output_dir_entry.setText(new_dir)
                 self._populate_dir_list(new_dir)
                 self.output_dir = new_dir
         else:
+            if self._is_backup_dir(self.current_output_dir):
+                theme.show_message(
+                    self, "Backup Directory",
+                    "This directory is a LaserTAG backup and "
+                    "cannot be used as a project directory.")
+                return
             self.output_dir = self.current_output_dir
+        if self.output_dir:
+            get_config().update_output_dir(self.output_dir)
         self.dir_selected_label.setText(
             f"Selected Output Directory: {self.output_dir}")
 
@@ -532,17 +733,25 @@ class FilesManager(QDialog):
         current_item = self.video_file_listbox.currentItem()
         if current_item:
             if not self.output_dir:
-                QMessageBox.warning(
+                theme.show_message(
                     self, "Warning",
                     "Please select an output directory first using the "
                     "'Select Directory' button.")
+                return
+            if self._is_backup_dir(self.output_dir):
+                theme.show_message(
+                    self, "Backup Directory",
+                    "The selected output directory is a LaserTAG backup "
+                    "and cannot be used as a project directory.\n\n"
+                    "Please select a different output directory.")
                 return
             self.selected_video_file = os.path.join(
                 self.current_video_dir, current_item.text())
             self.done(QDialog.DialogCode.Accepted)
         else:
-            QMessageBox.information(
-                self, "Note", "You must select a video file to proceed")
+            theme.show_message(
+                self, "Note", "You must select a video file to proceed",
+                icon="information")
 
     # ------------------------------------------------------------------
     # View annotations
@@ -563,6 +772,7 @@ class FilesManager(QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle("View Annotations")
         theme.apply_dialog_theme(dlg)
+        theme.stay_on_top(dlg)
         dlg.setModal(True)
         dlg.setMinimumWidth(400)
 
@@ -667,15 +877,16 @@ class FilesManager(QDialog):
                             "Notes": row.get("Notes", ""),
                         })
         except Exception as exc:
-            QMessageBox.critical(
+            theme.show_message(
                 parent_dlg, "Error",
                 f"Failed to read annotations: {exc}")
             return
 
         if not state_ann and not point_ann:
-            QMessageBox.information(
+            theme.show_message(
                 parent_dlg, "No Annotations",
-                "No annotations found to visualize.")
+                "No annotations found to visualize.",
+                icon="information")
             return
 
         # Estimate duration from annotation timestamps
@@ -730,9 +941,111 @@ class FilesManager(QDialog):
                 store=store,
             )
         except Exception as exc:
-            QMessageBox.critical(
+            theme.show_message(
                 parent_dlg, "Visualization Error",
                 f"Failed to create visualization: {exc}")
+
+    # ------------------------------------------------------------------
+    # Delete annotations
+    # ------------------------------------------------------------------
+
+    def _show_delete_annotations(self):
+        ann_dir = ""
+        if self.output_dir:
+            ann_dir = os.path.join(self.output_dir, "Annotations")
+
+        ann_files = []
+        if ann_dir and os.path.isdir(ann_dir):
+            ann_files = sorted(
+                f for f in os.listdir(ann_dir)
+                if f.endswith("_Annotations.csv")
+                and not is_os_junk(f))
+
+        if not ann_files:
+            theme.show_message(
+                self, "No Annotations",
+                "No annotation files found in the selected "
+                "output directory.",
+                icon="information")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Delete Annotations")
+        theme.apply_dialog_theme(dlg)
+        theme.stay_on_top(dlg)
+        dlg.setModal(True)
+        dlg.setMinimumWidth(400)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        label = QLabel("Which annotations would you like to remove?")
+        layout.addWidget(label)
+
+        combo = QComboBox()
+        for fname in ann_files:
+            title = (fname.replace("_Annotations.csv", "")
+                          .replace("_", " "))
+            combo.addItem(title, fname)
+        layout.addWidget(combo)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        delete_btn = QPushButton("Delete")
+        delete_btn.clicked.connect(
+            lambda: self._confirm_delete_annotations(
+                dlg, ann_dir, combo.currentData(), combo.currentText()))
+        btn_row.addWidget(delete_btn)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row)
+
+        dlg.exec()
+
+    def _confirm_delete_annotations(self, parent_dlg, ann_dir,
+                                    filename, display_name):
+        reply = theme.show_message(
+            parent_dlg, "Confirm Deletion",
+            f"This will delete the annotations for "
+            f"'{display_name}'.\n\nAre you sure?",
+            icon="question")
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        ann_path = os.path.join(ann_dir, filename)
+        video_name = filename.replace("_Annotations.csv", "")
+
+        # Remove annotation file
+        try:
+            os.remove(ann_path)
+        except OSError as exc:
+            theme.show_message(
+                parent_dlg, "Error",
+                f"Failed to delete annotations: {exc}")
+            return
+
+        # Remove associated session state file
+        if self.output_dir:
+            resume_dir = os.path.join(self.output_dir, "Resume")
+            state_file = os.path.join(
+                resume_dir, f"{video_name}_session_state.json")
+            if os.path.exists(state_file):
+                try:
+                    os.remove(state_file)
+                except OSError:
+                    pass
+
+        theme.show_message(
+            parent_dlg, "Deleted",
+            f"Annotations for '{display_name}' have been deleted.",
+            icon="information")
+
+        # Refresh the video file list to update status icons
+        self._populate_file_list(self.current_video_dir)
+
+        parent_dlg.accept()
 
     # ------------------------------------------------------------------
     # Summary statistics
@@ -749,150 +1062,210 @@ class FilesManager(QDialog):
         try:
             SummaryStatisticsManager(self, start_dir).exec()
         except Exception as exc:
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error",
                 f"Failed to open Summary Statistics Manager: {exc}")
 
     def _show_summary_menu(self):
-        # Scan for existing summary files
-        ind_files, comb_files = [], []
-        summary_base = os.path.join(self.output_dir, "Summary") if self.output_dir else ""
-        ind_dir  = os.path.join(summary_base, "Individual_summaries")
-        comb_dir = os.path.join(summary_base, "Combined_summaries")
-
-        if os.path.isdir(ind_dir):
-            ind_files = sorted(
-                f for f in os.listdir(ind_dir)
-                if f.endswith(".csv") and not is_os_junk(f))
-        if os.path.isdir(comb_dir):
-            comb_files = sorted(
-                f for f in os.listdir(comb_dir)
-                if f.endswith(".csv") and not is_os_junk(f))
-
         dlg = QDialog(self)
         dlg.setWindowTitle("Summary Statistics")
         theme.apply_dialog_theme(dlg)
+        theme.stay_on_top(dlg)
         dlg.setModal(True)
-        dlg.setMinimumWidth(420)
+        dlg.setMinimumWidth(360)
 
         layout = QVBoxLayout(dlg)
         layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # ── Generate section ────────────────────────────────────────────
-        gen_grp = QGroupBox("Generate")
-        gen_lay = QVBoxLayout(gen_grp)
-        gen_lay.setSpacing(6)
-        gen_desc = QLabel(
-            "Create individual or combined summary statistics\n"
-            "from annotation files.")
-        gen_desc.setWordWrap(True)
-        gen_desc.setStyleSheet(
-            f"color: {theme.color('text_secondary')}; background: transparent;")
-        gen_lay.addWidget(gen_desc)
-        gen_btn = QPushButton("Generate Statistics...")
-        gen_lay.addWidget(gen_btn)
-        layout.addWidget(gen_grp)
+        label = QLabel("What would you like to do?")
+        layout.addWidget(label)
 
-        # ── View Individual Summaries ────────────────────────────────────
-        combo_ind = None
-        view_ind_btn = None
-        if ind_files:
-            ind_grp = QGroupBox("Individual Summaries")
-            ind_lay = QVBoxLayout(ind_grp)
-            ind_lay.setSpacing(6)
-            ind_desc = QLabel(
-                f"{len(ind_files)} individual summary file"
-                f"{'s' if len(ind_files) != 1 else ''} available.")
-            ind_desc.setStyleSheet(
-                f"color: {theme.color('text_secondary')}; background: transparent;")
-            ind_lay.addWidget(ind_desc)
-            row = QHBoxLayout()
-            combo_ind = QComboBox()
-            for fname in ind_files:
-                title = fname.replace("_Summary.csv", "").replace("_", " ")
-                combo_ind.addItem(title, os.path.join(ind_dir, fname))
-            row.addWidget(combo_ind, 1)
-            view_ind_btn = QPushButton("View")
-            row.addWidget(view_ind_btn)
-            ind_lay.addLayout(row)
-            layout.addWidget(ind_grp)
+        gen_btn = QPushButton("Generate Summaries")
+        box_btn = QPushButton("Generate Box Plots")
+        gen_btn.clicked.connect(lambda: dlg.done(1))
+        box_btn.clicked.connect(lambda: dlg.done(2))
+        layout.addWidget(gen_btn)
+        layout.addWidget(box_btn)
 
-        # ── View Combined Summaries ──────────────────────────────────────
-        combo_comb = None
-        view_comb_btn = None
-        if comb_files:
-            comb_grp = QGroupBox("Combined Summaries")
-            comb_lay = QVBoxLayout(comb_grp)
-            comb_lay.setSpacing(6)
-            comb_desc = QLabel(
-                f"{len(comb_files)} combined summary file"
-                f"{'s' if len(comb_files) != 1 else ''} available.")
-            comb_desc.setStyleSheet(
-                f"color: {theme.color('text_secondary')}; background: transparent;")
-            comb_lay.addWidget(comb_desc)
-            row2 = QHBoxLayout()
-            combo_comb = QComboBox()
-            for fname in comb_files:
-                title = (fname.replace("_Combined_Summary.csv", "")
-                              .replace("_", " "))
-                combo_comb.addItem(title, os.path.join(comb_dir, fname))
-            row2.addWidget(combo_comb, 1)
-            view_comb_btn = QPushButton("View")
-            row2.addWidget(view_comb_btn)
-            comb_lay.addLayout(row2)
-            layout.addWidget(comb_grp)
+        # Show view options if summaries already exist
+        summary_base = (os.path.join(self.output_dir, "Summary")
+                        if self.output_dir else "")
+        ind_dir = os.path.join(summary_base, "Individual_summaries")
+        comb_dir = os.path.join(summary_base, "Combined_summaries")
+        has_ind = os.path.isdir(ind_dir) and any(
+            f.endswith(".csv") for f in os.listdir(ind_dir)
+            if not is_os_junk(f))
+        has_comb = os.path.isdir(comb_dir) and any(
+            f.endswith(".csv") for f in os.listdir(comb_dir)
+            if not is_os_junk(f))
 
-        # ── Visualize section ────────────────────────────────────────────
-        viz_grp = QGroupBox("Visualize")
-        viz_lay = QVBoxLayout(viz_grp)
-        viz_lay.setSpacing(6)
-        viz_desc = QLabel(
-            "View box plots of combined summary data across videos.")
-        viz_desc.setWordWrap(True)
-        viz_desc.setStyleSheet(
-            f"color: {theme.color('text_secondary')}; background: transparent;")
-        viz_lay.addWidget(viz_desc)
-        boxplot_btn = QPushButton("Summary Box Plots...")
-        viz_lay.addWidget(boxplot_btn)
-        layout.addWidget(viz_grp)
+        if has_ind or has_comb:
+            layout.addSpacing(6)
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.HLine)
+            layout.addWidget(sep)
+            view_label = QLabel("Previously generated:")
+            view_label.setStyleSheet(
+                f"color: {theme.color('text_secondary')};"
+                " background: transparent;")
+            layout.addWidget(view_label)
 
-        # ── Close ────────────────────────────────────────────────────────
-        layout.addStretch()
+            if has_ind:
+                view_ind_btn = QPushButton("View Individual Summaries")
+                view_ind_btn.clicked.connect(lambda: dlg.done(3))
+                layout.addWidget(view_ind_btn)
+            if has_comb:
+                view_comb_btn = QPushButton("View Combined Summaries")
+                view_comb_btn.clicked.connect(lambda: dlg.done(4))
+                layout.addWidget(view_comb_btn)
+                view_box_btn = QPushButton("View Box Plots")
+                view_box_btn.clicked.connect(lambda: dlg.done(5))
+                layout.addWidget(view_box_btn)
+
+        result = dlg.exec()
+
+        if result == 1:
+            self._open_summary_statistics()
+        elif result == 2:
+            self._generate_boxplots_flow()
+        elif result == 3:
+            self._view_existing_summaries(ind_dir, "Individual")
+        elif result == 4:
+            self._view_existing_summaries(comb_dir, "Combined")
+        elif result == 5:
+            self._open_boxplot_viewer()
+
+    def _generate_boxplots_flow(self):
+        """Generate combined summaries then show box plots."""
+        if not self.output_dir:
+            theme.show_message(
+                self, "Warning",
+                "Please select an output directory first.")
+            return
+
+        ann_dir = os.path.join(self.output_dir, "Annotations")
+        if not os.path.isdir(ann_dir):
+            theme.show_message(
+                self, "No Annotations",
+                "No Annotations folder found in the output directory.")
+            return
+
+        ann_files = sorted(
+            os.path.join(ann_dir, f) for f in os.listdir(ann_dir)
+            if f.endswith("_Annotations.csv") and not is_os_junk(f))
+        if not ann_files:
+            theme.show_message(
+                self, "No Annotations",
+                "No annotation files found.")
+            return
+
+        from summary_statistics import generate_summary_statistics, combine_summaries
+
+        experiment_name, ok = theme.get_text(
+            self, "Experiment Name",
+            "Enter a name for this experiment/analysis:")
+        if not ok or not experiment_name:
+            return
+        experiment_name = "".join(
+            c for c in experiment_name if c.isalnum() or c in " _-")
+
+        summary_dir = os.path.join(self.output_dir, "Summary")
+        ind_dir = os.path.join(summary_dir, "Individual_summaries")
+        comb_dir = os.path.join(summary_dir, "Combined_summaries")
+        for d in (ind_dir, comb_dir):
+            os.makedirs(d, exist_ok=True)
+
+        # Check if combined summary already exists
+        combined_path = os.path.join(
+            comb_dir, f"{experiment_name}_Combined_Summary.csv")
+        if os.path.exists(combined_path):
+            reply = theme.show_message(
+                self, "Summary Exists",
+                f"A combined summary named '{experiment_name}' "
+                "already exists.\n\nOverwrite it?",
+                icon="question")
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        # Generate individual summaries
+        ind_paths = []
+        for path in ann_files:
+            video_name = os.path.basename(path).replace(
+                "_Annotations.csv", "")
+            out = os.path.join(ind_dir, f"{video_name}_Summary.csv")
+            if os.path.exists(out):
+                ind_paths.append(out)
+                continue
+            try:
+                result = generate_summary_statistics(path, out)
+                if result:
+                    ind_paths.append(result)
+            except Exception:
+                pass
+
+        if not ind_paths:
+            theme.show_message(
+                self, "No Summaries",
+                "Could not generate any summary files.")
+            return
+
+        # Generate combined summary
+        combined_path = os.path.join(
+            comb_dir, f"{experiment_name}_Combined_Summary.csv")
+        try:
+            combine_summaries(ind_paths, combined_path)
+        except Exception as exc:
+            theme.show_message(
+                self, "Error",
+                f"Error generating combined summary: {exc}")
+            return
+
+        # Show box plots
+        show_boxplot_viewer(self, comb_dir)
+
+    def _view_existing_summaries(self, directory, kind):
+        """Show a picker for existing summary CSVs."""
+        files = sorted(
+            f for f in os.listdir(directory)
+            if f.endswith(".csv") and not is_os_junk(f))
+        if not files:
+            theme.show_message(
+                self, "No Files",
+                f"No {kind.lower()} summary files found.",
+                icon="information")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"View {kind} Summaries")
+        theme.apply_dialog_theme(dlg)
+        theme.stay_on_top(dlg)
+        dlg.setModal(True)
+        dlg.setMinimumWidth(400)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        combo = QComboBox()
+        for fname in files:
+            title = (fname.replace("_Combined_Summary.csv", "")
+                          .replace("_Summary.csv", "")
+                          .replace("_", " "))
+            combo.addItem(title, os.path.join(directory, fname))
+        layout.addWidget(combo)
+
         btn_row = QHBoxLayout()
-        btn_row.addStretch()
+        view_btn = QPushButton("View")
+        view_btn.clicked.connect(lambda: show_table_viewer(
+            dlg, combo.currentData(), combo.currentText()))
+        btn_row.addWidget(view_btn)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dlg.reject)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
-        # Wire up actions using a post-exec action slot so the dialog is
-        # fully closed before secondary dialogs open.
-        action = [None]
-
-        gen_btn.clicked.connect(lambda: _set("generate"))
-        if view_ind_btn:
-            view_ind_btn.clicked.connect(lambda: _open_viewer(
-                combo_ind.currentData(), combo_ind.currentText()))
-        if view_comb_btn:
-            view_comb_btn.clicked.connect(lambda: _open_viewer(
-                combo_comb.currentData(), combo_comb.currentText()))
-        boxplot_btn.clicked.connect(lambda: _set("boxplots"))
-
-        def _open_viewer(path, title):
-            show_table_viewer(dlg, path, title)
-
-        def _set(val):
-            action[0] = val
-            dlg.accept()
-
         dlg.exec()
-
-        # Execute chosen action after dialog is gone
-        if action[0] == "generate":
-            self._open_summary_statistics()
-        elif action[0] == "boxplots":
-            self._open_boxplot_viewer()
 
     def _open_boxplot_viewer(self):
         comb_dir = ""

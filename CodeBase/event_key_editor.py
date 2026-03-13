@@ -1,12 +1,15 @@
 import os
 import csv
 
+import shutil
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
     QLineEdit, QRadioButton, QScrollArea, QFrame, QMessageBox, QComboBox,
     QButtonGroup, QGridLayout, QInputDialog, QApplication, QSizePolicy,
+    QFileDialog,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from display_utils import get_screen_geometry, center_window, is_os_junk
 import theme
 
@@ -45,10 +48,11 @@ class EventKeyEditor(QDialog):
         self._editor_h = int(self._screen["height"] * 0.8)
 
         self._setup_ui()
-        self._initialize_event_key()
 
         if parent:
             parent.showMaximized()
+
+        self._initialize_event_key()
 
     # ------------------------------------------------------------------
     # UI setup
@@ -108,6 +112,12 @@ class EventKeyEditor(QDialog):
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         new_btn.clicked.connect(self._new_event_key_file)
         layout.addWidget(new_btn)
+
+        load_btn = QPushButton("Load Event Key File")
+        load_btn.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        load_btn.clicked.connect(self._load_event_key_file)
+        layout.addWidget(load_btn)
 
         return frame
 
@@ -224,7 +234,80 @@ class EventKeyEditor(QDialog):
             self._load_events()
             self._update_entries()
         else:
+            # Defer so the editor is fully visible before asking.
+            QTimer.singleShot(100, self._prompt_no_event_key)
+
+    def _prompt_no_event_key(self):
+        """Show a dialog when no event key files exist."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("No Event Key Found")
+        dlg.setWindowFlags(
+            dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        dlg.setModal(True)
+        theme.apply_dialog_theme(dlg)
+
+        layout = QVBoxLayout(dlg)
+        label = QLabel(
+            "No event key files were found.\n\n"
+            "Would you like to create a new event key\n"
+            "or load an existing one?")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+
+        btn_row = QHBoxLayout()
+        create_btn = QPushButton("Create")
+        load_btn = QPushButton("Load")
+        create_btn.clicked.connect(lambda: dlg.done(1))
+        load_btn.clicked.connect(lambda: dlg.done(2))
+        btn_row.addWidget(create_btn)
+        btn_row.addWidget(load_btn)
+        layout.addSpacing(10)
+        layout.addLayout(btn_row)
+
+        center_window(dlg, 340, 180)
+        result = dlg.exec()
+
+        if result == 1:
             self._new_event_key_file()
+        elif result == 2:
+            self._load_event_key_file()
+
+    def _load_event_key_file(self):
+        """Import an existing event key CSV via a system file dialog."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Event Key File", "",
+            "Event Key Files (*.csv);;All Files (*)")
+        if not path:
+            return
+
+        basename = os.path.basename(path)
+        if not basename.endswith("_events.csv"):
+            basename = (os.path.splitext(basename)[0]
+                        + "_events.csv")
+        dest = os.path.join(self.event_key_dir, basename)
+
+        if os.path.exists(dest):
+            reply = theme.show_message(
+                self, "File Exists",
+                f"'{basename}' already exists.\nOverwrite it?",
+                icon="question")
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        try:
+            shutil.copy2(path, dest)
+        except OSError as exc:
+            theme.show_message(
+                self, "Error", f"Failed to copy file: {exc}")
+            return
+
+        self.event_key_file = dest
+        self._refresh_combo()
+        self._combo.setCurrentText(
+            basename.replace("_events.csv", ""))
+        self._load_events()
+        self._update_entries()
+        self.config_manager.update_last_event_key(basename)
 
     def _get_event_files(self):
         files = [f for f in os.listdir(self.event_key_dir)
@@ -253,7 +336,7 @@ class EventKeyEditor(QDialog):
             return True
 
         if not self._check_file_access(self.event_key_file):
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error",
                 "Cannot access event key file.\n"
                 "Is it open in another application?")
@@ -271,7 +354,7 @@ class EventKeyEditor(QDialog):
                     self.events.append(["", "", "point", ""])
             return True
         except OSError as exc:
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error", f"Error loading events: {exc}")
             self.events = [["", "", "point", ""] for _ in range(30)]
             return False
@@ -308,7 +391,7 @@ class EventKeyEditor(QDialog):
             return
         self._new_dialog_open = True
 
-        name, ok = QInputDialog.getText(
+        name, ok = theme.get_text(
             self, "New Event Key File",
             "Enter a name for the new Event Key file:\n"
             "(Use only letters, numbers, and underscores)")
@@ -316,14 +399,14 @@ class EventKeyEditor(QDialog):
         if ok and name:
             name = name.strip()
             if not name:
-                QMessageBox.warning(
+                theme.show_message(
                     self, "No Name Entered",
                     "You must enter a name for the Event Key file.")
                 self._new_dialog_open = False
                 return
 
             if not name.replace("_", "").isalnum():
-                QMessageBox.warning(
+                theme.show_message(
                     self, "Invalid Characters",
                     "File name can only contain letters, numbers, "
                     "and underscores.")
@@ -335,7 +418,7 @@ class EventKeyEditor(QDialog):
             path = os.path.join(self.event_key_dir, filename)
 
             if not self._check_file_access(path, for_writing=True):
-                QMessageBox.critical(
+                theme.show_message(
                     self, "Error",
                     "Cannot create event key file.\n"
                     "Check folder permissions or if a file with the "
@@ -359,7 +442,7 @@ class EventKeyEditor(QDialog):
                 self._update_entries()
             except OSError as exc:
                 _remove_temp(temp)
-                QMessageBox.critical(
+                theme.show_message(
                     self, "Error", f"Error creating file: {exc}")
 
         self._new_dialog_open = False
@@ -367,20 +450,20 @@ class EventKeyEditor(QDialog):
     def _rename_event_key(self):
         current = self._combo.currentText()
         if not current or current == "No file found":
-            QMessageBox.warning(
+            theme.show_message(
                 self, "No Selection",
                 "Please select a Event Key file to rename.")
             return
 
         if not self._check_file_access(
                 self.event_key_file, for_writing=True):
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error",
                 "Cannot access the current event key file.\n"
                 "Is it open in another application?")
             return
 
-        new_name, ok = QInputDialog.getText(
+        new_name, ok = theme.get_text(
             self, "Rename Event Key File",
             "Enter new name for the Event Key file:\n"
             "(Use only letters, numbers, and underscores)",
@@ -391,13 +474,13 @@ class EventKeyEditor(QDialog):
 
         new_name = new_name.strip()
         if not new_name:
-            QMessageBox.warning(
+            theme.show_message(
                 self, "No Name Entered",
                 "You must enter a name for the Event Key file.")
             return
 
         if not new_name.replace("_", "").isalnum():
-            QMessageBox.warning(
+            theme.show_message(
                 self, "Invalid Characters",
                 "File name can only contain letters, numbers, "
                 "and underscores.")
@@ -408,13 +491,13 @@ class EventKeyEditor(QDialog):
         new_path = os.path.join(self.event_key_dir, new_filename)
 
         if os.path.exists(new_path):
-            QMessageBox.warning(
+            theme.show_message(
                 self, "File Exists",
                 "A file with this name already exists.")
             return
 
         if not self._check_file_access(new_path, for_writing=True):
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error",
                 "Cannot create file at the new location.\n"
                 "Check folder permissions.")
@@ -437,30 +520,29 @@ class EventKeyEditor(QDialog):
             self._combo.setCurrentText(new_name)
         except OSError as exc:
             _remove_temp(temp)
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error", f"Failed to rename the file: {exc}")
 
     def _delete_event_key(self):
         current = self._combo.currentText()
         if not current or current == "No file found":
-            QMessageBox.warning(
+            theme.show_message(
                 self, "No Selection",
                 "Please select a Event Key file to delete.")
             return
 
         if not self._check_file_access(
                 self.event_key_file, for_writing=True):
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error",
                 "Cannot access the event key file for deletion.\n"
                 "Is it open in another application?")
             return
 
-        reply = QMessageBox.question(
+        reply = theme.show_message(
             self, "Delete Confirmation",
             f"Are you sure you want to delete '{current}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
+            icon="question")
         if reply != QMessageBox.StandardButton.Yes:
             return
 
@@ -480,7 +562,7 @@ class EventKeyEditor(QDialog):
                 self._combo.addItem("No file found")
                 self._new_event_key_file()
         except OSError as exc:
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error", f"Failed to delete the file: {exc}")
 
     def _save_events(self):
@@ -491,7 +573,7 @@ class EventKeyEditor(QDialog):
 
         if not self._check_file_access(
                 self.event_key_file, for_writing=True):
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error",
                 "Cannot save to event key file.\n"
                 "Is it open in another application?")
@@ -516,7 +598,7 @@ class EventKeyEditor(QDialog):
             return True
         except OSError as exc:
             _remove_temp(temp)
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error", f"Error saving events: {exc}")
             return False
 
@@ -526,7 +608,7 @@ class EventKeyEditor(QDialog):
 
     def _start_video(self):
         if not any(e.text().strip() for e in self._name_entries):
-            QMessageBox.warning(
+            theme.show_message(
                 self, "No Events Defined",
                 "Please add events before starting the video.")
             return
@@ -540,13 +622,13 @@ class EventKeyEditor(QDialog):
             key = entry.text().strip().lower()
             if key:
                 if key in reserved:
-                    QMessageBox.warning(
+                    theme.show_message(
                         self, "Invalid Shortcut Key",
                         f"The key '{key}' is reserved for video "
                         "navigation.\nPlease assign a different key.")
                     return
                 if key in assigned:
-                    QMessageBox.warning(
+                    theme.show_message(
                         self, "Duplicate Shortcut Key",
                         f"The key '{key}' is assigned to multiple "
                         "events.\nPlease assign unique keys.")
@@ -562,13 +644,20 @@ class EventKeyEditor(QDialog):
     def _on_cancel(self):
         current = self._current_events()
         if current != self.events:
-            reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                "You have unsaved changes. Save before going back?",
-                (QMessageBox.StandardButton.Save
-                 | QMessageBox.StandardButton.Discard
-                 | QMessageBox.StandardButton.Cancel),
-                QMessageBox.StandardButton.Save)
+            dlg = QMessageBox(self)
+            theme.apply_dialog_theme(dlg)
+            theme.stay_on_top(dlg)
+            dlg.setWindowTitle("Unsaved Changes")
+            dlg.setText("You have unsaved changes. Save before going back?")
+            dlg.setIcon(QMessageBox.Icon.Question)
+            dlg.setStandardButtons(
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel)
+            dlg.setDefaultButton(QMessageBox.StandardButton.Save)
+            reply = dlg.exec()
+            dlg.setParent(None)
+            dlg.deleteLater()
 
             if reply == QMessageBox.StandardButton.Save:
                 if not self._save_events():

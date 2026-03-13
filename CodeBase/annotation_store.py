@@ -133,6 +133,11 @@ class AnnotationStore:
             os.replace(temp, self.annotations_file)
             return True
         except (PermissionError, OSError):
+            if os.path.exists(self.annotations_file + ".tmp"):
+                try:
+                    os.remove(self.annotations_file + ".tmp")
+                except OSError:
+                    pass
             return False
 
     def save_sorted_annotations(self):

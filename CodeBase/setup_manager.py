@@ -95,7 +95,7 @@ class SetupManager(QDialog):
                     self._init_file_paths()
                     self._check_existing_session()
                 else:
-                    QMessageBox.warning(
+                    theme.show_message(
                         self, "Warning",
                         "No video or output directory selected.")
                     self.done(QDialog.DialogCode.Rejected)
@@ -103,7 +103,7 @@ class SetupManager(QDialog):
                 self.done(QDialog.DialogCode.Rejected)
 
         except Exception as exc:
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error", f"Error in setup process: {exc}")
             self.done(QDialog.DialogCode.Rejected)
 
@@ -122,7 +122,7 @@ class SetupManager(QDialog):
                       self.annotations_dir, self.resume_dir):
                 os.makedirs(d, exist_ok=True)
         except OSError as exc:
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error", f"Error creating directories: {exc}")
             self.done(QDialog.DialogCode.Rejected)
 
@@ -145,7 +145,7 @@ class SetupManager(QDialog):
             os.replace(temp_ann, self.annotations_file)
         except (PermissionError, OSError):
             _remove_temp(temp_ann)
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error",
                 "Cannot create annotations file.\n"
                 "Is it open in another application?")
@@ -168,7 +168,7 @@ class SetupManager(QDialog):
             os.replace(temp_state, self.session_state_file)
         except (PermissionError, OSError):
             _remove_temp(temp_state)
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error",
                 "Cannot create session state file.\n"
                 "Is it open in another application?")
@@ -197,22 +197,22 @@ class SetupManager(QDialog):
                             with open(self.annotations_file, "r") as fh:
                                 fh.read(1)
                         except (PermissionError, OSError):
-                            QMessageBox.critical(
+                            theme.show_message(
                                 self, "Error",
                                 "Cannot access annotations file.\n"
                                 "Is it open in another application?")
                             self._show_files_manager()
                             return
 
-                    self._show_resume_dialog()
+                    self._resume_session()
                 except (PermissionError, OSError):
-                    QMessageBox.critical(
+                    theme.show_message(
                         self, "Error",
                         "Cannot access session state file.\n"
                         "Is it open in another application?")
                     self._show_files_manager()
                 except json.JSONDecodeError:
-                    QMessageBox.warning(
+                    theme.show_message(
                         self, "Warning",
                         "Session state file is corrupted. "
                         "Starting a new session.")
@@ -224,67 +224,9 @@ class SetupManager(QDialog):
                 if self._create_empty_files():
                     self._show_event_key_editor()
         except Exception as exc:
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error",
                 f"Error checking existing session: {exc}")
-            self._show_files_manager()
-
-    def _show_resume_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Resume Session")
-        dialog.setWindowFlags(
-            dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-        dialog.setModal(True)
-        theme.apply_dialog_theme(dialog)
-        layout = QVBoxLayout(dialog)
-
-        msg = QLabel(
-            f"A previous session was found for {self.video_name}.\n\n"
-            "What would you like to do?")
-        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(msg)
-
-        btn_style = (f"QPushButton {{ padding: 8px 16px; min-width: 100px;"
-                     f" background-color: {theme.color('button_bg')};"
-                     f" color: {theme.color('button_text')};"
-                     f" border: none; border-radius: 4px; }}"
-                     f"QPushButton:hover {{ background-color: {theme.color('button_hover')};"
-                     f" color: {theme.color('text_on_accent')}; }}"
-                     f"QPushButton:pressed {{ background-color: {theme.color('button_pressed')};"
-                     f" color: {theme.color('text_on_accent')}; }}")
-        btn_row = QHBoxLayout()
-        for text, choice in [
-            ("Resume", "resume"),
-            ("Start Over", "start_over"),
-            ("Cancel", "cancel"),
-        ]:
-            btn = QPushButton(text)
-            btn.setStyleSheet(btn_style)
-            btn.clicked.connect(
-                lambda checked, c=choice: self._handle_resume(c, dialog))
-            btn_row.addWidget(btn)
-
-        layout.addSpacing(20)
-        layout.addLayout(btn_row)
-
-        center_window(dialog, 400, 200)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
-        dialog.rejected.connect(
-            lambda: self._handle_resume("cancel", dialog))
-        dialog.exec()
-
-    def _handle_resume(self, choice, dialog):
-        try:
-            dialog.rejected.disconnect()
-        except (TypeError, RuntimeError):
-            pass
-        dialog.accept()
-
-        if choice == "resume":
-            self._resume_session()
-        elif choice == "start_over":
-            self._confirm_start_over()
-        else:
             self._show_files_manager()
 
     def _resume_session(self):
@@ -297,44 +239,6 @@ class SetupManager(QDialog):
         else:
             self.start_frame = 0
         self._show_event_key_editor()
-
-    def _confirm_start_over(self):
-        reply = QMessageBox.question(
-            self, "Confirm Start Over",
-            f"Are you sure?\n\nStarting over will delete all current "
-            f"annotations for\n{self.video_name}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-
-        if reply != QMessageBox.StandardButton.Yes:
-            self._show_resume_dialog()
-            return
-
-        for path in (self.session_state_file, self.annotations_file):
-            if os.path.exists(path):
-                try:
-                    with open(path, "a"):
-                        pass
-                    os.remove(path)
-                except (PermissionError, OSError):
-                    QMessageBox.warning(
-                        self, "Warning",
-                        f"Cannot delete {os.path.basename(path)}.\n"
-                        "Is it open in another application?")
-                    self._show_resume_dialog()
-                    return
-
-        self.start_frame = 0
-        self.saved_state = {
-            "timestamp_sec": 0.0,
-            "coding_start": 0.0,
-            "coding_duration": None,
-            "coding_end": None,
-            "coding_end_reached": False,
-            "current_frame": 0,
-        }
-        if self._create_empty_files():
-            self._show_event_key_editor()
 
     # ------------------------------------------------------------------
     # Event key editor
@@ -364,7 +268,7 @@ class SetupManager(QDialog):
                 self.done(QDialog.DialogCode.Accepted)
 
         except Exception as exc:
-            QMessageBox.critical(
+            theme.show_message(
                 self, "Error",
                 f"Error showing event key editor: {exc}")
             self._event_editor = None

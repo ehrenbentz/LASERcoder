@@ -19,7 +19,8 @@ import mpv
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTreeWidget, QTreeWidgetItem, QMenu, QMessageBox,
-    QAbstractItemView, QApplication, QSizePolicy,
+    QAbstractItemView, QApplication, QSizePolicy, QColorDialog,
+    QDialog, QGridLayout,
 )
 from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, QSysInfo
 from PySide6.QtGui import QColor, QOpenGLContext
@@ -31,7 +32,7 @@ from annotation_store import (
 )
 from floating_controls import (
     create_toggle_buttons, toggle_floating_controls,
-    toggle_event_buttons, update_floating_visibility,
+    toggle_event_buttons,
     _create_event_buttons,
 )
 from dialogs import (
@@ -439,18 +440,18 @@ class VideoAnnotator(QFrame):
         self._set_macos_window_level(0)
 
     def _reactivate_after_dialog(self):
-        """Restore window level and reactivate after a modal dialog on macOS."""
+        """Restore window level and reactivate after a modal dialog."""
+        self._suppress_floating_hide = True
+        self.parent.activateWindow()
+        self.parent.raise_()
+        self._set_floating_visible(True)
+        self._raise_floating_windows()
         if sys.platform == "darwin":
-            self._suppress_floating_hide = True
             self._set_macos_window_level(25)
-            self.parent.activateWindow()
-            self.parent.raise_()
-            self._set_floating_visible(True)
-            self._raise_floating_windows()
             QTimer.singleShot(50, self._reapply_macos_autohide)
-            # Clear suppression and re-show after all deferred
-            # ActivationChange handlers have settled.
-            QTimer.singleShot(200, self._finish_dialog_reactivation)
+        # Clear suppression and re-show after all deferred
+        # ActivationChange handlers have settled.
+        QTimer.singleShot(200, self._finish_dialog_reactivation)
 
     def _finish_dialog_reactivation(self):
         """Final step of dialog reactivation — clear suppression, re-show floats."""
@@ -582,11 +583,15 @@ class VideoAnnotator(QFrame):
             return
         app = QApplication.instance()
         active = app.activeWindow()
-        is_ours = (
-            active is None
-            or active == self.parent
-            or active in self.floating_windows
-        )
+        if active is not None:
+            is_ours = (active == self.parent
+                       or active in self.floating_windows)
+        else:
+            # activeWindow() is None — only treat as ours if the
+            # application itself is still the active app (not when
+            # another program has taken focus).
+            is_ours = (app.applicationState()
+                       == Qt.ApplicationState.ApplicationActive)
         if is_ours:
             self._set_floating_visible(True)
             self._raise_floating_windows()
@@ -608,7 +613,7 @@ class VideoAnnotator(QFrame):
                     w.raise_()
                     if sys.platform == "darwin":
                         self._set_macos_window_level(26, w)
-                live.append(w)
+                live.append(w)  # keep ALL valid windows, not just visible ones
             except RuntimeError:
                 pass
         self.floating_windows[:] = live
@@ -798,6 +803,7 @@ class VideoAnnotator(QFrame):
     def _load_data_and_start(self):
         self.store.load_events()
         self.store.load_annotations()
+        self._restore_active_state_events()
         self._update_annotations()
         self._populate_event_trees()
         self._init_progress_bar()
@@ -1037,8 +1043,13 @@ class VideoAnnotator(QFrame):
     def _populate_event_trees(self):
         self.state_events_tree.clear()
         self.point_events_tree.clear()
-        active_color = theme.qcolor("active_color")
-        highlight_color = theme.qcolor("highlight_color")
+        cfg = get_config()
+        state_hex = cfg.get_state_highlight_color()
+        point_hex = cfg.get_point_highlight_color()
+        active_color = (QColor(state_hex) if state_hex
+                        else theme.qcolor("active_color"))
+        highlight_color = (QColor(point_hex) if point_hex
+                           else theme.qcolor("highlight_color"))
 
         for name, key, btype, me_group in self.store.events:
             if btype == "state":
@@ -1106,12 +1117,19 @@ class VideoAnnotator(QFrame):
         menu.addSeparator()
         menu.addAction("Video Settings...").triggered.connect(
             self._show_video_settings_dialog)
+        menu.addAction("Highlight Colors...").triggered.connect(
+            self._show_highlight_color_dialog)
+        menu.addAction("Button Colors...").triggered.connect(
+            self._show_button_color_dialog)
 
         btn = self.sender()
         if btn:
+            self.player.pause = True
+            self.dialog_open = True
             self._prepare_for_dialog()
             menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
             self._reactivate_after_dialog()
+            self.dialog_open = False
 
     def _toggle_floating_item(self, item, checked):
         cfg = get_config()
@@ -1142,6 +1160,172 @@ class VideoAnnotator(QFrame):
     def _show_video_settings_dialog(self):
         from dialogs import show_video_settings_dialog
         show_video_settings_dialog(self)
+
+    def _show_highlight_color_dialog(self):
+        cfg = get_config()
+        state_hex = cfg.get_state_highlight_color()
+        point_hex = cfg.get_point_highlight_color()
+        state_color = (QColor(state_hex) if state_hex
+                       else theme.qcolor("active_color"))
+        point_color = (QColor(point_hex) if point_hex
+                       else theme.qcolor("highlight_color"))
+
+        dlg = QDialog(self.parent)
+        dlg.setWindowTitle("Highlight Colors")
+        dlg.setWindowFlags(
+            dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        theme.apply_dialog_theme(dlg)
+        dlg.setModal(True)
+
+        layout = QGridLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        colors = {"state": state_color, "point": point_color}
+
+        def make_swatch(key):
+            btn = QPushButton()
+            btn.setFixedSize(60, 28)
+            _update_swatch(btn, colors[key])
+            btn.clicked.connect(lambda: _pick_color(key, btn))
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            return btn
+
+        def _update_swatch(btn, c):
+            btn.setStyleSheet(
+                f"QPushButton {{ background-color: {c.name()};"
+                f"  border: 1px solid grey; border-radius: 4px; }}"
+                f"QPushButton:hover {{ border: 2px solid white; }}")
+
+        def _pick_color(key, btn):
+            c = QColorDialog.getColor(
+                colors[key], dlg, f"Select {key.title()} Highlight Color")
+            if c.isValid():
+                colors[key] = c
+                _update_swatch(btn, c)
+
+        layout.addWidget(QLabel("State Event Highlight:"), 0, 0)
+        layout.addWidget(make_swatch("state"), 0, 1)
+
+        layout.addWidget(QLabel("Point Event Highlight:"), 1, 0)
+        layout.addWidget(make_swatch("point"), 1, 1)
+
+        # Reset to defaults button
+        def _reset():
+            colors["state"] = theme.qcolor("active_color")
+            colors["point"] = theme.qcolor("highlight_color")
+            for i, key in enumerate(("state", "point")):
+                btn = layout.itemAtPosition(i, 1).widget()
+                _update_swatch(btn, colors[key])
+
+        btn_row = QHBoxLayout()
+        reset_btn = QPushButton("Reset to Defaults")
+        reset_btn.clicked.connect(_reset)
+        btn_row.addWidget(reset_btn)
+        btn_row.addStretch()
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(ok_btn)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row, 2, 0, 1, 2)
+
+        self.dialog_open = True
+        self._prepare_for_dialog()
+        result = dlg.exec()
+        self._reactivate_after_dialog()
+        self.dialog_open = False
+
+        if result == QDialog.DialogCode.Accepted:
+            cfg.set_state_highlight_color(colors["state"].name())
+            cfg.set_point_highlight_color(colors["point"].name())
+            self._populate_event_trees()
+
+    def _show_button_color_dialog(self):
+        from floating_controls import toggle_event_buttons
+        cfg = get_config()
+        point_hex = cfg.get_point_button_color()
+        state_hex = cfg.get_state_button_color()
+        point_color = (QColor(point_hex) if point_hex
+                       else theme.qcolor("float_point_bg"))
+        state_color = (QColor(state_hex) if state_hex
+                       else theme.qcolor("float_state_bg"))
+
+        dlg = QDialog(self.parent)
+        dlg.setWindowTitle("Button Colors")
+        dlg.setWindowFlags(
+            dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        theme.apply_dialog_theme(dlg)
+        dlg.setModal(True)
+
+        layout = QGridLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        colors = {"point": point_color, "state": state_color}
+
+        def make_swatch(key):
+            btn = QPushButton()
+            btn.setFixedSize(60, 28)
+            _update_swatch(btn, colors[key])
+            btn.clicked.connect(lambda: _pick_color(key, btn))
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            return btn
+
+        def _update_swatch(btn, c):
+            btn.setStyleSheet(
+                f"QPushButton {{ background-color: {c.name()};"
+                f"  border: 1px solid grey; border-radius: 4px; }}"
+                f"QPushButton:hover {{ border: 2px solid white; }}")
+
+        def _pick_color(key, btn):
+            c = QColorDialog.getColor(
+                colors[key], dlg, f"Select {key.title()} Button Color")
+            if c.isValid():
+                colors[key] = c
+                _update_swatch(btn, c)
+
+        layout.addWidget(QLabel("Point Event Buttons:"), 0, 0)
+        layout.addWidget(make_swatch("point"), 0, 1)
+
+        layout.addWidget(QLabel("State Event Buttons:"), 1, 0)
+        layout.addWidget(make_swatch("state"), 1, 1)
+
+        def _reset():
+            colors["point"] = theme.qcolor("float_point_bg")
+            colors["state"] = theme.qcolor("float_state_bg")
+            for i, key in enumerate(("point", "state")):
+                btn = layout.itemAtPosition(i, 1).widget()
+                _update_swatch(btn, colors[key])
+
+        btn_row = QHBoxLayout()
+        reset_btn = QPushButton("Reset to Defaults")
+        reset_btn.clicked.connect(_reset)
+        btn_row.addWidget(reset_btn)
+        btn_row.addStretch()
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(ok_btn)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row, 2, 0, 1, 2)
+
+        self.dialog_open = True
+        self._prepare_for_dialog()
+        result = dlg.exec()
+        self._reactivate_after_dialog()
+        self.dialog_open = False
+
+        if result == QDialog.DialogCode.Accepted:
+            cfg.set_point_button_color(colors["point"].name())
+            cfg.set_state_button_color(colors["state"].name())
+            # Refresh event buttons if they're open
+            if (hasattr(self, "event_buttons_window")
+                    and self.event_buttons_window):
+                toggle_event_buttons(self)
+                toggle_event_buttons(self)
 
     def _apply_video_settings(self):
         """Apply saved video settings to the player. Per-video overrides global."""
@@ -1265,6 +1449,15 @@ class VideoAnnotator(QFrame):
                 "Is the file open in another application?")
         return ok
 
+    def _restore_active_state_events(self):
+        """Re-populate active_state_events from incomplete annotations on disk."""
+        name_to_key = {v: k for k, v in self.store.state_event_keys.items()}
+        for evt in self.store.state_events:
+            if evt["end_time"] is None and evt["start_time"] is not None:
+                key = name_to_key.get(evt["Event"])
+                if key:
+                    self.active_state_events[key] = evt["start_time"]
+
     def _load_session_state(self):
         state = self.store.load_session_state()
         if state is None:
@@ -1357,19 +1550,16 @@ class VideoAnnotator(QFrame):
 
             if event.type() in (QEvent.Type.ActivationChange,
                                 QEvent.Type.WindowStateChange):
-                if sys.platform == "darwin":
-                    state = self.parent.windowState()
-                    is_minimized = bool(
-                        state & Qt.WindowState.WindowMinimized
-                    )
-                    if is_minimized:
-                        self._set_floating_visible(False)
-                    elif not self._activation_pending:
-                        self._activation_pending = True
-                        QTimer.singleShot(
-                            50, self._handle_activation_deferred)
-                else:
-                    update_floating_visibility(self)
+                state = self.parent.windowState()
+                is_minimized = bool(
+                    state & Qt.WindowState.WindowMinimized
+                )
+                if is_minimized:
+                    self._set_floating_visible(False)
+                elif not self._activation_pending:
+                    self._activation_pending = True
+                    QTimer.singleShot(
+                        50, self._handle_activation_deferred)
 
         if (obj == self.gl_widget
                 and self.zoom_active
@@ -1422,7 +1612,8 @@ class VideoAnnotator(QFrame):
 
             if event.isAutoRepeat() and key not in (
                     Qt.Key.Key_Up, Qt.Key.Key_Down):
-                return True
+                if not self.dialog_open:
+                    return True
 
             if key == Qt.Key.Key_Escape and not self.dialog_open:
                 self.return_to_file_selection()
@@ -1460,10 +1651,11 @@ class VideoAnnotator(QFrame):
                     return True
 
         elif event.type() == QEvent.Type.KeyRelease:
-            char = event.text().lower()
-            if char:
-                self.pressed_keys.discard(char)
-                return True
+            if not self.dialog_open:
+                char = event.text().lower()
+                if char and char in self.store.event_map:
+                    self.pressed_keys.discard(char)
+                    return True
 
         return super().eventFilter(obj, event)
 
@@ -1535,8 +1727,7 @@ class VideoAnnotator(QFrame):
             if dur <= 0:
                 if self.player:
                     self.player.pause = True
-                QMessageBox.warning(
-                    self.parent,
+                self._show_warning(
                     "Invalid Annotation",
                     f"Cannot end \"{name}\": the current time "
                     f"({format_time_human(frame_ts)}) is not after the start time "
@@ -1544,24 +1735,13 @@ class VideoAnnotator(QFrame):
                     "Please seek to a point after the start time and try again."
                 )
                 return False
-            record = {
-                "Video": self.video_name, "Event": name, "Type": "State",
-                "Mutually_Exclusive": "True" if me_group else "False",
-                "H_Start": format_time_human(start),
-                "H_End": format_time_human(frame_ts),
-                "Start": format_time_machine(start),
-                "End": format_time_machine(frame_ts),
-                "Duration": format_time_machine(dur),
-                "Manual_Edit": "False", "Notes": "",
-            }
-            if not self.store.append_annotation(record):
-                return False
-
             self.active_state_events.pop(key)
             for evt in self.store.state_events:
                 if evt["Event"] == name and evt["end_time"] is None:
                     evt["end_time"] = frame_ts
                     break
+            if not self.store.save_sorted_annotations():
+                return False
             self._update_annotations()
             self._populate_event_trees()
             return True
@@ -1569,6 +1749,19 @@ class VideoAnnotator(QFrame):
             if me_group:
                 if not self._deactivate_me_group(me_group, frame_ts, key):
                     return False
+
+            record = {
+                "Video": self.video_name, "Event": name, "Type": "State",
+                "Mutually_Exclusive": "True" if me_group else "False",
+                "H_Start": format_time_human(frame_ts),
+                "H_End": "NA",
+                "Start": format_time_machine(frame_ts),
+                "End": "NA", "Duration": "NA",
+                "Manual_Edit": "False", "Notes": "",
+            }
+            if not self.store.append_annotation(record):
+                self.on_write_error()
+                return False
 
             self.active_state_events[key] = frame_ts
             self.store.state_events.append({
@@ -1605,26 +1798,13 @@ class VideoAnnotator(QFrame):
             if dur <= 0:
                 if self.player:
                     self.player.pause = True
-                QMessageBox.warning(
-                    self.parent,
+                self._show_warning(
                     "Invalid Annotation",
                     f"Cannot end \"{name}\": the current time "
                     f"({format_time_human(frame_ts)}) is not after the start time "
                     f"({format_time_human(start)}).\n\n"
                     "Please seek to a point after the start time and try again."
                 )
-                return False
-            record = {
-                "Video": self.video_name, "Event": name, "Type": "State",
-                "Mutually_Exclusive": "True",
-                "H_Start": format_time_human(start),
-                "H_End": format_time_human(frame_ts),
-                "Start": format_time_machine(start),
-                "End": format_time_machine(frame_ts),
-                "Duration": format_time_machine(dur),
-                "Manual_Edit": "False", "Notes": "",
-            }
-            if not self.store.append_annotation(record):
                 return False
 
             removed.append(key)
@@ -1637,6 +1817,8 @@ class VideoAnnotator(QFrame):
             self.active_state_events.pop(key)
 
         if removed:
+            if not self.store.save_sorted_annotations():
+                return False
             self._update_annotations()
             self._populate_event_trees()
         return True
@@ -1855,7 +2037,7 @@ class VideoAnnotator(QFrame):
         new_name = new_entries["Event"].text().strip()
         new_start = new_entries["H_Start"].text().strip()
         if not new_name or not new_start:
-            QMessageBox.warning(
+            theme.show_message(
                 self.parent, "Invalid Input",
                 "Both Event and Start Time are required.")
             return False
@@ -1897,7 +2079,7 @@ class VideoAnnotator(QFrame):
         new_h_start = new_entries["H_Start"].text().strip()
         new_h_end = new_entries["H_End"].text().strip()
         if not new_name or not new_h_start or not new_h_end:
-            QMessageBox.warning(
+            theme.show_message(
                 self.parent, "Invalid Input",
                 "Event, Start, and End times are required.")
             return False
@@ -1906,7 +2088,7 @@ class VideoAnnotator(QFrame):
             new_start = parse_time(new_h_start)
             new_end = parse_time(new_h_end)
         except ValueError:
-            QMessageBox.warning(
+            theme.show_message(
                 self.parent, "Invalid Time Format",
                 "Could not parse time values. Please check format.")
             return False
@@ -2003,12 +2185,12 @@ class VideoAnnotator(QFrame):
                 store=self.store,
             )
         except ImportError:
-            QMessageBox.warning(
-                self.parent, "Visualization Module Error",
+            self._show_warning(
+                "Visualization Module Error",
                 "Could not load the visualization module.")
         except Exception as exc:
-            QMessageBox.critical(
-                self.parent, "Visualization Error",
+            self._show_warning(
+                "Visualization Error",
                 f"Failed to create visualization: {exc}")
         finally:
             self.dialog_open = False
@@ -2176,8 +2358,8 @@ class VideoAnnotator(QFrame):
             self.dialog_open = False
             self._reactivate_after_dialog()
         except Exception as exc:
-            QMessageBox.critical(
-                self.parent, "Error",
+            self._show_warning(
+                "Error",
                 f"Failed to open event key editor: {exc}")
         finally:
             for w in self.floating_windows:
@@ -2192,6 +2374,24 @@ class VideoAnnotator(QFrame):
     # ------------------------------------------------------------------
     # Error handling
     # ------------------------------------------------------------------
+
+    def _show_warning(self, title, message):
+        """Show a warning dialog that stays on top of the fullscreen window."""
+        self.dialog_open = True
+        dlg = QMessageBox(self.parent)
+        theme.apply_dialog_theme(dlg)
+        dlg.setIcon(QMessageBox.Icon.Warning)
+        dlg.setWindowTitle(title)
+        dlg.setText(message)
+        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        dlg.setWindowFlags(
+            dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        self._prepare_for_dialog()
+        dlg.exec()
+        dlg.setParent(None)
+        dlg.deleteLater()
+        self._reactivate_after_dialog()
+        self.dialog_open = False
 
     def on_write_error(self, message=None):
         if self.player:
@@ -2342,8 +2542,8 @@ class VideoAnnotator(QFrame):
                 QApplication.quit()
         except Exception as exc:
             if self.parent:
-                QMessageBox.critical(
-                    self.parent, "Error",
+                self._show_warning(
+                    "Error",
                     f"Error returning to file selection: {exc}")
                 self.parent.close()
         finally:
