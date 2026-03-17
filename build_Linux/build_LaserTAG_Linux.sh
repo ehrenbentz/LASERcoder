@@ -4,10 +4,11 @@
 #
 # Directory structure:
 #   LaserTAG/
+#     current_version.txt    Shared version file
 #     CodeBase/              Python source files including LaserTAG.py
 #     build_Linux/           This script, create_deb.sh, lasertag.desktop,
 #                            laser.png
-#       dist_Linux/          Build output (created by this script)
+#       dist_Linux_<arch>_v#_#_#/  Build output (arch + version-stamped, created by this script)
 #         LaserTAG.dist/       Complete application folder
 #           LaserTAG             Main executable
 #         LaserTAG_v{ver}_linux_amd64.deb
@@ -48,12 +49,13 @@ fi
 # ==================================================================
 # Read version from current_version.txt
 # ==================================================================
-if [ ! -f "current_version.txt" ]; then
-    echo "ERROR: current_version.txt not found in current directory."
+VERSION_FILE="../current_version.txt"
+if [ ! -f "$VERSION_FILE" ]; then
+    echo "ERROR: current_version.txt not found at $VERSION_FILE"
     exit 1
 fi
 
-APP_VERSION=$(grep '^VERSION_NUMBER=' current_version.txt | cut -d'=' -f2)
+APP_VERSION=$(grep '^VERSION_NUMBER=' "$VERSION_FILE" | cut -d'=' -f2 | tr -d '\r')
 
 if [ -z "$APP_VERSION" ]; then
     echo "ERROR: Could not parse version from current_version.txt"
@@ -66,7 +68,8 @@ fi
 APP_NAME="LaserTAG"
 MAIN_SCRIPT="LaserTAG.py"
 CODBASE_DIR="../CodeBase"
-OUTPUT_DIR="./dist_Linux"
+VER_UNDERSCORED=$(echo "$APP_VERSION" | tr '.' '_')
+OUTPUT_DIR="./dist_Linux_${ARCH_LABEL}_v${VER_UNDERSCORED}"
 
 DEB_NAME="${APP_NAME}_v${APP_VERSION}_linux_${ARCH_LABEL}.deb"
 TAR_NAME="${APP_NAME}_v${APP_VERSION}_linux_${ARCH_LABEL}_portable.tar.gz"

@@ -4,14 +4,13 @@
 #
 # Directory structure:
 #   LaserTAG/
+#     current_version.txt    Shared version file
 #     CodeBase/              Python source files including LaserTAG.py
 #     build_MacOS/           This script, Icons.icns, collect_dylibs.sh,
-#                            create_dmg.sh, create_pkg.sh, Info.plist,
-#                            current_version.txt
+#                            create_dmg.sh, create_pkg.sh, Info.plist
 #       libs_arm64/          Pre-collected dylibs for Apple Silicon
 #       libs_x86_64/         Pre-collected dylibs for Intel
-#       dist_arm64/          Build output for Apple Silicon
-#       dist_x86_64/         Build output for Intel
+#       dist_macOS_<arch>_v#_#_#/  Build output (arch + version-stamped)
 #
 # Auto-detects architecture (arm64 or x86_64) and uses the matching
 # libs and output directories. The compiled binary always references
@@ -52,12 +51,13 @@ fi
 # ==================================================================
 # Read version from current_version.txt
 # ==================================================================
-if [ ! -f "current_version.txt" ]; then
-    echo "ERROR: current_version.txt not found in current directory."
+VERSION_FILE="../current_version.txt"
+if [ ! -f "$VERSION_FILE" ]; then
+    echo "ERROR: current_version.txt not found at $VERSION_FILE"
     exit 1
 fi
 
-APP_VERSION=$(grep '^VERSION_NUMBER=' current_version.txt | cut -d'=' -f2)
+APP_VERSION=$(grep '^VERSION_NUMBER=' "$VERSION_FILE" | cut -d'=' -f2 | tr -d '\r')
 
 if [ -z "$APP_VERSION" ]; then
     echo "ERROR: Could not parse version from current_version.txt"
@@ -71,7 +71,8 @@ APP_NAME="LaserTAG"
 MAIN_SCRIPT="LaserTAG.py"
 CODBASE_DIR="../CodeBase"
 LIBS_DIR="./libs_${ARCH_LABEL}"
-OUTPUT_DIR="./dist_${ARCH_LABEL}"
+VER_UNDERSCORED=$(echo "$APP_VERSION" | tr '.' '_')
+OUTPUT_DIR="./dist_macOS_${ARCH_LABEL}_v${VER_UNDERSCORED}"
 
 APP_BUNDLE="${APP_NAME}.app"
 SETUP_DMG="${APP_NAME}_v${APP_VERSION}_macOS_${ARCH_LABEL}.dmg"

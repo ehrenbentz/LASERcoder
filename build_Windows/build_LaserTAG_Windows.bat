@@ -4,10 +4,10 @@ REM Run from inside LaserTAG\build_Windows\
 REM
 REM Directory structure:
 REM   LaserTAG\
+REM     current_version.txt    Shared version file
 REM     CodeBase\              Python source files including LaserTAG.py
-REM     build_Windows\         This script, libmpv-2.dll, laser.ico, LaserTAG.iss,
-REM                            current_version.txt
-REM       dist_Windows\        Created by this script
+REM     build_Windows\         This script, libmpv-2.dll, laser.ico, LaserTAG.iss
+REM       dist_Windows_x64_v#_#_#\ Created by this script (arch + version-stamped)
 REM         LaserTAG_v{ver}_windows_x64_setup.exe    Installer
 REM         LaserTAG_v{ver}_windows_x64_portable.zip Portable zip
 REM
@@ -23,14 +23,28 @@ setlocal enabledelayedexpansion
 set APP_NAME=LaserTAG
 set MAIN_SCRIPT=LaserTAG.py
 set CODBASE_DIR=..\CodeBase
-set OUTPUT_DIR=dist_Windows
+set VERSION_FILE=..\current_version.txt
 
-REM Code signing — set these environment variables before running,
-REM or leave unset to skip signing:
-REM   set LASERTAG_CERT_FILE=C:\path\to\MyCert.pfx
-REM   set LASERTAG_CERT_PASS=YourPassword
-if defined LASERTAG_CERT_FILE (set CERT_FILE=%LASERTAG_CERT_FILE%) else (set CERT_FILE=)
-if defined LASERTAG_CERT_PASS (set CERT_PASS=%LASERTAG_CERT_PASS%) else (set CERT_PASS=)
+REM Code signing — reads cert and password from files in user home directory.
+REM Falls back to LASERTAG_CERT_FILE / LASERTAG_CERT_PASS env vars if files not found.
+REM If neither source is available, signing is skipped automatically.
+set CERT_FILE=
+set CERT_PASS=
+
+set HOME_CERT=%USERPROFILE%\MyCert.pfx
+set HOME_PASS=%USERPROFILE%\MyCertPass.txt
+
+if exist "%HOME_CERT%" (
+    set CERT_FILE=%HOME_CERT%
+    if exist "%HOME_PASS%" (
+        set /p CERT_PASS=<"%HOME_PASS%"
+        REM Strip trailing carriage return / spaces from file read
+        for /f "tokens=* delims= " %%p in ("!CERT_PASS!") do set CERT_PASS=%%p
+    )
+) else (
+    if defined LASERTAG_CERT_FILE set CERT_FILE=%LASERTAG_CERT_FILE%
+    if defined LASERTAG_CERT_PASS set CERT_PASS=%LASERTAG_CERT_PASS%
+)
 
 REM =====================================================================
 REM Verify directory structure
@@ -56,8 +70,8 @@ if not exist "laser.ico" (
     exit /b 1
 )
 
-if not exist "current_version.txt" (
-    echo ERROR: current_version.txt not found in current directory.
+if not exist "%VERSION_FILE%" (
+    echo ERROR: current_version.txt not found at %VERSION_FILE%
     exit /b 1
 )
 
@@ -65,7 +79,7 @@ REM =====================================================================
 REM Read version from current_version.txt
 REM =====================================================================
 set APP_VERSION=
-for /f "tokens=2 delims==" %%a in ('findstr /C:"VERSION_NUMBER" current_version.txt') do (
+for /f "tokens=2 delims==" %%a in ('findstr /C:"VERSION_NUMBER" "%VERSION_FILE%"') do (
     set APP_VERSION=%%a
 )
 
@@ -75,6 +89,10 @@ if not defined APP_VERSION (
 )
 
 echo Detected version: %APP_VERSION%
+
+REM Build versioned output directory name (dots to underscores: 1.4.1 -> v1_4_1)
+set VER_UNDERSCORED=%APP_VERSION:.=_%
+set OUTPUT_DIR=dist_Windows_x64_v%VER_UNDERSCORED%
 
 set SETUP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_setup.exe
 set ZIP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_portable.zip
@@ -199,8 +217,8 @@ if not defined CERT_FILE (
     echo "Skipping code signing (certificate not found at %CERT_FILE%)"
 ) else (
     echo "Signing executable"
-    signtool.exe sign /f "%CERT_FILE%" /p %CERT_PASS% /fd sha256 /td sha256 /tr http://timestamp.digicert.com /a "%OUTPUT_DIR%\%APP_NAME%.dist\%APP_NAME%.exe"
-    if %errorlevel% neq 0 (
+    signtool.exe sign /f "%CERT_FILE%" /p !CERT_PASS! /fd sha256 /td sha256 /tr http://timestamp.digicert.com /a "%OUTPUT_DIR%\%APP_NAME%.dist\%APP_NAME%.exe"
+    if !errorlevel! neq 0 (
         echo WARNING: Code signing failed. Continuing without signature.
     ) else (
         echo Signature applied successfully.
@@ -218,7 +236,7 @@ set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist %ISCC% (
     if exist "LaserTAG.iss" (
         %ISCC% /DAppVer=%APP_VERSION% "LaserTAG.iss"
-        if %errorlevel% neq 0 (
+        if !errorlevel! neq 0 (
             echo WARNING: Inno Setup compilation failed.
         ) else (
             echo Installer created: %OUTPUT_DIR%\%SETUP_NAME%

@@ -17,13 +17,14 @@ set -e
 # Version -- read from current_version.txt if no argument provided
 # ==================================================================
 if [ -z "$3" ]; then
-    if [ ! -f "current_version.txt" ]; then
-        echo "ERROR: No version argument provided and current_version.txt not found."
+    VERSION_FILE="../current_version.txt"
+    if [ ! -f "$VERSION_FILE" ]; then
+        echo "ERROR: No version argument provided and current_version.txt not found at $VERSION_FILE"
         exit 1
     fi
-    APP_VERSION=$(grep '^VERSION_NUMBER=' current_version.txt | cut -d'=' -f2)
+    APP_VERSION=$(grep '^VERSION_NUMBER=' "$VERSION_FILE" | cut -d'=' -f2 | tr -d '\r')
     if [ -z "$APP_VERSION" ]; then
-        echo "ERROR: Could not parse version from current_version.txt"
+        echo "ERROR: Could not parse version from $VERSION_FILE"
         exit 1
     fi
 else
@@ -41,7 +42,8 @@ else
     ARCH_LABEL="x86_64"
 fi
 
-APP_PATH="${1:-./dist_${ARCH_LABEL}/LaserTAG.app}"
+VER_UNDERSCORED=$(echo "$APP_VERSION" | tr '.' '_')
+APP_PATH="${1:-./dist_macOS_${ARCH_LABEL}_v${VER_UNDERSCORED}/LaserTAG.app}"
 OUTPUT_DIR="${2:-$(dirname "$APP_PATH")}"
 
 DMG_VOLUME_NAME="LaserTAG"

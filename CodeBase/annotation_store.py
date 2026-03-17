@@ -2,6 +2,10 @@ import os
 import csv
 import json
 
+from debug_logger import get_logger
+
+logger = get_logger()
+
 
 class AnnotationStore:
     """
@@ -40,6 +44,7 @@ class AnnotationStore:
 
     def load_events(self):
         """Read behaviour key CSV and populate lookup structures."""
+        logger.info("Loading events from %s", self.event_key_file)
         self.events.clear()
         self.state_event_keys.clear()
         self.point_event_keys.clear()
@@ -74,6 +79,7 @@ class AnnotationStore:
 
     def load_annotations(self):
         """Read annotations CSV into *state_events* and *point_events*."""
+        logger.info("Loading annotations from %s", self.annotations_file)
         self.state_events.clear()
         self.point_events.clear()
 
@@ -343,8 +349,18 @@ class AnnotationStore:
     # ------------------------------------------------------------------
 
     def check_file_access(self):
-        """Return True if the annotations file can be read and written."""
+        """Return True if the annotations file can be read and written.
+
+        Checks that the parent directory still exists first — on macOS,
+        file operations on a disconnected external volume can block
+        indefinitely, so we verify the directory is reachable before
+        attempting any I/O.
+        """
         try:
+            logger.debug("Checking file access: %s", self.annotations_file)
+            parent = os.path.dirname(self.annotations_file)
+            if not os.path.isdir(parent):
+                return False
             if os.path.exists(self.annotations_file):
                 with open(self.annotations_file, "r", newline="") as f:
                     f.read(1)
@@ -354,7 +370,8 @@ class AnnotationStore:
                 f.write("test")
             os.remove(temp)
             return True
-        except (PermissionError, OSError):
+        except (PermissionError, OSError) as exc:
+            logger.warning("File access check failed: %s", exc)
             return False
 
 

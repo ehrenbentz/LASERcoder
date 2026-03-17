@@ -8,31 +8,22 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer
 
-from display_utils import center_window
 from annotation_store import format_time_human, parse_time
 from config_manager import get_config
+from debug_logger import get_logger
 import theme
+
+logger = get_logger()
 
 
 def _apply_dialog_theme(dialog):
     theme.apply_dialog_theme(dialog)
 
 
-def _prepare_for_dialog(annotator):
-    """Lower macOS window level before showing a modal dialog."""
-    if hasattr(annotator, "_prepare_for_dialog"):
-        annotator._prepare_for_dialog()
-
-
 def _cleanup_dialog(dlg, annotator):
-    """Detach a modal dialog and reactivate the parent window."""
-    dlg.setParent(None)
+    """Clean up after a dialog closes."""
+    logger.debug("Dialog cleanup: %s", dlg.windowTitle())
     dlg.deleteLater()
-    if hasattr(annotator, "_reactivate_after_dialog"):
-        annotator._reactivate_after_dialog()
-    elif sys.platform == "darwin" and hasattr(annotator, "parent") and annotator.parent:
-        annotator.parent.activateWindow()
-        annotator.parent.raise_()
 
 
 
@@ -54,14 +45,12 @@ def show_coding_start_dialog(annotator):
         annotator.player.pause = True
 
     annotator.dialog_open = True
+    logger.info("Opening coding start dialog")
 
     dialog = QDialog(annotator.parent)
-    dialog.setWindowFlags(
-        dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dialog.setWindowTitle("Set Coding Start and Duration")
-    dialog.setModal(True)
     _apply_dialog_theme(dialog)
-    center_window(dialog, 400, 300)
+    dialog.resize(400, 300)
 
     layout = QVBoxLayout(dialog)
     layout.setSpacing(10)
@@ -257,20 +246,21 @@ def show_coding_start_dialog(annotator):
             annotator.save_session_state()
             dialog.accept()
         except ValueError as exc:
-            theme.show_message(dialog, "Invalid Input",
+            show_message(dialog, "Invalid Input",
                                f"Please check your input values: {exc}")
 
     bbox.accepted.connect(_save)
     bbox.rejected.connect(dialog.reject)
     layout.addWidget(bbox)
 
-    dialog.finished.connect(lambda: setattr(annotator, "dialog_open", False))
-    _prepare_for_dialog(annotator)
-    dialog.exec()
-    _cleanup_dialog(dialog, annotator)
+    def _on_finished(_result):
+        annotator.dialog_open = False
+        dialog.deleteLater()
+        if hasattr(annotator, "player") and annotator.player and was_playing:
+            annotator.player.pause = False
 
-    if hasattr(annotator, "player") and annotator.player and was_playing:
-        annotator.player.pause = False
+    dialog.finished.connect(_on_finished)
+    dialog.open()
 
 
 # ======================================================================
@@ -290,11 +280,10 @@ def show_note_dialog(annotator):
     annotator.dialog_open = True
 
     dlg = QDialog(annotator.parent)
-    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle("Add Note")
-    dlg.setModal(True)
+
     _apply_dialog_theme(dlg)
-    center_window(dlg, 400, 300)
+    dlg.resize(400, 300)
 
     layout = QVBoxLayout(dlg)
 
@@ -344,10 +333,12 @@ def show_note_dialog(annotator):
     btn_lay.addWidget(cancel_btn)
     layout.addWidget(btn_frame)
 
-    dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
-    _prepare_for_dialog(annotator)
-    dlg.exec()
-    _cleanup_dialog(dlg, annotator)
+    def _on_finished(_result):
+        annotator.dialog_open = False
+        dlg.deleteLater()
+
+    dlg.finished.connect(_on_finished)
+    dlg.open()
 
 
 # ======================================================================
@@ -369,11 +360,10 @@ def show_annotation_details(annotator):
     annotator.dialog_open = True
 
     dlg = QDialog(annotator.parent)
-    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle(f"Annotation Details - {annotation['Event']}")
-    dlg.setModal(True)
+
     _apply_dialog_theme(dlg)
-    center_window(dlg, 500, 400)
+    dlg.resize(500, 400)
 
     main_lay = QVBoxLayout(dlg)
     main_lay.setContentsMargins(15, 15, 15, 15)
@@ -426,20 +416,21 @@ def show_annotation_details(annotator):
     btn_l.setContentsMargins(0, 10, 0, 0)
     edit_btn = QPushButton("Edit")
     edit_btn.clicked.connect(lambda: (
-        _close_details(), show_comprehensive_edit(annotator, annotation, atype)))
+        setattr(dlg, '_open_edit', True), dlg.accept()))
     close_btn = QPushButton("Close")
-    close_btn.clicked.connect(lambda: _close_details())
+    close_btn.clicked.connect(dlg.reject)
     btn_l.addWidget(edit_btn); btn_l.addStretch(); btn_l.addWidget(close_btn)
     main_lay.addWidget(btn_f)
 
-    def _close_details():
+    def _on_finished(_result):
+        open_edit = getattr(dlg, '_open_edit', False)
         annotator.dialog_open = False
-        dlg.accept()
+        dlg.deleteLater()
+        if open_edit:
+            show_comprehensive_edit(annotator, annotation, atype)
 
-    dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
-    _prepare_for_dialog(annotator)
-    dlg.exec()
-    _cleanup_dialog(dlg, annotator)
+    dlg.finished.connect(_on_finished)
+    dlg.open()
 
 
 # ======================================================================
@@ -457,11 +448,10 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
     annotator.dialog_open = True
 
     dlg = QDialog(annotator.parent)
-    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle(f"Edit {annotation_type} Annotation")
-    dlg.setModal(True)
+
     _apply_dialog_theme(dlg)
-    center_window(dlg, 400, 500)
+    dlg.resize(400, 500)
 
     main_lay = QVBoxLayout(dlg)
     main_lay.setContentsMargins(15, 15, 15, 15)
@@ -520,7 +510,7 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
                 new_start = parse_time(vals["H_Start"])
                 new_end = parse_time(vals["H_End"])
             except ValueError:
-                theme.show_message(annotator.parent, "Invalid Time Format",
+                show_message(annotator.parent, "Invalid Time Format",
                                    "Could not parse time values.")
                 return
             if annotation["Event"] != vals["Event"] or annotation["start_time"] != new_start or annotation["end_time"] != new_end:
@@ -553,10 +543,12 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
     btn_l.addStretch(); btn_l.addWidget(save_btn); btn_l.addWidget(cancel_btn)
     main_lay.addWidget(btn_f)
 
-    dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
-    _prepare_for_dialog(annotator)
-    dlg.exec()
-    _cleanup_dialog(dlg, annotator)
+    def _on_finished(_result):
+        annotator.dialog_open = False
+        dlg.deleteLater()
+
+    dlg.finished.connect(_on_finished)
+    dlg.open()
 
 
 # ======================================================================
@@ -566,7 +558,7 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
 def show_edit_point_dialog(annotator):
     """Edit a point annotation's name and time."""
     if annotator.store.active_state_events if hasattr(annotator.store, 'active_state_events') else annotator.active_state_events:
-        theme.show_message(annotator, "Active Annotation",
+        show_message(annotator, "Active Annotation",
                            "Please end the active state before editing.")
         return
     if annotator.selected_index is None:
@@ -582,11 +574,10 @@ def show_edit_point_dialog(annotator):
     latest = annotator.load_annotation_data(sel, "Event", "H_Start")
 
     dlg = QDialog(annotator.parent)
-    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle("Edit Point Annotation")
-    dlg.setModal(True)
+
     _apply_dialog_theme(dlg)
-    center_window(dlg, 275, 250)
+    dlg.resize(275, 250)
 
     layout = QVBoxLayout(dlg)
 
@@ -614,10 +605,12 @@ def show_edit_point_dialog(annotator):
     bbox.rejected.connect(dlg.reject)
     layout.addWidget(bbox)
 
-    dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
-    _prepare_for_dialog(annotator)
-    dlg.exec()
-    _cleanup_dialog(dlg, annotator)
+    def _on_finished(_result):
+        annotator.dialog_open = False
+        dlg.deleteLater()
+
+    dlg.finished.connect(_on_finished)
+    dlg.open()
 
 
 def show_video_settings_dialog(annotator):
@@ -637,11 +630,10 @@ def show_video_settings_dialog(annotator):
     global_settings = cfg.get_video_settings()
 
     dlg = QDialog(annotator.parent)
-    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle("Video Settings")
-    dlg.setModal(True)
+
     _apply_dialog_theme(dlg)
-    center_window(dlg, 480, 380)
+    dlg.resize(480, 380)
 
     layout = QVBoxLayout(dlg)
     layout.setSpacing(8)
@@ -756,9 +748,8 @@ def show_video_settings_dialog(annotator):
         all_radio.setChecked(True)
         _load_scope_values(global_settings)
 
-    _prepare_for_dialog(annotator)
-    dlg.exec()
-    _cleanup_dialog(dlg, annotator)
+    dlg.finished.connect(lambda _result: dlg.deleteLater())
+    dlg.open()
 
 
 def show_edit_state_dialog(annotator):
@@ -775,18 +766,17 @@ def show_edit_state_dialog(annotator):
     sel = annotator.store.state_events[annotator.selected_index]
 
     if sel["end_time"] is None:
-        theme.show_message(annotator, "Edit Error",
+        show_message(annotator, "Edit Error",
                            "Please end the state event before editing.")
         return
 
     latest = annotator.load_annotation_data(sel, "Event", "H_Start", "H_End")
 
     dlg = QDialog(annotator.parent)
-    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.setWindowTitle("Edit State Annotation")
-    dlg.setModal(True)
+
     _apply_dialog_theme(dlg)
-    center_window(dlg, 250, 300)
+    dlg.resize(250, 300)
 
     layout = QVBoxLayout(dlg)
 
@@ -815,7 +805,89 @@ def show_edit_state_dialog(annotator):
     bbox.rejected.connect(dlg.reject)
     layout.addWidget(bbox)
 
-    dlg.finished.connect(lambda: setattr(annotator, "dialog_open", False))
-    _prepare_for_dialog(annotator)
-    dlg.exec()
-    _cleanup_dialog(dlg, annotator)
+    def _on_finished(_result):
+        annotator.dialog_open = False
+        dlg.deleteLater()
+
+    dlg.finished.connect(_on_finished)
+    dlg.open()
+
+
+# ======================================================================
+# Themed message box and input dialog
+# ======================================================================
+
+def show_message(parent, title, text, icon="warning", callback=None):
+    """Show a themed QMessageBox.
+
+    If *callback* is provided, uses open() (window-modal, non-blocking).
+    The callback receives the QMessageBox result as its argument.
+
+    If *callback* is None, falls back to exec() (application-modal, blocking)
+    for callsites not yet migrated.
+    """
+    icons = {
+        "warning": QMessageBox.Icon.Warning,
+        "critical": QMessageBox.Icon.Critical,
+        "information": QMessageBox.Icon.Information,
+        "question": QMessageBox.Icon.Question,
+    }
+    dlg = QMessageBox(parent)
+    _apply_dialog_theme(dlg)
+    dlg.setWindowTitle(title)
+    dlg.setText(text)
+    dlg.setIcon(icons.get(icon, QMessageBox.Icon.Warning))
+    if icon == "question":
+        dlg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        dlg.setDefaultButton(QMessageBox.StandardButton.No)
+    else:
+        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+    if callback is not None:
+        def _on_finished(result):
+            dlg.deleteLater()
+            callback(result)
+        dlg.finished.connect(_on_finished)
+        dlg.open()
+    else:
+        # Sync fallback for callers that haven't migrated to callbacks
+        result = dlg.exec()
+        dlg.deleteLater()
+        return result
+
+
+def get_text(parent, title, label, text="", callback=None):
+    """Show a themed input dialog.
+
+    If *callback* is provided, uses open() and calls callback(text, ok).
+    If *callback* is None, falls back to exec() and returns (text, ok).
+    """
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    _apply_dialog_theme(dlg)
+
+    layout = QVBoxLayout(dlg)
+    layout.addWidget(QLabel(label))
+    line = QLineEdit(text)
+    layout.addWidget(line)
+    bbox = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok
+        | QDialogButtonBox.StandardButton.Cancel)
+    bbox.accepted.connect(dlg.accept)
+    bbox.rejected.connect(dlg.reject)
+    layout.addWidget(bbox)
+    line.setFocus()
+    if callback is not None:
+        def _on_finished(result):
+            ok = result == QDialog.DialogCode.Accepted
+            text_result = line.text()
+            dlg.deleteLater()
+            callback(text_result, ok)
+        dlg.finished.connect(_on_finished)
+        dlg.open()
+    else:
+        # Sync fallback for callers that haven't migrated to callbacks
+        ok = dlg.exec() == QDialog.DialogCode.Accepted
+        result = line.text()
+        dlg.deleteLater()
+        return result, ok

@@ -4,20 +4,25 @@ import json
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QMessageBox, QApplication,
+    QDialog, QApplication,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QObject, Signal
 
 from config_manager import get_config
-from display_utils import center_window
 from files_manager import FilesManager
 from event_key_editor import EventKeyEditor
-import theme
+from dialogs import show_message
 
 
-class SetupManager(QDialog):
-    """Dialog for managing initial setup of a video annotation session."""
+class SetupManager(QObject):
+    """Coordinator for the setup flow (file selection → event key → start).
+
+    SetupManager is not a widget — it is a QObject that orchestrates
+    child dialogs parented to MainWindow.  Call start() to begin the
+    flow; connect to the finished signal to receive the result.
+    """
+
+    finished = Signal(int)
 
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
@@ -41,27 +46,13 @@ class SetupManager(QDialog):
         self._event_editor = None
         self._files_manager = None
 
-        self.setWindowTitle("LaserTAG")
-        theme.apply_dialog_theme(self)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-
-    def setVisible(self, visible):
-        """Prevent the SetupManager window from becoming visible.
-
-        On Linux/X11, Qt may attempt to show a parent widget when a
-        child modal dialog is exec'd. Since SetupManager is an invisible
-        coordinator (all UI lives in child dialogs), suppress any
-        attempt to make it visible.
-        """
-        if visible:
-            return
-        super().setVisible(False)
-
-    def exec(self):
-        """Run the setup flow. The SetupManager itself is never shown;
-        all user interaction occurs through child dialogs."""
+    def start(self):
+        """Begin the setup flow by showing the files manager."""
         self._show_files_manager()
-        return self.result()
+
+    def _finish(self, result):
+        """Emit finished signal with result code."""
+        self.finished.emit(result)
 
     # ------------------------------------------------------------------
     # Files manager
@@ -74,38 +65,41 @@ class SetupManager(QDialog):
                 self._event_editor = None
 
             self._files_manager = FilesManager(
-                self,
+                self.parent(),
                 initial_output_dir=self.config_manager.get_output_dir(),
                 initial_video_dir=self.config_manager.get_video_dir(),
             )
-            result = self._files_manager.exec()
 
-            if result == QDialog.DialogCode.Accepted:
-                fm = self._files_manager
-                if fm.output_dir and fm.selected_video_file:
-                    self.config_manager.update_output_dir(fm.output_dir)
-                    self.config_manager.update_video_dir(
-                        fm.selected_video_file)
-                    self.output_dir = fm.output_dir
-                    self.video_path = fm.selected_video_file
-                    self.video_name = Path(self.video_path).stem
-                    self._files_manager = None
+            def _on_files_finished(result):
+                if result == QDialog.DialogCode.Accepted:
+                    fm = self._files_manager
+                    if fm.output_dir and fm.selected_video_file:
+                        self.config_manager.update_output_dir(fm.output_dir)
+                        self.config_manager.update_video_dir(
+                            fm.selected_video_file)
+                        self.output_dir = fm.output_dir
+                        self.video_path = fm.selected_video_file
+                        self.video_name = Path(self.video_path).stem
+                        self._files_manager = None
 
-                    self._init_output_dirs()
-                    self._init_file_paths()
-                    self._check_existing_session()
+                        self._init_output_dirs()
+                        self._init_file_paths()
+                        self._check_existing_session()
+                    else:
+                        show_message(
+                            self.parent(), "Warning",
+                            "No video or output directory selected.")
+                        self._finish(QDialog.DialogCode.Rejected)
                 else:
-                    theme.show_message(
-                        self, "Warning",
-                        "No video or output directory selected.")
-                    self.done(QDialog.DialogCode.Rejected)
-            else:
-                self.done(QDialog.DialogCode.Rejected)
+                    self._finish(QDialog.DialogCode.Rejected)
+
+            self._files_manager.finished.connect(_on_files_finished)
+            self._files_manager.open()
 
         except Exception as exc:
-            theme.show_message(
-                self, "Error", f"Error in setup process: {exc}")
-            self.done(QDialog.DialogCode.Rejected)
+            show_message(
+                self.parent(), "Error", f"Error in setup process: {exc}")
+            self._finish(QDialog.DialogCode.Rejected)
 
     # ------------------------------------------------------------------
     # Directory and file initialization
@@ -118,13 +112,18 @@ class SetupManager(QDialog):
             self.annotations_dir = os.path.join(
                 self.output_dir, "Annotations")
             self.resume_dir = os.path.join(self.output_dir, "Resume")
+            self.debug_dir = os.path.join(self.output_dir, "Debug")
             for d in (self.output_dir, self.event_key_dir,
-                      self.annotations_dir, self.resume_dir):
+                      self.annotations_dir, self.resume_dir,
+                      self.debug_dir):
                 os.makedirs(d, exist_ok=True)
+
+            from debug_logger import get_logger
+            get_logger().switch_to_output_dir(self.output_dir)
         except OSError as exc:
-            theme.show_message(
-                self, "Error", f"Error creating directories: {exc}")
-            self.done(QDialog.DialogCode.Rejected)
+            show_message(
+                self.parent(), "Error", f"Error creating directories: {exc}")
+            self._finish(QDialog.DialogCode.Rejected)
 
     def _init_file_paths(self):
         self.annotations_file = os.path.join(
@@ -145,8 +144,8 @@ class SetupManager(QDialog):
             os.replace(temp_ann, self.annotations_file)
         except (PermissionError, OSError):
             _remove_temp(temp_ann)
-            theme.show_message(
-                self, "Error",
+            show_message(
+                self.parent(), "Error",
                 "Cannot create annotations file.\n"
                 "Is it open in another application?")
             self._show_files_manager()
@@ -168,8 +167,8 @@ class SetupManager(QDialog):
             os.replace(temp_state, self.session_state_file)
         except (PermissionError, OSError):
             _remove_temp(temp_state)
-            theme.show_message(
-                self, "Error",
+            show_message(
+                self.parent(), "Error",
                 "Cannot create session state file.\n"
                 "Is it open in another application?")
             self._show_files_manager()
@@ -197,8 +196,8 @@ class SetupManager(QDialog):
                             with open(self.annotations_file, "r") as fh:
                                 fh.read(1)
                         except (PermissionError, OSError):
-                            theme.show_message(
-                                self, "Error",
+                            show_message(
+                                self.parent(), "Error",
                                 "Cannot access annotations file.\n"
                                 "Is it open in another application?")
                             self._show_files_manager()
@@ -206,14 +205,14 @@ class SetupManager(QDialog):
 
                     self._resume_session()
                 except (PermissionError, OSError):
-                    theme.show_message(
-                        self, "Error",
+                    show_message(
+                        self.parent(), "Error",
                         "Cannot access session state file.\n"
                         "Is it open in another application?")
                     self._show_files_manager()
                 except json.JSONDecodeError:
-                    theme.show_message(
-                        self, "Warning",
+                    show_message(
+                        self.parent(), "Warning",
                         "Session state file is corrupted. "
                         "Starting a new session.")
                     if self._create_empty_files():
@@ -224,8 +223,8 @@ class SetupManager(QDialog):
                 if self._create_empty_files():
                     self._show_event_key_editor()
         except Exception as exc:
-            theme.show_message(
-                self, "Error",
+            show_message(
+                self.parent(), "Error",
                 f"Error checking existing session: {exc}")
             self._show_files_manager()
 
@@ -251,25 +250,28 @@ class SetupManager(QDialog):
                 self._event_editor = None
 
             self._event_editor = EventKeyEditor(
-                self,
+                self.parent(),
                 self.event_key_dir,
                 on_start_video=self._on_start_video,
                 on_cancel=self._on_event_key_cancel,
                 config_manager=self.config_manager,
             )
-            self._event_editor.exec()
 
-            if (self._event_editor
-                    and self._event_editor.start_video_flag):
-                self.start_video_flag = True
-                self.event_key_file = (
-                    self._event_editor.event_key_file)
-                self._event_editor = None
-                self.done(QDialog.DialogCode.Accepted)
+            def _on_editor_finished(_result):
+                if (self._event_editor
+                        and self._event_editor.start_video_flag):
+                    self.start_video_flag = True
+                    self.event_key_file = (
+                        self._event_editor.event_key_file)
+                    self._event_editor = None
+                    self._finish(QDialog.DialogCode.Accepted)
+
+            self._event_editor.finished.connect(_on_editor_finished)
+            self._event_editor.open()
 
         except Exception as exc:
-            theme.show_message(
-                self, "Error",
+            show_message(
+                self.parent(), "Error",
                 f"Error showing event key editor: {exc}")
             self._event_editor = None
             self._show_files_manager()
@@ -282,28 +284,6 @@ class SetupManager(QDialog):
         self._event_editor = None
         self.start_video_flag = False
         self._show_files_manager()
-
-    # ------------------------------------------------------------------
-    # Window events
-    # ------------------------------------------------------------------
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            self.reject()
-            self.start_video_flag = False
-            if self.parent():
-                QTimer.singleShot(0, self.parent().close)
-            else:
-                QTimer.singleShot(0, QApplication.quit)
-        else:
-            super().keyPressEvent(event)
-
-    def closeEvent(self, event):
-        event.accept()
-        if self.parent():
-            self.parent().close()
-        else:
-            QApplication.quit()
 
 
 def _remove_temp(path):

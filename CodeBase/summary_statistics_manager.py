@@ -10,9 +10,10 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from display_utils import get_screen_geometry, center_window, is_os_junk
+from display_utils import get_screen_geometry, is_os_junk
 from summary_statistics import generate_summary_statistics, combine_summaries
 from summary_viewer import show_table_viewer
+from dialogs import show_message, get_text
 import theme
 
 
@@ -28,7 +29,6 @@ class SummaryStatisticsManager(QDialog):
 
         self.setWindowTitle("LaserTAG - Generate Summary Statistics")
         theme.apply_dialog_theme(self)
-        theme.stay_on_top(self)
 
         screen = get_screen_geometry()
         self._display_width = screen["width"]
@@ -39,7 +39,7 @@ class SummaryStatisticsManager(QDialog):
         dialog_w = int(self._display_width * 0.4)
         dialog_h = int(self._display_height * 0.7)
         self.setMinimumSize(int(dialog_w * 0.4), int(dialog_h * 0.7))
-        center_window(self, dialog_w, dialog_h, screen)
+        self.resize(dialog_w, dialog_h)
 
     # ------------------------------------------------------------------
     # UI setup
@@ -174,7 +174,7 @@ class SummaryStatisticsManager(QDialog):
                 and not d.startswith("."))
             self.dir_listbox.addItems(dirs)
         except OSError as exc:
-            theme.show_message(
+            show_message(
                 self, "Error", f"Error accessing directory: {exc}")
 
     def _populate_file_list(self, directory):
@@ -195,7 +195,7 @@ class SummaryStatisticsManager(QDialog):
             if files:
                 self.select_all_checkbox.setChecked(True)
         except OSError as exc:
-            theme.show_message(
+            show_message(
                 self, "Error", f"Error accessing directory: {exc}")
 
     def _toggle_select_all(self, _state):
@@ -219,7 +219,7 @@ class SummaryStatisticsManager(QDialog):
     def _generate_individual_summaries(self):
         selected = self._get_selected_files()
         if not selected:
-            theme.show_message(
+            show_message(
                 self, "No Files Selected",
                 "Please select at least one annotation file.")
             return
@@ -233,7 +233,7 @@ class SummaryStatisticsManager(QDialog):
         try:
             os.makedirs(individual_dir, exist_ok=True)
         except OSError as exc:
-            theme.show_message(
+            show_message(
                 self, "Error",
                 f"Could not create Individual_summaries directory: {exc}")
             return
@@ -262,9 +262,9 @@ class SummaryStatisticsManager(QDialog):
             msg += "\n\nThe following files could not be processed:"
             for name, err in failed:
                 msg += f"\n\u2022 {name.replace('_Annotations.csv', '')}: {err}"
-            theme.show_message(self, "Processing Completed with Errors", msg)
+            show_message(self, "Processing Completed with Errors", msg)
         else:
-            theme.show_message(self, "Processing Complete", msg,
+            show_message(self, "Processing Complete", msg,
                                icon="information")
 
         return success_count, empty, failed
@@ -272,7 +272,7 @@ class SummaryStatisticsManager(QDialog):
     def _generate_combined_summary(self):
         selected = self._get_selected_files()
         if not selected:
-            theme.show_message(
+            show_message(
                 self, "No Files Selected",
                 "Please select at least one annotation file.")
             return
@@ -290,12 +290,12 @@ class SummaryStatisticsManager(QDialog):
             try:
                 os.makedirs(d, exist_ok=True)
             except OSError as exc:
-                theme.show_message(
+                show_message(
                     self, "Error",
                     f"Could not create directory {os.path.basename(d)}: {exc}")
                 return
 
-        experiment_name, ok = theme.get_text(
+        experiment_name, ok = get_text(
             self, "Experiment Name",
             "Enter a name for this experiment/analysis:")
         if not ok or not experiment_name:
@@ -308,7 +308,7 @@ class SummaryStatisticsManager(QDialog):
             combined_summaries_dir,
             f"{experiment_name}_Combined_Summary.csv")
         if os.path.exists(check_path):
-            reply = theme.show_message(
+            reply = show_message(
                 self, "Summary Exists",
                 f"A combined summary named '{experiment_name}' "
                 "already exists.\n\nOverwrite it?",
@@ -356,12 +356,12 @@ class SummaryStatisticsManager(QDialog):
                         msg += "\n\n"
                     msg += "The following files failed to process:\n"
                     msg += "\n".join(f"\u2022 {n}: {e}" for n, e in failed)
-                theme.show_message(
+                show_message(
                     self, "Some Files Skipped", msg,
                     icon="information")
 
         if not existing:
-            theme.show_message(
+            show_message(
                 self, "No Summary Files",
                 "No summary files found. "
                 "Please use 'Generate Individual Summaries' first.",
@@ -381,7 +381,7 @@ class SummaryStatisticsManager(QDialog):
             self._show_combined_result(
                 combined_sum_path, existing, experiment_name, ann_name)
         except Exception as exc:
-            theme.show_message(
+            show_message(
                 self, "Error",
                 f"Error generating combined analysis: {exc}")
 
@@ -436,7 +436,7 @@ class SummaryStatisticsManager(QDialog):
                 failed.append((os.path.basename(path), str(exc)))
 
         if not all_rows or fieldnames is None:
-            theme.show_message(
+            show_message(
                 self, "Error", "No valid annotation files could be read.")
             return None
 
@@ -456,7 +456,7 @@ class SummaryStatisticsManager(QDialog):
                     os.remove(out_path + ".tmp")
                 except OSError:
                     pass
-            theme.show_message(
+            show_message(
                 self, "Error",
                 f"Error saving combined annotations: {exc}")
             return None
@@ -469,7 +469,6 @@ class SummaryStatisticsManager(QDialog):
         result_dlg = QDialog(self)
         result_dlg.setWindowTitle("Combined Analysis Complete")
         theme.apply_dialog_theme(result_dlg)
-        theme.stay_on_top(result_dlg)
         rdl = QVBoxLayout(result_dlg)
         rdl.setSpacing(10)
         rdl.setContentsMargins(15, 15, 15, 15)
@@ -497,15 +496,19 @@ class SummaryStatisticsManager(QDialog):
         view_btn.clicked.connect(lambda: _set("view"))
         boxplot_btn.clicked.connect(lambda: _set("boxplots"))
         close_btn.clicked.connect(result_dlg.reject)
-        result_dlg.exec()
 
-        if action[0] == "view":
-            title = (os.path.basename(combined_sum_path)
-                     .replace(".csv", "").replace("_", " "))
-            show_table_viewer(self, combined_sum_path, title)
-        elif action[0] == "boxplots":
-            comb_dir = os.path.dirname(combined_sum_path)
-            show_boxplot_viewer(self, comb_dir)
+        def _on_finished(_result):
+            result_dlg.deleteLater()
+            if action[0] == "view":
+                title = (os.path.basename(combined_sum_path)
+                         .replace(".csv", "").replace("_", " "))
+                show_table_viewer(self, combined_sum_path, title)
+            elif action[0] == "boxplots":
+                comb_dir = os.path.dirname(combined_sum_path)
+                show_boxplot_viewer(self, comb_dir)
+
+        result_dlg.finished.connect(_on_finished)
+        result_dlg.open()
 
     def _ensure_summary_dir(self, base_dir):
         summary_dir = os.path.join(base_dir, "Summary")
@@ -513,7 +516,7 @@ class SummaryStatisticsManager(QDialog):
             os.makedirs(summary_dir, exist_ok=True)
             return summary_dir
         except OSError as exc:
-            theme.show_message(
+            show_message(
                 self, "Error",
                 f"Could not create Summary directory: {exc}")
             return None

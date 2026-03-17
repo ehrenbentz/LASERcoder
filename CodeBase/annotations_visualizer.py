@@ -11,6 +11,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QBrush, QFont,
                         QPixmap, QIcon)
 
 from display_utils import generate_default_colors, make_color_icon
+from dialogs import show_message
 import theme
 
 def _state_fill(base_color):
@@ -510,15 +511,14 @@ class AnnotationsVisualizer(QFrame):
 
 def show_visualization_dialog(parent, video_name, state_events, point_events,
                               video_duration, parse_time_func, center_window_func,
-                              output_dir, bounds=None, store=None):
+                              output_dir, bounds=None, store=None,
+                              on_closed=None):
     """Create and show the visualization dialog with event selection panel."""
     try:
         viz_dialog = QDialog(parent)
         theme.apply_dialog_theme(viz_dialog)
-        theme.stay_on_top(viz_dialog)
 
         viz_dialog.setWindowTitle(f"Annotation Visualization - {video_name}")
-        viz_dialog.setModal(True)
 
         screen = parent.screen()
         viz_width = int(screen.availableGeometry().width() * 0.9)
@@ -935,21 +935,24 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             try:
                 image, _ = timeline_widget.render_to_image(fmt, dpi)
                 image.save(file_path)
-                theme.show_message(viz_dialog, "Export Successful",
+                show_message(viz_dialog, "Export Successful",
                                    "Visualization exported successfully",
                                    icon="information")
             except Exception as e:
-                theme.show_message(viz_dialog, "Export Error",
+                show_message(viz_dialog, "Export Error",
                                    f"Failed to export visualization: {e}")
 
         export_button.clicked.connect(export_visualization)
 
         viz_dialog.finished.connect(lambda: dialog_alive.__setitem__(0, False))
-        viz_dialog.exec()
+        if on_closed:
+            viz_dialog.finished.connect(lambda _result: on_closed())
+        viz_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        viz_dialog.open()
         return True
 
     except Exception as e:
         print(f"Error in visualization: {e}")
-        theme.show_message(parent, "Visualization Error",
+        show_message(parent, "Visualization Error",
                            f"Failed to create visualization: {e}")
         return False

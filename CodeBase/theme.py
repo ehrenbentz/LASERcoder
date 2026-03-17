@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 _current_theme = "system"
+_theme_objc_cache = {}  # cached macOS ObjC bindings for apply_titlebar_theme
 
 # ---------------------------------------------------------------------------
 # Dark palette (matches existing hardcoded colors)
@@ -228,21 +229,26 @@ def apply_titlebar_theme(window) -> None:
 
     elif sys.platform == "darwin":
         try:
-            from ctypes import c_void_p, c_bool
-            objc = ctypes.cdll.LoadLibrary("libobjc.dylib")
+            from ctypes import c_void_p
+            if not _theme_objc_cache:
+                objc = ctypes.cdll.LoadLibrary("libobjc.dylib")
+                _theme_objc_cache["sel"] = ctypes.CFUNCTYPE(
+                    c_void_p, ctypes.c_char_p)(
+                    ("sel_registerName", objc))
+                _theme_objc_cache["msg"] = ctypes.CFUNCTYPE(
+                    c_void_p, c_void_p, c_void_p)(
+                    ("objc_msgSend", objc))
+                _theme_objc_cache["msg_p"] = ctypes.CFUNCTYPE(
+                    c_void_p, c_void_p, c_void_p, c_void_p)(
+                    ("objc_msgSend", objc))
+                _theme_objc_cache["cls"] = ctypes.CFUNCTYPE(
+                    c_void_p, ctypes.c_char_p)(
+                    ("objc_getClass", objc))
 
-            sel = ctypes.CFUNCTYPE(c_void_p, ctypes.c_char_p)(
-                ("sel_registerName", objc)
-            )
-            msg = ctypes.CFUNCTYPE(c_void_p, c_void_p, c_void_p)(
-                ("objc_msgSend", objc)
-            )
-            msg_p = ctypes.CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_void_p)(
-                ("objc_msgSend", objc)
-            )
-            cls = ctypes.CFUNCTYPE(c_void_p, ctypes.c_char_p)(
-                ("objc_getClass", objc)
-            )
+            sel = _theme_objc_cache["sel"]
+            msg = _theme_objc_cache["msg"]
+            msg_p = _theme_objc_cache["msg_p"]
+            cls = _theme_objc_cache["cls"]
 
             # Get NSWindow from the Qt window
             nsview = c_void_p(int(window.winId()))
@@ -265,8 +271,13 @@ def apply_titlebar_theme(window) -> None:
                 ns_string,
             )
             msg_p(nswindow, sel(b"setAppearance:"), appearance)
-        except Exception:
-            pass  # graceful fallback
+        except Exception as exc:
+            try:
+                from debug_logger import get_logger
+                get_logger().debug(
+                    "apply_titlebar_theme macOS exception: %s", exc)
+            except Exception:
+                pass
 
 
 def apply_dialog_theme(dialog) -> None:
@@ -498,64 +509,3 @@ def event_label_stylesheet() -> str:
     return "color: white; background-color: rgba(50,50,50,180); padding: 2px;"
 
 
-def get_text(parent, title, label, text=""):
-    """Show an always-on-top input dialog. Returns (text, ok)."""
-    from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel,
-                                   QLineEdit, QDialogButtonBox)
-    from PySide6.QtCore import Qt
-    dlg = QDialog(parent)
-    dlg.setWindowTitle(title)
-    apply_dialog_theme(dlg)
-    dlg.setWindowFlags(
-        dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-    dlg.setModal(True)
-    layout = QVBoxLayout(dlg)
-    layout.addWidget(QLabel(label))
-    line = QLineEdit(text)
-    layout.addWidget(line)
-    bbox = QDialogButtonBox(
-        QDialogButtonBox.StandardButton.Ok
-        | QDialogButtonBox.StandardButton.Cancel)
-    bbox.accepted.connect(dlg.accept)
-    bbox.rejected.connect(dlg.reject)
-    layout.addWidget(bbox)
-    line.setFocus()
-    ok = dlg.exec() == QDialog.DialogCode.Accepted
-    result = line.text()
-    dlg.setParent(None)
-    dlg.deleteLater()
-    return result, ok
-
-
-def stay_on_top(widget) -> None:
-    """Ensure a dialog or widget stays above all other windows."""
-    from PySide6.QtCore import Qt
-    widget.setWindowFlags(
-        widget.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-
-
-def show_message(parent, title, text, icon="warning"):
-    """Show a themed, always-on-top QMessageBox and return the result."""
-    from PySide6.QtWidgets import QMessageBox
-    icons = {
-        "warning": QMessageBox.Icon.Warning,
-        "critical": QMessageBox.Icon.Critical,
-        "information": QMessageBox.Icon.Information,
-        "question": QMessageBox.Icon.Question,
-    }
-    dlg = QMessageBox(parent)
-    apply_dialog_theme(dlg)
-    dlg.setWindowTitle(title)
-    dlg.setText(text)
-    dlg.setIcon(icons.get(icon, QMessageBox.Icon.Warning))
-    stay_on_top(dlg)
-    if icon == "question":
-        dlg.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        dlg.setDefaultButton(QMessageBox.StandardButton.No)
-    else:
-        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
-    result = dlg.exec()
-    dlg.setParent(None)
-    dlg.deleteLater()
-    return result

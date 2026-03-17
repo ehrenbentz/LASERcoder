@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QSizePolicy, QColorDialog,
     QDialog, QGridLayout,
 )
-from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, QSysInfo
+from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, QSysInfo, QEventLoop
 from PySide6.QtGui import QColor, QOpenGLContext
 
 from display_utils import get_screen_geometry, center_window
@@ -38,9 +38,14 @@ from floating_controls import (
 from dialogs import (
     show_coding_start_dialog, show_note_dialog, show_annotation_details,
     show_comprehensive_edit, show_edit_point_dialog, show_edit_state_dialog,
+    show_message,
 )
 from config_manager import get_config
+from debug_logger import get_logger
+from platform_utils import enter_fullscreen_platform, exit_fullscreen_platform
 import theme
+
+logger = get_logger()
 
 
 def _fmt_current(secs):
@@ -88,7 +93,8 @@ class MpvOpenGLWidget(QOpenGLWidget):
         # Force Qt to create the native window and GL context
         if not self.isVisible():
             self.show()
-        QApplication.processEvents()
+        QApplication.processEvents(
+            QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
         self.makeCurrent()
 
@@ -137,14 +143,17 @@ class MpvOpenGLWidget(QOpenGLWidget):
         if self.render_ctx is None or not self._has_first_frame:
             self._gl_clear_black()
             return
-        ratio = self.devicePixelRatioF()
-        w = int(self.width() * ratio)
-        h = int(self.height() * ratio)
-        fbo = self.defaultFramebufferObject()
-        self.render_ctx.render(
-            flip_y=True,
-            opengl_fbo={"fbo": fbo, "w": w, "h": h},
-        )
+        try:
+            ratio = self.devicePixelRatioF()
+            w = int(self.width() * ratio)
+            h = int(self.height() * ratio)
+            fbo = self.defaultFramebufferObject()
+            self.render_ctx.render(
+                flip_y=True,
+                opengl_fbo={"fbo": fbo, "w": w, "h": h},
+            )
+        except Exception:
+            self._gl_clear_black()
 
     def cleanup(self):
         """Free the render context. Must be called before destroying the player."""
@@ -182,6 +191,19 @@ class VideoAnnotator(QFrame):
         self._shutting_down = False
         self._activation_pending = False
         self._suppress_floating_hide = False
+        self._hide_pending = False
+
+        # Event types the filter actually handles — everything else is
+        # passed through immediately to avoid per-event Python overhead.
+        self._watched_events = frozenset({
+            QEvent.Type.Move,
+            QEvent.Type.ActivationChange,
+            QEvent.Type.WindowStateChange,
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.MouseMove,
+            QEvent.Type.MouseButtonRelease,
+            QEvent.Type.KeyPress,
+        })
 
         # UI selection state
         self.dialog_open = False
@@ -220,35 +242,32 @@ class VideoAnnotator(QFrame):
             output_dir=output_dir,
         )
 
-        # Screen geometry
+        # Screen geometry — use the screen the window is actually on
         self.app = QApplication.instance()
-        if sys.platform == "darwin":
-            full = QApplication.primaryScreen().geometry()
-            self.display_width = full.width()
-            self.display_height = full.height()
-        else:
-            screen = get_screen_geometry()
-            self.display_width = screen["width"]
-            self.display_height = screen["height"]
+        self._pre_fullscreen_geometry = self.parent.geometry()
 
         self.parent.setWindowTitle(f"LaserTag  {video_path}")
         self.parent.apply_theme()
 
+        # Enter fullscreen: frameless window sized to full screen
         if sys.platform == "darwin":
+            full = self.parent.screen().geometry()
+            self.display_width = full.width()
+            self.display_height = full.height()
             self.parent.hide()
             self.parent.setWindowFlags(
                 Qt.WindowType.Window
                 | Qt.WindowType.FramelessWindowHint
             )
-            full_screen = QApplication.primaryScreen().geometry()
-            self.parent.setGeometry(full_screen)
+            self.parent.setGeometry(full)
             self.parent.show()
-            QApplication.processEvents()
-            self._apply_macos_fullscreen()
+            QApplication.processEvents(
+                QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+            enter_fullscreen_platform()
         else:
-            _screen = get_screen_geometry()
-            self.parent.setGeometry(
-                _screen["x"], _screen["y"], _screen["width"], _screen["height"])
+            avail = self.parent.screen().availableGeometry()
+            self.display_width = avail.width()
+            self.display_height = avail.height()
             self.parent.showMaximized()
 
         # Layout measurements
@@ -270,195 +289,12 @@ class VideoAnnotator(QFrame):
         self.app.installEventFilter(self)
         self._init_mpv_player()
         self._load_data_and_start()
+        logger.info("VideoAnnotator init complete: video=%s", video_path)
 
         self.state_annotations_tree.itemSelectionChanged.connect(
             self._on_state_item_selected)
         self.point_annotations_tree.itemSelectionChanged.connect(
             self._on_point_item_selected)
-
-    # ------------------------------------------------------------------
-    # macOS fullscreen helper
-    # ------------------------------------------------------------------
-
-    def _apply_macos_fullscreen(self):
-        """Hide the dock and menubar using native macOS APIs.
-
-        Uses CFUNCTYPE to create properly-typed function pointers for
-        objc_msgSend, which is required for correct ARM64 calling
-        conventions (mutating argtypes on the shared symbol does not
-        work reliably on Apple Silicon).
-        """
-        try:
-            import ctypes.util as _cu
-
-            objc_path = _cu.find_library("objc")
-            if not objc_path:
-                return
-            _objc = ctypes.cdll.LoadLibrary(objc_path)
-
-            _objc.objc_getClass.restype = ctypes.c_void_p
-            _objc.objc_getClass.argtypes = [ctypes.c_char_p]
-            _objc.sel_registerName.restype = ctypes.c_void_p
-            _objc.sel_registerName.argtypes = [ctypes.c_char_p]
-
-            # Typed function pointers for ARM64-safe objc_msgSend calls
-            send = ctypes.CFUNCTYPE(
-                ctypes.c_void_p,
-                ctypes.c_void_p, ctypes.c_void_p,
-            )(("objc_msgSend", _objc))
-
-            send_long = ctypes.CFUNCTYPE(
-                ctypes.c_void_p,
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long,
-            )(("objc_msgSend", _objc))
-
-            send_ulong = ctypes.CFUNCTYPE(
-                ctypes.c_void_p,
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong,
-            )(("objc_msgSend", _objc))
-
-            # --- NSWindow: raise level above dock & menubar ---
-            view_ptr = int(self.parent.winId())
-            sel_window = _objc.sel_registerName(b"window")
-            ns_window = send(view_ptr, sel_window)
-            if ns_window:
-                sel_setLevel = _objc.sel_registerName(b"setLevel:")
-                send_long(ns_window, sel_setLevel, 25)
-
-            # --- NSApplication: auto-hide dock & menubar ---
-            self._reapply_macos_autohide()
-        except Exception as exc:
-            print(f"macOS fullscreen setup failed: {exc}")
-
-    def _set_macos_presentation(self, options):
-        """Set NSApplication presentationOptions to the given bitmask."""
-        try:
-            import ctypes.util as _cu
-
-            objc_path = _cu.find_library("objc")
-            if not objc_path:
-                return
-            _objc = ctypes.cdll.LoadLibrary(objc_path)
-
-            _objc.objc_getClass.restype = ctypes.c_void_p
-            _objc.objc_getClass.argtypes = [ctypes.c_char_p]
-            _objc.sel_registerName.restype = ctypes.c_void_p
-            _objc.sel_registerName.argtypes = [ctypes.c_char_p]
-
-            send = ctypes.CFUNCTYPE(
-                ctypes.c_void_p,
-                ctypes.c_void_p, ctypes.c_void_p,
-            )(("objc_msgSend", _objc))
-
-            send_ulong = ctypes.CFUNCTYPE(
-                ctypes.c_void_p,
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong,
-            )(("objc_msgSend", _objc))
-
-            NSApp_cls = _objc.objc_getClass(b"NSApplication")
-            sel_shared = _objc.sel_registerName(b"sharedApplication")
-            ns_app = send(NSApp_cls, sel_shared)
-            if ns_app:
-                sel_setPresentation = _objc.sel_registerName(
-                    b"setPresentationOptions:")
-                send_ulong(ns_app, sel_setPresentation, options)
-        except Exception:
-            pass
-
-    def _reapply_macos_autohide(self):
-        """Re-apply auto-hide dock/menubar after focus changes."""
-        # NSApplicationPresentationAutoHideDock    = 1 << 0
-        # NSApplicationPresentationAutoHideMenuBar = 1 << 2
-        self._set_macos_presentation((1 << 0) | (1 << 2))
-
-    def _restore_macos_presentation(self):
-        """Restore default dock/menubar presentation and window level on exit."""
-        # NSApplicationPresentationDefault = 0
-        self._set_macos_presentation(0)
-        # Reset window level to normal (NSNormalWindowLevel = 0)
-        try:
-            import ctypes.util as _cu
-            objc_path = _cu.find_library("objc")
-            if not objc_path:
-                return
-            _objc = ctypes.cdll.LoadLibrary(objc_path)
-            _objc.objc_getClass.restype = ctypes.c_void_p
-            _objc.objc_getClass.argtypes = [ctypes.c_char_p]
-            _objc.sel_registerName.restype = ctypes.c_void_p
-            _objc.sel_registerName.argtypes = [ctypes.c_char_p]
-            send = ctypes.CFUNCTYPE(
-                ctypes.c_void_p,
-                ctypes.c_void_p, ctypes.c_void_p,
-            )(("objc_msgSend", _objc))
-            send_long = ctypes.CFUNCTYPE(
-                ctypes.c_void_p,
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long,
-            )(("objc_msgSend", _objc))
-            view_ptr = int(self.parent.winId())
-            sel_window = _objc.sel_registerName(b"window")
-            ns_window = send(view_ptr, sel_window)
-            if ns_window:
-                sel_setLevel = _objc.sel_registerName(b"setLevel:")
-                send_long(ns_window, sel_setLevel, 0)
-        except Exception:
-            pass
-
-    def _set_macos_window_level(self, level, widget=None):
-        """Set the NSWindow level of a widget (defaults to the parent window)."""
-        if sys.platform != "darwin":
-            return
-        if widget is None:
-            widget = self.parent
-        try:
-            import ctypes.util as _cu
-            objc_path = _cu.find_library("objc")
-            if not objc_path:
-                return
-            _objc = ctypes.cdll.LoadLibrary(objc_path)
-            _objc.objc_getClass.restype = ctypes.c_void_p
-            _objc.objc_getClass.argtypes = [ctypes.c_char_p]
-            _objc.sel_registerName.restype = ctypes.c_void_p
-            _objc.sel_registerName.argtypes = [ctypes.c_char_p]
-            send = ctypes.CFUNCTYPE(
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
-            )(("objc_msgSend", _objc))
-            send_long = ctypes.CFUNCTYPE(
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
-                ctypes.c_long,
-            )(("objc_msgSend", _objc))
-            view_ptr = int(widget.winId())
-            sel_window = _objc.sel_registerName(b"window")
-            ns_window = send(view_ptr, sel_window)
-            if ns_window:
-                sel_setLevel = _objc.sel_registerName(b"setLevel:")
-                send_long(ns_window, sel_setLevel, level)
-        except Exception:
-            pass
-
-    def _prepare_for_dialog(self):
-        """Lower macOS window level so modal dialogs appear above."""
-        self._set_macos_window_level(0)
-
-    def _reactivate_after_dialog(self):
-        """Restore window level and reactivate after a modal dialog."""
-        self._suppress_floating_hide = True
-        self.parent.activateWindow()
-        self.parent.raise_()
-        self._set_floating_visible(True)
-        self._raise_floating_windows()
-        if sys.platform == "darwin":
-            self._set_macos_window_level(25)
-            QTimer.singleShot(50, self._reapply_macos_autohide)
-        # Clear suppression and re-show after all deferred
-        # ActivationChange handlers have settled.
-        QTimer.singleShot(200, self._finish_dialog_reactivation)
-
-    def _finish_dialog_reactivation(self):
-        """Final step of dialog reactivation — clear suppression, re-show floats."""
-        self._suppress_floating_hide = False
-        if not self._shutting_down:
-            self._set_floating_visible(True)
-            self._raise_floating_windows()
 
     # ------------------------------------------------------------------
     # Layout
@@ -567,13 +403,12 @@ class VideoAnnotator(QFrame):
             if w is None:
                 continue
             try:
-                w.winId()  # raises RuntimeError if C++ object is deleted
                 want_visible = visible and not (hidden is not None and w in hidden)
                 if w.isVisible() != want_visible:
                     w.setVisible(want_visible)
                 live.append(w)
             except RuntimeError:
-                pass
+                pass  # C++ object deleted
         self.floating_windows[:] = live
 
     def _handle_activation_deferred(self):
@@ -581,26 +416,32 @@ class VideoAnnotator(QFrame):
         self._activation_pending = False
         if self._shutting_down:
             return
-        app = QApplication.instance()
-        active = app.activeWindow()
-        if active is not None:
-            is_ours = (active == self.parent
-                       or active in self.floating_windows)
-        else:
-            # activeWindow() is None — only treat as ours if the
-            # application itself is still the active app (not when
-            # another program has taken focus).
-            is_ours = (app.applicationState()
-                       == Qt.ApplicationState.ApplicationActive)
+        is_ours = (QApplication.instance().applicationState()
+                   == Qt.ApplicationState.ApplicationActive)
         if is_ours:
-            self._set_floating_visible(True)
-            self._raise_floating_windows()
-            self._reapply_macos_autohide()
+            self._hide_pending = False
+            if not self.dialog_open:
+                self._set_floating_visible(True)
         elif not self.dialog_open and not self._suppress_floating_hide:
-            self._set_floating_visible(False)
+            if not self._hide_pending:
+                self._hide_pending = True
+                QTimer.singleShot(400, self._commit_floating_hide)
+
+    def _commit_floating_hide(self):
+        """Actually hide floating windows if still deactivated."""
+        if not self._hide_pending or self._shutting_down:
+            return
+        self._hide_pending = False
+        if QApplication.instance().applicationState() == Qt.ApplicationState.ApplicationActive:
+            return
+        self._set_floating_visible(False)
 
     def _raise_floating_windows(self):
-        """Ensure floating windows render above the parent window."""
+        """Prune deleted floating windows from the list.
+
+        Floating windows use the Tool flag which Qt keeps above their
+        parent natively — no explicit raise_() needed.
+        """
         if self._shutting_down:
             return
         live = []
@@ -608,12 +449,8 @@ class VideoAnnotator(QFrame):
             if w is None:
                 continue
             try:
-                w.winId()  # raises RuntimeError if C++ object is deleted
-                if w.isVisible():
-                    w.raise_()
-                    if sys.platform == "darwin":
-                        self._set_macos_window_level(26, w)
-                live.append(w)  # keep ALL valid windows, not just visible ones
+                w.isVisible()  # raises RuntimeError if C++ object is deleted
+                live.append(w)
             except RuntimeError:
                 pass
         self.floating_windows[:] = live
@@ -649,6 +486,8 @@ class VideoAnnotator(QFrame):
         self.update_coding_info_display()
 
     def update_progress(self):
+        if not hasattr(self, 'player') or not self.player:
+            return
         total = self._mpv_duration or self.player.duration or 0
         current = self.player.time_pos or 0
 
@@ -662,39 +501,40 @@ class VideoAnnotator(QFrame):
         self.progress_bar.set_right_text(_fmt_total(total))
 
     def _show_coding_end_prompt(self, current_sec):
+        if self._shutting_down:
+            return
         dlg = QMessageBox(self.parent)
         theme.apply_dialog_theme(dlg)
         dlg.setWindowTitle("Coding Duration Reached")
-        dlg.setWindowFlags(
-            dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
-        self._prepare_for_dialog()
         if self.active_state_events:
             dlg.setIcon(QMessageBox.Icon.Question)
             dlg.setText("Coding duration reached\n"
                         "Do you wish to end the active state events?")
             dlg.setStandardButtons(
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            result = dlg.exec()
-            dlg.setParent(None)
-            dlg.deleteLater()
-            self._reactivate_after_dialog()
-            if result == QMessageBox.StandardButton.Yes:
-                for key in list(self.active_state_events):
-                    self.handle_state_event(
-                        key, current_sec, format_time_human(current_sec))
+
+            def _on_finished(result):
+                dlg.deleteLater()
+                if result == QMessageBox.StandardButton.Yes:
+                    for key in list(self.active_state_events):
+                        self.handle_state_event(
+                            key, current_sec, format_time_human(current_sec))
+
+            dlg.finished.connect(_on_finished)
+            dlg.open()
         else:
             dlg.setIcon(QMessageBox.Icon.Information)
             dlg.setText("Coding duration reached")
             dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
-            dlg.exec()
-            dlg.setParent(None)
-            dlg.deleteLater()
-            self._reactivate_after_dialog()
+            dlg.finished.connect(lambda _: dlg.deleteLater())
+            dlg.open()
 
     def _on_time_pos_changed(self, current):
         """Handle mpv time-pos property changes on the GUI thread."""
         if self._shutting_down:
+            return
+        if not hasattr(self, 'player') or not self.player:
             return
         total = self._mpv_duration
         if total <= 0:
@@ -772,7 +612,8 @@ class VideoAnnotator(QFrame):
     def _init_mpv_player(self):
         if not self.parent.isVisible():
             self.parent.show()
-        QApplication.processEvents()
+        QApplication.processEvents(
+            QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         locale.setlocale(locale.LC_NUMERIC, "C")
         self.player = mpv.MPV(
             vo="libmpv",
@@ -811,8 +652,6 @@ class VideoAnnotator(QFrame):
         self._auto_save_session_state()
 
         self.parent.update()
-        self.parent.activateWindow()
-        self.parent.raise_()
 
         self.player.play(self.video_path)
 
@@ -1079,7 +918,7 @@ class VideoAnnotator(QFrame):
     # ------------------------------------------------------------------
 
     def _show_settings_menu(self):
-        menu = QMenu(self)
+        menu = QMenu(self.parent)
         menu.setStyleSheet(theme.menu_stylesheet())
 
         theme_menu = menu.addMenu("Theme")
@@ -1126,10 +965,10 @@ class VideoAnnotator(QFrame):
         if btn:
             self.player.pause = True
             self.dialog_open = True
-            self._prepare_for_dialog()
-            menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
-            self._reactivate_after_dialog()
-            self.dialog_open = False
+            try:
+                menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+            finally:
+                self.dialog_open = False
 
     def _toggle_floating_item(self, item, checked):
         cfg = get_config()
@@ -1172,10 +1011,8 @@ class VideoAnnotator(QFrame):
 
         dlg = QDialog(self.parent)
         dlg.setWindowTitle("Highlight Colors")
-        dlg.setWindowFlags(
-            dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         theme.apply_dialog_theme(dlg)
-        dlg.setModal(True)
+
 
         layout = QGridLayout(dlg)
         layout.setSpacing(12)
@@ -1232,15 +1069,17 @@ class VideoAnnotator(QFrame):
         layout.addLayout(btn_row, 2, 0, 1, 2)
 
         self.dialog_open = True
-        self._prepare_for_dialog()
-        result = dlg.exec()
-        self._reactivate_after_dialog()
-        self.dialog_open = False
 
-        if result == QDialog.DialogCode.Accepted:
-            cfg.set_state_highlight_color(colors["state"].name())
-            cfg.set_point_highlight_color(colors["point"].name())
-            self._populate_event_trees()
+        def _on_finished(result):
+            self.dialog_open = False
+            dlg.deleteLater()
+            if result == QDialog.DialogCode.Accepted:
+                cfg.set_state_highlight_color(colors["state"].name())
+                cfg.set_point_highlight_color(colors["point"].name())
+                self._populate_event_trees()
+
+        dlg.finished.connect(_on_finished)
+        dlg.open()
 
     def _show_button_color_dialog(self):
         from floating_controls import toggle_event_buttons
@@ -1254,10 +1093,8 @@ class VideoAnnotator(QFrame):
 
         dlg = QDialog(self.parent)
         dlg.setWindowTitle("Button Colors")
-        dlg.setWindowFlags(
-            dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         theme.apply_dialog_theme(dlg)
-        dlg.setModal(True)
+
 
         layout = QGridLayout(dlg)
         layout.setSpacing(12)
@@ -1313,19 +1150,21 @@ class VideoAnnotator(QFrame):
         layout.addLayout(btn_row, 2, 0, 1, 2)
 
         self.dialog_open = True
-        self._prepare_for_dialog()
-        result = dlg.exec()
-        self._reactivate_after_dialog()
-        self.dialog_open = False
 
-        if result == QDialog.DialogCode.Accepted:
-            cfg.set_point_button_color(colors["point"].name())
-            cfg.set_state_button_color(colors["state"].name())
-            # Refresh event buttons if they're open
-            if (hasattr(self, "event_buttons_window")
-                    and self.event_buttons_window):
-                toggle_event_buttons(self)
-                toggle_event_buttons(self)
+        def _on_finished(result):
+            self.dialog_open = False
+            dlg.deleteLater()
+            if result == QDialog.DialogCode.Accepted:
+                cfg.set_point_button_color(colors["point"].name())
+                cfg.set_state_button_color(colors["state"].name())
+                # Refresh event buttons if they're open
+                if (hasattr(self, "event_buttons_window")
+                        and self.event_buttons_window):
+                    toggle_event_buttons(self)
+                    toggle_event_buttons(self)
+
+        dlg.finished.connect(_on_finished)
+        dlg.open()
 
     def _apply_video_settings(self):
         """Apply saved video settings to the player. Per-video overrides global."""
@@ -1485,7 +1324,25 @@ class VideoAnnotator(QFrame):
             if (hasattr(self, "player") and self.player
                     and self.parent and self.parent.isVisible()):
                 self._auto_saving = True
-                self.save_session_state()
+                ok = self.save_session_state()
+                if not ok:
+                    self._auto_save_failures = getattr(
+                        self, "_auto_save_failures", 0) + 1
+                    if self._auto_save_failures >= 3:
+                        # Volume may be disconnected — stop hammering
+                        self._auto_saving = False
+                        logger.warning("Auto-save failed %d times, pausing",
+                                       self._auto_save_failures)
+                        if self._shutting_down:
+                            return
+                        self._show_warning(
+                            "Save Error",
+                            "Unable to save session state after multiple "
+                            "attempts.\nIs the output drive still connected?\n\n"
+                            "Auto-save has been paused.")
+                        return
+                else:
+                    self._auto_save_failures = 0
             else:
                 return
         finally:
@@ -1544,12 +1401,28 @@ class VideoAnnotator(QFrame):
     def eventFilter(self, obj, event):
         if self._shutting_down:
             return super().eventFilter(obj, event)
-        if obj == self.parent:
-            if event.type() == QEvent.Type.Move:
+
+        etype = event.type()
+
+        # Fast path: skip events we never handle (paint, timer, layout, etc.)
+        if etype not in self._watched_events:
+            return super().eventFilter(obj, event)
+
+        # Keyboard events can come from any focused widget — always process them.
+        # For non-keyboard events, skip widgets we don't monitor.
+        # Exception: macOS click suppression needs MouseButtonPress from any widget.
+        if etype != QEvent.Type.KeyPress:
+            if obj is not self.parent and obj is not self.gl_widget:
+                if not (sys.platform == "darwin"
+                        and etype == QEvent.Type.MouseButtonPress):
+                    return super().eventFilter(obj, event)
+
+        if obj is self.parent:
+            if etype == QEvent.Type.Move:
                 self._reposition_floating_windows()
 
-            if event.type() in (QEvent.Type.ActivationChange,
-                                QEvent.Type.WindowStateChange):
+            if etype in (QEvent.Type.ActivationChange,
+                        QEvent.Type.WindowStateChange):
                 state = self.parent.windowState()
                 is_minimized = bool(
                     state & Qt.WindowState.WindowMinimized
@@ -1559,12 +1432,26 @@ class VideoAnnotator(QFrame):
                 elif not self._activation_pending:
                     self._activation_pending = True
                     QTimer.singleShot(
-                        50, self._handle_activation_deferred)
+                        100, self._handle_activation_deferred)
 
-        if (obj == self.gl_widget
+        if (sys.platform == "darwin"
+                and etype == QEvent.Type.MouseButtonPress
+                and isinstance(obj, QWidget)):
+            # On macOS, clicking anywhere inside the main window (video,
+            # background, controls) can briefly drop applicationState to
+            # Inactive, triggering the floating-window hide path.  Suppress
+            # that hide for any click whose top-level window is ours.
+            obj_window = obj.window()
+            if obj_window == self.parent or obj_window in self.floating_windows:
+                self._hide_pending = False
+                self._suppress_floating_hide = True
+                QTimer.singleShot(
+                    600, lambda: setattr(self, '_suppress_floating_hide', False))
+
+        if (obj is self.gl_widget
                 and self.zoom_active
                 and hasattr(self, "player") and self.player):
-            if event.type() == QEvent.Type.MouseButtonPress:
+            if etype == QEvent.Type.MouseButtonPress:
                 pos = event.position() if hasattr(event, "position") else event.pos()
                 click_x = pos.x() / self.gl_widget.width()
                 click_y = pos.y() / self.gl_widget.height()
@@ -1585,7 +1472,7 @@ class VideoAnnotator(QFrame):
                     self._drag_pan_start_y = self._zoom_pan_y
                 return True
 
-            if event.type() == QEvent.Type.MouseMove and (self.player.video_zoom or 0) > 0:
+            if etype == QEvent.Type.MouseMove and (self.player.video_zoom or 0) > 0:
                 if hasattr(self, "_drag_start_x"):
                     pos = event.position() if hasattr(event, "position") else event.pos()
                     w = self.gl_widget.width()
@@ -1600,13 +1487,13 @@ class VideoAnnotator(QFrame):
                     self.player.video_pan_y = self._zoom_pan_y
                     return True
 
-            if event.type() == QEvent.Type.MouseButtonRelease:
+            if etype == QEvent.Type.MouseButtonRelease:
                 if hasattr(self, "_drag_start_x"):
                     del self._drag_start_x
                     del self._drag_start_y
                 return True
 
-        if event.type() == QEvent.Type.KeyPress:
+        if etype == QEvent.Type.KeyPress:
             key = event.key()
             modifiers = event.modifiers()
 
@@ -1667,6 +1554,7 @@ class VideoAnnotator(QFrame):
         info = self.store.event_map[key]
         current = self.player.time_pos or 0
         fmt = format_time_human(current)
+        logger.info("Event key '%s' (%s) at %s", key, info["Type"], fmt)
 
         if info["Type"] == "State":
             self.handle_state_event(key, current, fmt)
@@ -1829,6 +1717,7 @@ class VideoAnnotator(QFrame):
 
     def toggle_play_pause(self):
         self.player.pause = not self.player.pause
+        logger.debug("Play/pause toggled: paused=%s", self.player.pause)
         self.update_play_pause_icon()
 
     def update_play_pause_icon(self):
@@ -1867,11 +1756,14 @@ class VideoAnnotator(QFrame):
         new_rate = steps[new_idx]
         if new_rate != current:
             self.player.speed = new_rate
+            if new_rate < current:
+                self.player.command("seek", 0, "relative+exact")
             self.progress_bar.set_center_text(f"({new_rate:.1f}x)")
 
     def _reset_speed(self):
         if self.player.speed != 1.0:
             self.player.speed = 1.0
+            self.player.command("seek", 0, "relative+exact")
             self.progress_bar.set_center_text("(1.0x)")
 
     def _reset_coding_end_flag(self):
@@ -1926,16 +1818,14 @@ class VideoAnnotator(QFrame):
         self.selected_item = item
         self.selected_index = tree.indexOfTopLevelItem(item)
 
-        menu = QMenu(self)
+        menu = QMenu(self.parent)
         menu.setStyleSheet(theme.menu_stylesheet())
         menu.addAction("Edit", self.edit_annotation)
         menu.addAction("Add Note", lambda: show_note_dialog(self))
         menu.addAction("View Details", lambda: show_annotation_details(self))
         menu.addAction("Skip to Annotation", self._skip_to_annotation)
         menu.addAction("Delete", self.delete_annotation)
-        self._prepare_for_dialog()
         menu.exec(tree.viewport().mapToGlobal(point))
-        self._reactivate_after_dialog()
 
     def edit_annotation(self):
         if not self.selected_item:
@@ -1958,6 +1848,7 @@ class VideoAnnotator(QFrame):
     def delete_annotation(self):
         if self.selected_treeview is None or self.selected_item is None:
             return
+        logger.info("Delete annotation at index %s", self.selected_index)
 
         if not self.store.check_file_access():
             if self.player:
@@ -1986,6 +1877,7 @@ class VideoAnnotator(QFrame):
     def undo_delete(self):
         if not self.undo_stack:
             return
+        logger.info("Undo delete")
 
         if not self.store.check_file_access():
             if self.player:
@@ -2037,7 +1929,7 @@ class VideoAnnotator(QFrame):
         new_name = new_entries["Event"].text().strip()
         new_start = new_entries["H_Start"].text().strip()
         if not new_name or not new_start:
-            theme.show_message(
+            show_message(
                 self.parent, "Invalid Input",
                 "Both Event and Start Time are required.")
             return False
@@ -2079,7 +1971,7 @@ class VideoAnnotator(QFrame):
         new_h_start = new_entries["H_Start"].text().strip()
         new_h_end = new_entries["H_End"].text().strip()
         if not new_name or not new_h_start or not new_h_end:
-            theme.show_message(
+            show_message(
                 self.parent, "Invalid Input",
                 "Event, Start, and End times are required.")
             return False
@@ -2088,7 +1980,7 @@ class VideoAnnotator(QFrame):
             new_start = parse_time(new_h_start)
             new_end = parse_time(new_h_end)
         except ValueError:
-            theme.show_message(
+            show_message(
                 self.parent, "Invalid Time Format",
                 "Could not parse time values. Please check format.")
             return False
@@ -2148,12 +2040,11 @@ class VideoAnnotator(QFrame):
 
         self.dialog_open = True
 
-        for w in self.floating_windows:
-            try:
-                if w and w.isVisible():
-                    w.hide()
-            except RuntimeError:
-                continue
+        def _on_viz_closed():
+            self.dialog_open = False
+            self._set_floating_visible(True)
+            if self.player and was_playing:
+                self.player.pause = False
 
         try:
             from annotations_visualizer import show_visualization_dialog
@@ -2171,7 +2062,7 @@ class VideoAnnotator(QFrame):
                 "whole_video": True,
             }
 
-            self._prepare_for_dialog()
+            self._set_floating_visible(False)
             show_visualization_dialog(
                 parent=self.parent,
                 video_name=self.video_name,
@@ -2183,26 +2074,20 @@ class VideoAnnotator(QFrame):
                 output_dir=self.output_dir,
                 bounds=bounds,
                 store=self.store,
+                on_closed=_on_viz_closed,
             )
         except ImportError:
+            self.dialog_open = False
+            self._set_floating_visible(True)
             self._show_warning(
                 "Visualization Module Error",
                 "Could not load the visualization module.")
         except Exception as exc:
+            self.dialog_open = False
+            self._set_floating_visible(True)
             self._show_warning(
                 "Visualization Error",
                 f"Failed to create visualization: {exc}")
-        finally:
-            self.dialog_open = False
-            self._reactivate_after_dialog()
-            for w in self.floating_windows:
-                try:
-                    if w and not w.isVisible():
-                        w.show()
-                except RuntimeError:
-                    continue
-            if self.player and was_playing:
-                self.player.pause = False
 
     def _load_annotations_for_viz(self):
         state_ann, point_ann = [], []
@@ -2264,33 +2149,27 @@ class VideoAnnotator(QFrame):
             title = "Mark Complete"
 
         self.dialog_open = True
-        try:
-            msg = QMessageBox(self.parent)
-            msg.setWindowTitle(title)
-            msg.setText(action_text)
-            theme.apply_dialog_theme(msg)
-            msg.setWindowFlags(
-                msg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-            msg.setStandardButtons(
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            msg.setDefaultButton(QMessageBox.StandardButton.No)
-            self._prepare_for_dialog()
-            result = msg.exec()
-            msg.setParent(None)
-            msg.deleteLater()
-            self._reactivate_after_dialog()
+        msg = QMessageBox(self.parent)
+        msg.setWindowTitle(title)
+        msg.setText(action_text)
+        theme.apply_dialog_theme(msg)
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
 
-            if result != QMessageBox.StandardButton.Yes:
-                return
-
-            if is_complete:
-                self.store.unmark_completed()
-                self._update_mark_complete_btn(False)
-            else:
-                self.store.mark_completed()
-                self._update_mark_complete_btn(True)
-        finally:
+        def _on_finished(result):
             self.dialog_open = False
+            msg.deleteLater()
+            if result == QMessageBox.StandardButton.Yes:
+                if is_complete:
+                    self.store.unmark_completed()
+                    self._update_mark_complete_btn(False)
+                else:
+                    self.store.mark_completed()
+                    self._update_mark_complete_btn(True)
+
+        msg.finished.connect(_on_finished)
+        msg.open()
 
     def _update_mark_complete_btn(self, completed):
         self._video_completed = completed
@@ -2311,12 +2190,7 @@ class VideoAnnotator(QFrame):
         saved = (self.coding_start, self.coding_duration,
                  getattr(self, "coding_end", None), self.coding_end_reached)
 
-        for w in self.floating_windows:
-            try:
-                if w and w.isVisible():
-                    w.hide()
-            except RuntimeError:
-                continue
+        self.dialog_open = True
 
         try:
             from event_key_editor import EventKeyEditor
@@ -2345,38 +2219,32 @@ class VideoAnnotator(QFrame):
                     self.update_coding_info_display()
                     self.save_session_state()
 
-            self.dialog_open = True
             editor = EventKeyEditor(
                 self.parent, bk_dir,
                 on_start_video=on_close, on_cancel=lambda: None,
                 config_manager=cfg)
-            center_window(editor,
-                          int(self.display_width * 0.5),
+            editor.resize(int(self.display_width * 0.5),
                           int(self.display_height * 0.8))
-            self._prepare_for_dialog()
-            editor.exec()
-            self.dialog_open = False
-            self._reactivate_after_dialog()
+
+            def _on_editor_finished(_result):
+                self.dialog_open = False
+                if self.player and was_playing:
+                    self.player.pause = False
+
+            editor.finished.connect(_on_editor_finished)
+            editor.open()
         except Exception as exc:
             self._show_warning(
                 "Error",
                 f"Failed to open event key editor: {exc}")
-        finally:
-            for w in self.floating_windows:
-                try:
-                    if w and not w.isVisible():
-                        w.show()
-                except RuntimeError:
-                    continue
-            if self.player and was_playing:
-                self.player.pause = False
 
     # ------------------------------------------------------------------
     # Error handling
     # ------------------------------------------------------------------
 
     def _show_warning(self, title, message):
-        """Show a warning dialog that stays on top of the fullscreen window."""
+        """Show a warning dialog above the fullscreen window."""
+        logger.warning("Warning dialog: %s — %s", title, message)
         self.dialog_open = True
         dlg = QMessageBox(self.parent)
         theme.apply_dialog_theme(dlg)
@@ -2384,16 +2252,16 @@ class VideoAnnotator(QFrame):
         dlg.setWindowTitle(title)
         dlg.setText(message)
         dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
-        dlg.setWindowFlags(
-            dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-        self._prepare_for_dialog()
-        dlg.exec()
-        dlg.setParent(None)
-        dlg.deleteLater()
-        self._reactivate_after_dialog()
-        self.dialog_open = False
+
+        def _on_finished(_result):
+            self.dialog_open = False
+            dlg.deleteLater()
+
+        dlg.finished.connect(_on_finished)
+        dlg.open()
 
     def on_write_error(self, message=None):
+        logger.error("Write error: %s", message or "file inaccessible")
         if self.player:
             self.player.pause = True
 
@@ -2406,24 +2274,23 @@ class VideoAnnotator(QFrame):
                     "Annotations file is inaccessible.\n"
                     "Is it open in another application?")
         dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
-        dlg.setWindowFlags(
-            dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-        self._prepare_for_dialog()
-        dlg.exec()
-        dlg.setParent(None)
-        dlg.deleteLater()
-        self._reactivate_after_dialog()
-        self.dialog_open = False
+
+        def _on_finished(_result):
+            self.dialog_open = False
+            dlg.deleteLater()
+
+        dlg.finished.connect(_on_finished)
+        dlg.open()
 
     # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
 
     def on_closing(self):
+        logger.info("on_closing() started")
         self._shutting_down = True
         try:
-            if sys.platform == "darwin":
-                self._restore_macos_presentation()
+            exit_fullscreen_platform()
 
             # Remove event filters
             try:
@@ -2472,12 +2339,11 @@ class VideoAnnotator(QFrame):
     def return_to_file_selection(self):
         if getattr(self, "_returning", False):
             return
-
+        logger.info("return_to_file_selection() started")
         self._returning = True
         self._shutting_down = True
         try:
-            if sys.platform == "darwin":
-                self._restore_macos_presentation()
+            exit_fullscreen_platform()
 
             # Remove event filters before tearing down widgets
             try:
@@ -2534,10 +2400,8 @@ class VideoAnnotator(QFrame):
             self.floating_windows.clear()
 
             if self.parent:
-                main_window = self.parent
-                main_window._return_to_setup = True
-                main_window.hide()
-                QApplication.exit(0)
+                self.parent.hide()
+                self.parent.annotator_finished.emit()
             else:
                 QApplication.quit()
         except Exception as exc:

@@ -4,6 +4,9 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout,
 from PySide6.QtCore import Qt, QPoint
 
 import theme
+from debug_logger import get_logger
+
+logger = get_logger()
 
 
 def create_toggle_buttons(annotator):
@@ -17,8 +20,8 @@ def create_toggle_buttons(annotator):
     # Behaviour toggle
     annotator.event_toggle_window = QWidget(parent)
     annotator.event_toggle_window.setWindowFlags(
-        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-        | Qt.WindowType.WindowStaysOnTopHint)
+        Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.Tool)
     annotator.event_toggle_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
     annotator.event_toggle_window.setStyleSheet("background-color: transparent;")
@@ -33,8 +36,8 @@ def create_toggle_buttons(annotator):
     # Controls toggle
     annotator.controls_window = QWidget(parent)
     annotator.controls_window.setWindowFlags(
-        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-        | Qt.WindowType.WindowStaysOnTopHint)
+        Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.Tool)
     annotator.controls_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
     annotator.controls_window.setStyleSheet("background-color: transparent;")
@@ -58,8 +61,8 @@ def create_toggle_buttons(annotator):
     # Zoom toggle (upper-right corner)
     annotator.zoom_toggle_window = QWidget(parent)
     annotator.zoom_toggle_window.setWindowFlags(
-        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-        | Qt.WindowType.WindowStaysOnTopHint)
+        Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.Tool)
     annotator.zoom_toggle_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
     annotator.zoom_toggle_window.setStyleSheet("background-color: transparent;")
@@ -107,6 +110,7 @@ def toggle_zoom_mode(annotator):
 
 def toggle_floating_controls(annotator):
     """Toggle the playback-controls floating panel."""
+    logger.debug("toggle_floating_controls")
     if (hasattr(annotator, "floating_controls_window")
             and annotator.floating_controls_window):
         try:
@@ -125,8 +129,8 @@ def _create_floating_controls(annotator):
 
     annotator.floating_controls_window = QWidget(parent)
     annotator.floating_controls_window.setWindowFlags(
-        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-        | Qt.WindowType.WindowStaysOnTopHint)
+        Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.Tool)
     annotator.floating_controls_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
     annotator.floating_controls_window.setStyleSheet("background-color: transparent;")
@@ -167,6 +171,7 @@ def _create_floating_controls(annotator):
 
 def toggle_event_buttons(annotator):
     """Toggle the floating behaviour-buttons panel."""
+    logger.debug("toggle_event_buttons")
     if (hasattr(annotator, "event_buttons_window")
             and annotator.event_buttons_window):
         try:
@@ -199,8 +204,8 @@ def _create_event_buttons(annotator):
 
     annotator.event_buttons_window = QWidget(parent)
     annotator.event_buttons_window.setWindowFlags(
-        Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-        | Qt.WindowType.WindowStaysOnTopHint)
+        Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.Tool)
     annotator.event_buttons_window.setAttribute(
         Qt.WidgetAttribute.WA_TranslucentBackground)
     annotator.event_buttons_window.setStyleSheet("background-color: transparent;")
@@ -325,7 +330,6 @@ def update_floating_visibility(annotator):
         if w is None:
             continue
         try:
-            w.winId()
             want_visible = not (should_hide or w in hidden)
             if w.isVisible() != want_visible:
                 w.setVisible(want_visible)

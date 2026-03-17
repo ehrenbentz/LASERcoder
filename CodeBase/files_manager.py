@@ -19,6 +19,7 @@ from annotations_visualizer import show_visualization_dialog
 from summary_statistics_manager import SummaryStatisticsManager
 from summary_viewer import show_table_viewer, show_boxplot_viewer
 from config_manager import get_config
+from dialogs import show_message, get_text
 import theme
 
 
@@ -64,7 +65,6 @@ class FilesManager(QDialog):
 
         self.setWindowTitle("LaserTAG - Select Output Directory and Video File")
         theme.apply_dialog_theme(self)
-        theme.stay_on_top(self)
 
         if self.parent():
             self.parent().showMaximized()
@@ -74,7 +74,7 @@ class FilesManager(QDialog):
         dialog_w = int(self._screen["width"] * 0.8)
         dialog_h = int(self._screen["height"] * 0.8)
         self.setMinimumSize(int(dialog_w * 0.8), int(dialog_h * 0.8))
-        center_window(self, dialog_w, dialog_h, self._screen)
+        self.resize(dialog_w, dialog_h)
 
     # ------------------------------------------------------------------
     # UI setup
@@ -315,7 +315,7 @@ class FilesManager(QDialog):
             QFileDialog.Option.ShowDirsOnly)
         if path:
             if self._is_backup_dir(path):
-                theme.show_message(
+                show_message(
                     self, "Backup Directory",
                     "This directory is a LaserTAG backup and "
                     "cannot be used as a project directory.")
@@ -341,7 +341,7 @@ class FilesManager(QDialog):
         path = self.output_dir_entry.text().strip()
         if os.path.isdir(path):
             if self._is_backup_dir(path):
-                theme.show_message(
+                show_message(
                     self, "Backup Directory",
                     "This directory is a LaserTAG backup and "
                     "cannot be used as a project directory.")
@@ -364,7 +364,7 @@ class FilesManager(QDialog):
         new_dir = os.path.join(self.current_output_dir, item.text())
         if os.path.isdir(new_dir):
             if self._is_backup_dir(new_dir):
-                theme.show_message(
+                show_message(
                     self, "Backup Directory",
                     "This directory is a LaserTAG backup and "
                     "cannot be used as a project directory.")
@@ -517,7 +517,7 @@ class FilesManager(QDialog):
 
     def _set_video_status(self, filename, status):
         if not self.output_dir:
-            theme.show_message(
+            show_message(
                 self, "Warning",
                 "Please select an output directory first.")
             return
@@ -533,7 +533,7 @@ class FilesManager(QDialog):
                 try:
                     os.remove(state_file)
                 except OSError as exc:
-                    theme.show_message(
+                    show_message(
                         self, "Error",
                         f"Failed to remove session state: {exc}")
                     return
@@ -564,7 +564,7 @@ class FilesManager(QDialog):
                     os.remove(temp)
                 except OSError:
                     pass
-                theme.show_message(
+                show_message(
                     self, "Error",
                     f"Failed to update session state: {exc}")
                 return
@@ -587,7 +587,7 @@ class FilesManager(QDialog):
 
     def _backup_project(self):
         if not self.output_dir:
-            theme.show_message(
+            show_message(
                 self, "Warning",
                 "Please select an output directory first.")
             return
@@ -599,7 +599,7 @@ class FilesManager(QDialog):
             return
 
         default_name = os.path.basename(self.output_dir)
-        name, ok = theme.get_text(
+        name, ok = get_text(
             self, "Backup Name",
             "Enter a name for the backup folder:",
             text=default_name)
@@ -618,7 +618,7 @@ class FilesManager(QDialog):
         try:
             shutil.copytree(self.output_dir, dest)
         except OSError as exc:
-            theme.show_message(
+            show_message(
                 self, "Error", f"Backup failed: {exc}")
             return
 
@@ -633,7 +633,7 @@ class FilesManager(QDialog):
 
         get_config().add_backup_dir(dest)
 
-        theme.show_message(
+        show_message(
             self, "Backup Complete",
             f"Project backed up to:\n{dest}",
             icon="information")
@@ -643,7 +643,7 @@ class FilesManager(QDialog):
     # ------------------------------------------------------------------
 
     def _create_directory(self):
-        name, ok = theme.get_text(
+        name, ok = get_text(
             self, "Create Directory", "Enter new directory name:")
         if ok and name:
             new_path = os.path.join(self.current_output_dir, name)
@@ -656,20 +656,20 @@ class FilesManager(QDialog):
                 self.dir_selected_label.setText(
                     f"Selected Output Directory: {self.output_dir}")
             except OSError as exc:
-                theme.show_message(
+                show_message(
                     self, "Error", f"Could not create directory: {exc}")
 
     def _delete_directory(self):
         current_item = self.output_dir_listbox.currentItem()
         if not current_item:
-            theme.show_message(
+            show_message(
                 self, "Warning", "Please select a directory to delete.")
             return
 
         dir_name = current_item.text()
         dir_path = os.path.join(self.current_output_dir, dir_name)
 
-        reply = theme.show_message(
+        reply = show_message(
             self, "Confirm Deletion",
             f"Are you sure you want to delete directory '{dir_name}'?\n"
             "This cannot be undone.",
@@ -679,7 +679,7 @@ class FilesManager(QDialog):
 
         try:
             if os.listdir(dir_path):
-                confirm = theme.show_message(
+                confirm = show_message(
                     self, "Non-empty Directory",
                     f"Directory '{dir_name}' is not empty. Delete anyway?",
                     icon="question")
@@ -688,12 +688,12 @@ class FilesManager(QDialog):
 
             shutil.rmtree(dir_path)
             self._populate_dir_list(self.current_output_dir)
-            theme.show_message(
+            show_message(
                 self, "Success",
                 f"Directory '{dir_name}' has been deleted.",
                 icon="information")
         except OSError as exc:
-            theme.show_message(
+            show_message(
                 self, "Error", f"Could not delete directory: {exc}")
 
     def _select_directory(self):
@@ -703,7 +703,7 @@ class FilesManager(QDialog):
                 self.current_output_dir, current_item.text())
             if os.path.isdir(new_dir):
                 if self._is_backup_dir(new_dir):
-                    theme.show_message(
+                    show_message(
                         self, "Backup Directory",
                         "This directory is a LaserTAG backup and "
                         "cannot be used as a project directory.")
@@ -714,7 +714,7 @@ class FilesManager(QDialog):
                 self.output_dir = new_dir
         else:
             if self._is_backup_dir(self.current_output_dir):
-                theme.show_message(
+                show_message(
                     self, "Backup Directory",
                     "This directory is a LaserTAG backup and "
                     "cannot be used as a project directory.")
@@ -733,13 +733,13 @@ class FilesManager(QDialog):
         current_item = self.video_file_listbox.currentItem()
         if current_item:
             if not self.output_dir:
-                theme.show_message(
+                show_message(
                     self, "Warning",
                     "Please select an output directory first using the "
                     "'Select Directory' button.")
                 return
             if self._is_backup_dir(self.output_dir):
-                theme.show_message(
+                show_message(
                     self, "Backup Directory",
                     "The selected output directory is a LaserTAG backup "
                     "and cannot be used as a project directory.\n\n"
@@ -749,7 +749,7 @@ class FilesManager(QDialog):
                 self.current_video_dir, current_item.text())
             self.done(QDialog.DialogCode.Accepted)
         else:
-            theme.show_message(
+            show_message(
                 self, "Note", "You must select a video file to proceed",
                 icon="information")
 
@@ -772,8 +772,7 @@ class FilesManager(QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle("View Annotations")
         theme.apply_dialog_theme(dlg)
-        theme.stay_on_top(dlg)
-        dlg.setModal(True)
+
         dlg.setMinimumWidth(400)
 
         layout = QVBoxLayout(dlg)
@@ -831,7 +830,8 @@ class FilesManager(QDialog):
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
-        dlg.exec()
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.open()
 
     def _view_annotation_file(self, parent_dlg, path, title):
         show_table_viewer(parent_dlg, path, title + " Annotations")
@@ -877,13 +877,13 @@ class FilesManager(QDialog):
                             "Notes": row.get("Notes", ""),
                         })
         except Exception as exc:
-            theme.show_message(
+            show_message(
                 parent_dlg, "Error",
                 f"Failed to read annotations: {exc}")
             return
 
         if not state_ann and not point_ann:
-            theme.show_message(
+            show_message(
                 parent_dlg, "No Annotations",
                 "No annotations found to visualize.",
                 icon="information")
@@ -941,7 +941,7 @@ class FilesManager(QDialog):
                 store=store,
             )
         except Exception as exc:
-            theme.show_message(
+            show_message(
                 parent_dlg, "Visualization Error",
                 f"Failed to create visualization: {exc}")
 
@@ -962,7 +962,7 @@ class FilesManager(QDialog):
                 and not is_os_junk(f))
 
         if not ann_files:
-            theme.show_message(
+            show_message(
                 self, "No Annotations",
                 "No annotation files found in the selected "
                 "output directory.",
@@ -972,8 +972,7 @@ class FilesManager(QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle("Delete Annotations")
         theme.apply_dialog_theme(dlg)
-        theme.stay_on_top(dlg)
-        dlg.setModal(True)
+
         dlg.setMinimumWidth(400)
 
         layout = QVBoxLayout(dlg)
@@ -1002,11 +1001,12 @@ class FilesManager(QDialog):
         btn_row.addWidget(cancel_btn)
         layout.addLayout(btn_row)
 
-        dlg.exec()
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.open()
 
     def _confirm_delete_annotations(self, parent_dlg, ann_dir,
                                     filename, display_name):
-        reply = theme.show_message(
+        reply = show_message(
             parent_dlg, "Confirm Deletion",
             f"This will delete the annotations for "
             f"'{display_name}'.\n\nAre you sure?",
@@ -1021,7 +1021,7 @@ class FilesManager(QDialog):
         try:
             os.remove(ann_path)
         except OSError as exc:
-            theme.show_message(
+            show_message(
                 parent_dlg, "Error",
                 f"Failed to delete annotations: {exc}")
             return
@@ -1037,7 +1037,7 @@ class FilesManager(QDialog):
                 except OSError:
                     pass
 
-        theme.show_message(
+        show_message(
             parent_dlg, "Deleted",
             f"Annotations for '{display_name}' have been deleted.",
             icon="information")
@@ -1060,9 +1060,11 @@ class FilesManager(QDialog):
             start_dir = self.current_output_dir
 
         try:
-            SummaryStatisticsManager(self, start_dir).exec()
+            mgr = SummaryStatisticsManager(self, start_dir)
+            mgr.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            mgr.open()
         except Exception as exc:
-            theme.show_message(
+            show_message(
                 self, "Error",
                 f"Failed to open Summary Statistics Manager: {exc}")
 
@@ -1070,8 +1072,7 @@ class FilesManager(QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle("Summary Statistics")
         theme.apply_dialog_theme(dlg)
-        theme.stay_on_top(dlg)
-        dlg.setModal(True)
+
         dlg.setMinimumWidth(360)
 
         layout = QVBoxLayout(dlg)
@@ -1123,30 +1124,33 @@ class FilesManager(QDialog):
                 view_box_btn.clicked.connect(lambda: dlg.done(5))
                 layout.addWidget(view_box_btn)
 
-        result = dlg.exec()
+        def _on_finished(result):
+            dlg.deleteLater()
+            if result == 1:
+                self._open_summary_statistics()
+            elif result == 2:
+                self._generate_boxplots_flow()
+            elif result == 3:
+                self._view_existing_summaries(ind_dir, "Individual")
+            elif result == 4:
+                self._view_existing_summaries(comb_dir, "Combined")
+            elif result == 5:
+                self._open_boxplot_viewer()
 
-        if result == 1:
-            self._open_summary_statistics()
-        elif result == 2:
-            self._generate_boxplots_flow()
-        elif result == 3:
-            self._view_existing_summaries(ind_dir, "Individual")
-        elif result == 4:
-            self._view_existing_summaries(comb_dir, "Combined")
-        elif result == 5:
-            self._open_boxplot_viewer()
+        dlg.finished.connect(_on_finished)
+        dlg.open()
 
     def _generate_boxplots_flow(self):
         """Generate combined summaries then show box plots."""
         if not self.output_dir:
-            theme.show_message(
+            show_message(
                 self, "Warning",
                 "Please select an output directory first.")
             return
 
         ann_dir = os.path.join(self.output_dir, "Annotations")
         if not os.path.isdir(ann_dir):
-            theme.show_message(
+            show_message(
                 self, "No Annotations",
                 "No Annotations folder found in the output directory.")
             return
@@ -1155,14 +1159,14 @@ class FilesManager(QDialog):
             os.path.join(ann_dir, f) for f in os.listdir(ann_dir)
             if f.endswith("_Annotations.csv") and not is_os_junk(f))
         if not ann_files:
-            theme.show_message(
+            show_message(
                 self, "No Annotations",
                 "No annotation files found.")
             return
 
         from summary_statistics import generate_summary_statistics, combine_summaries
 
-        experiment_name, ok = theme.get_text(
+        experiment_name, ok = get_text(
             self, "Experiment Name",
             "Enter a name for this experiment/analysis:")
         if not ok or not experiment_name:
@@ -1180,7 +1184,7 @@ class FilesManager(QDialog):
         combined_path = os.path.join(
             comb_dir, f"{experiment_name}_Combined_Summary.csv")
         if os.path.exists(combined_path):
-            reply = theme.show_message(
+            reply = show_message(
                 self, "Summary Exists",
                 f"A combined summary named '{experiment_name}' "
                 "already exists.\n\nOverwrite it?",
@@ -1205,7 +1209,7 @@ class FilesManager(QDialog):
                 pass
 
         if not ind_paths:
-            theme.show_message(
+            show_message(
                 self, "No Summaries",
                 "Could not generate any summary files.")
             return
@@ -1216,7 +1220,7 @@ class FilesManager(QDialog):
         try:
             combine_summaries(ind_paths, combined_path)
         except Exception as exc:
-            theme.show_message(
+            show_message(
                 self, "Error",
                 f"Error generating combined summary: {exc}")
             return
@@ -1230,7 +1234,7 @@ class FilesManager(QDialog):
             f for f in os.listdir(directory)
             if f.endswith(".csv") and not is_os_junk(f))
         if not files:
-            theme.show_message(
+            show_message(
                 self, "No Files",
                 f"No {kind.lower()} summary files found.",
                 icon="information")
@@ -1239,8 +1243,7 @@ class FilesManager(QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle(f"View {kind} Summaries")
         theme.apply_dialog_theme(dlg)
-        theme.stay_on_top(dlg)
-        dlg.setModal(True)
+
         dlg.setMinimumWidth(400)
 
         layout = QVBoxLayout(dlg)
@@ -1265,7 +1268,8 @@ class FilesManager(QDialog):
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
-        dlg.exec()
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.open()
 
     def _open_boxplot_viewer(self):
         comb_dir = ""

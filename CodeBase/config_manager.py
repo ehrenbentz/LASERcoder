@@ -4,6 +4,9 @@ import os
 import json
 from pathlib import Path
 from PySide6.QtCore import QStandardPaths, QDir
+from debug_logger import get_logger
+
+logger = get_logger()
 
 DEFAULT_VIDEO_SETTINGS = {
     "brightness": 0, "contrast": 0, "gamma": 0,
@@ -30,10 +33,13 @@ class ConfigManager:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     self.config = json.load(f)
+                logger.info("Config loaded from %s", self.config_file)
             else:
                 self.config = self.create_default_config()
+                logger.info("Created default config")
         except Exception:
             self.config = self.create_default_config()
+            logger.warning("Config load failed, using defaults")
             
         self._validate_and_update_config()
         return self.config
@@ -73,8 +79,8 @@ class ConfigManager:
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=4)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Config save failed: %s", exc)
 
     def get_output_dir(self):
         """Get the current output directory."""

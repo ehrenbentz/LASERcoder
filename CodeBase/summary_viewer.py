@@ -16,7 +16,8 @@ from PySide6.QtCharts import (
 )
 
 import theme
-from display_utils import (get_screen_geometry, center_window,
+from dialogs import show_message
+from display_utils import (get_screen_geometry,
                            generate_default_colors, make_color_icon,
                            is_os_junk)
 
@@ -55,7 +56,7 @@ def show_table_viewer(parent, csv_path, title=None):
     """Open a plain read-only spreadsheet dialog for a summary CSV."""
     rows = _load_csv(csv_path)
     if not rows:
-        theme.show_message(
+        show_message(
             parent, "Empty File",
             f"No data found in:\n{os.path.basename(csv_path)}",
             icon="information")
@@ -63,7 +64,8 @@ def show_table_viewer(parent, csv_path, title=None):
 
     clean = title or os.path.basename(csv_path).replace(".csv", "").replace("_", " ")
     dlg = _TableViewer(parent, rows, clean)
-    dlg.exec()
+    dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    dlg.open()
 
 
 class _TableViewer(QDialog):
@@ -72,12 +74,10 @@ class _TableViewer(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         theme.apply_dialog_theme(self)
-        theme.stay_on_top(self)
 
         screen = get_screen_geometry()
-        center_window(self,
-                      int(screen["width"]  * 0.85),
-                      int(screen["height"] * 0.80))
+        self.resize(int(screen["width"]  * 0.85),
+                    int(screen["height"] * 0.80))
         self.setMinimumSize(600, 400)
 
         layout = QVBoxLayout(self)
@@ -135,7 +135,8 @@ _BOXPLOT_COLS = [
 def show_boxplot_viewer(parent, combined_dir):
     """Open the combined-summary box plot viewer."""
     dlg = _BoxplotViewer(parent, combined_dir)
-    dlg.exec()
+    dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    dlg.open()
 
 
 class _BoxplotViewer(QDialog):
@@ -192,7 +193,6 @@ class _BoxplotViewer(QDialog):
 
         self.setWindowTitle("Summary Box Plots")
         theme.apply_dialog_theme(self)
-        theme.stay_on_top(self)
 
         self.setMinimumSize(720, 520)
         self.showMaximized()
@@ -739,7 +739,7 @@ class _BoxplotViewer(QDialog):
 
     def _export(self):
         if not self._chart_views:
-            theme.show_message(self, "No Figure",
+            show_message(self, "No Figure",
                                "Generate a chart first before exporting.")
             return
 
@@ -747,7 +747,6 @@ class _BoxplotViewer(QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle("Export Options")
         theme.apply_dialog_theme(dlg)
-        theme.stay_on_top(dlg)
         lay = QVBoxLayout(dlg)
 
         lay.addWidget(QLabel("Resolution (DPI):"))
@@ -767,16 +766,22 @@ class _BoxplotViewer(QDialog):
         btn_row.addWidget(cancel_btn)
         lay.addLayout(btn_row)
 
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        dpi = dpi_combo.currentData()
+        def _on_export_accepted(result):
+            dlg.deleteLater()
+            if result != QDialog.DialogCode.Accepted:
+                return
+            dpi = dpi_combo.currentData()
+            path, filt = QFileDialog.getSaveFileName(
+                self, "Export Figure", "summary_charts.png",
+                "PNG Images (*.png);;JPEG Images (*.jpg)")
+            if not path:
+                return
+            self._do_export(path, filt, dpi)
 
-        path, filt = QFileDialog.getSaveFileName(
-            self, "Export Figure", "summary_charts.png",
-            "PNG Images (*.png);;JPEG Images (*.jpg)")
-        if not path:
-            return
+        dlg.finished.connect(_on_export_accepted)
+        dlg.open()
 
+    def _do_export(self, path, filt, dpi):
         fmt = "JPG" if "jpg" in filt.lower() else "PNG"
         if fmt == "JPG" and not path.lower().endswith(".jpg"):
             path += ".jpg"
@@ -802,8 +807,8 @@ class _BoxplotViewer(QDialog):
             painter.end()
             quality = 95 if fmt == "JPG" else -1
             pm.save(path, fmt, quality)
-            theme.show_message(
+            show_message(
                 self, "Export Successful", f"Figure saved to:\n{path}",
                 icon="information")
         except Exception as exc:
-            theme.show_message(self, "Export Error", str(exc))
+            show_message(self, "Export Error", str(exc))

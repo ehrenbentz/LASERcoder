@@ -1,6 +1,6 @@
 ; LaserTAG.iss - Inno Setup Script
 ; Run from build_Windows\ directory
-; Expects compiled output in dist_Windows\LaserTAG.dist\
+; Expects compiled output in dist_Windows_v#_#_#\LaserTAG.dist\
 ;
 ; Version is set here and can be overridden from the command line:
 ;   ISCC /DAppVer=1.3.0 LaserTAG.iss
@@ -9,13 +9,15 @@
   #define AppVer "1.3.0"
 #endif
 
+#define VerUnderscored StringChange(AppVer, ".", "_")
+
 [Setup]
 AppName=LaserTAG
 AppVersion={#AppVer}
 AppPublisher=Ehren Bentz
 DefaultDirName={autopf}\LaserTAG
 DefaultGroupName=LaserTAG
-OutputDir=dist_Windows
+OutputDir=dist_Windows_x64_v{#VerUnderscored}
 OutputBaseFilename=LaserTAG_v{#AppVer}_windows_x64_setup
 PrivilegesRequired=admin
 Compression=lzma
@@ -24,7 +26,7 @@ UninstallDisplayIcon={app}\laser.ico
 UninstallDisplayName=LaserTAG
 
 [Files]
-Source: "dist_Windows\LaserTAG.dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist_Windows_x64_v{#VerUnderscored}\LaserTAG.dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "laser.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

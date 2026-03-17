@@ -7,6 +7,13 @@ import sys
 import ctypes
 
 os.environ["LC_NUMERIC"] = "C"
+os.environ["QT_LOGGING_RULES"] = "qt.qpa.window.debug=false"
+
+# --- Debug logging (set to False to disable) ---
+DEBUG_MODE = True
+from debug_logger import init_logging, get_logger
+init_logging(DEBUG_MODE)
+logger = get_logger()
 
 # Resolve the application directory (works both interpreted and Nuitka-compiled)
 if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
@@ -48,7 +55,7 @@ if sys.platform == "win32":
 import mpv
 
 import platform
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEventLoop, Signal
 from PySide6.QtWidgets import QApplication, QMainWindow, QDialog
 from pathlib import Path
 
@@ -60,15 +67,92 @@ import theme
 
 class MainWindow(QMainWindow):
     """Main window class for the LaserTAG application."""
-    
+
+    annotator_finished = Signal()
+
     def __init__(self):
         super().__init__()
         self.video_annotator = None
+        self.annotator_finished.connect(self._on_annotator_finished)
 
     def apply_theme(self):
         """Update the main window background and title bar to match the current theme."""
         self.setStyleSheet(f"background-color: {theme.color('window_bg')};")
         theme.apply_titlebar_theme(self)
+
+    # ------------------------------------------------------------------
+    # Setup / annotate cycle
+    # ------------------------------------------------------------------
+
+    def start_setup_cycle(self):
+        """Create a SetupManager and begin the setup flow."""
+        setup = SetupManager(config_manager=get_config(), parent=self)
+        setup.finished.connect(
+            lambda result: self._on_setup_finished(setup, result))
+        setup.start()
+
+    def _on_setup_finished(self, setup, result):
+        """Handle the result of the setup flow."""
+        if result == QDialog.DialogCode.Rejected and not setup.start_video_flag:
+            setup.deleteLater()
+            QApplication.instance().quit()
+            return
+
+        if setup.start_video_flag and setup.video_path and setup.event_key_file:
+            video_path = setup.video_path
+            session_state_file = setup.session_state_file
+            event_file = setup.event_key_file
+            output_dir = setup.output_dir
+
+            config = get_config()
+            config.update_output_dir(output_dir)
+            config.update_video_dir(video_path)
+
+            logger.switch_to_output_dir(output_dir)
+            logger.info("Starting annotator: video=%s output=%s",
+                        video_path, output_dir)
+
+            setup.deleteLater()
+
+            if self.init_video_annotator(
+                video_path=video_path,
+                session_state_file=session_state_file,
+                event_file=event_file,
+                output_dir=output_dir
+            ):
+                # On macOS, VideoAnnotator.__init__ already showed the
+                # parent with fullscreen presentation.  An extra show()
+                # here would reset the dock/menubar hiding.
+                if sys.platform != "darwin":
+                    self.show()
+                # Annotator runs in the single app event loop.
+                # When done, it emits annotator_finished.
+            else:
+                logger.error("Failed to initialize video annotator")
+                self.start_setup_cycle()
+        else:
+            setup.deleteLater()
+            QApplication.instance().quit()
+
+    def _on_annotator_finished(self):
+        """Clean up annotator and start a new setup cycle."""
+        if self.video_annotator:
+            self.video_annotator.hide()
+            self.video_annotator.deleteLater()
+            self.video_annotator = None
+        self.setCentralWidget(None)
+        # Restore normal window (remove FramelessWindowHint)
+        self.hide()
+        self.setWindowFlags(Qt.WindowType.Window)
+        self.apply_theme()
+        self.showMaximized()
+        QApplication.processEvents(
+            QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+        self.start_setup_cycle()
+
+    # ------------------------------------------------------------------
+    # Video annotator
+    # ------------------------------------------------------------------
 
     def init_video_annotator(self, video_path, session_state_file, event_file, output_dir):
         """Initialize the video annotator component."""
@@ -83,7 +167,8 @@ class MainWindow(QMainWindow):
             was_visible = self.isVisible()
             if was_visible:
                 self.hide()
-                QApplication.processEvents()
+                QApplication.processEvents(
+                    QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
             # Create new video annotator
             self.video_annotator = VideoAnnotator(
@@ -96,19 +181,28 @@ class MainWindow(QMainWindow):
 
             # Set as central widget
             self.setCentralWidget(self.video_annotator)
-            self.show()
+
+            # On macOS, VideoAnnotator.__init__ already showed the parent
+            # with fullscreen flags.  Calling show() again would reset the
+            # display.  On other platforms the window may still be hidden
+            # from the hide() call above.
+            if sys.platform != "darwin":
+                self.show()
             self.apply_theme()
 
+            logger.info("VideoAnnotator initialized successfully")
             return True
         except Exception as e:
-            print(f"Failed to initialize VideoAnnotator: {e}")
+            logger.exception("Failed to initialize VideoAnnotator: %s", e)
             if was_visible:
                 self.show()
             return False
 
 def main():
     """Main entry point for the LaserTAG application."""
-    try:        
+    try:
+        logger.info("LaserTAG starting")
+
         # Create Qt Application
         app = QApplication(sys.argv)
         app.setStyle('Fusion')
@@ -118,63 +212,23 @@ def main():
         theme.load_theme(config_manager.get_theme())
         app.setStyleSheet(theme.app_stylesheet())
 
-        # Create main window and show as fullscreen background
+        # Create main window and show as maximized background
         main_window = MainWindow()
         main_window.setStyleSheet(f"background-color: {theme.color('window_bg')};")
         main_window.showMaximized()
-        app.processEvents()
+        app.processEvents(
+            QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         main_window.apply_theme()
 
-        while True:
-            # Create and show SetupManager dialog
-            setup_dialog = SetupManager(config_manager=config_manager)
-            setup_result = setup_dialog.exec()
+        # Start the setup/annotate cycle and run the single event loop
+        main_window.start_setup_cycle()
+        result = app.exec()
 
-            if setup_result == QDialog.DialogCode.Rejected and not setup_dialog.start_video_flag:
-                break
+        logger.info("LaserTAG exiting normally")
+        return result
 
-            if setup_dialog.start_video_flag and setup_dialog.video_path and setup_dialog.event_key_file:
-                video_path = setup_dialog.video_path
-                session_state_file = setup_dialog.session_state_file
-                event_file = setup_dialog.event_key_file
-                output_dir = setup_dialog.output_dir
-
-                config_manager.update_output_dir(output_dir)
-                config_manager.update_video_dir(video_path)
-
-                if main_window.init_video_annotator(
-                    video_path=video_path,
-                    session_state_file=session_state_file,
-                    event_file=event_file,
-                    output_dir=output_dir
-                ):
-                    main_window.show()
-                    app.exec()
-
-                    # Clean up old video annotator before possibly looping
-                    if main_window.video_annotator:
-                        main_window.video_annotator.hide()
-                        main_window.video_annotator.deleteLater()
-                        main_window.video_annotator = None
-                    main_window.setCentralWidget(None)
-                    main_window.apply_theme()
-                    main_window.showMaximized()
-                    app.processEvents()
-
-                    # Check if we should return to file selection or exit
-                    if not getattr(main_window, '_return_to_setup', False):
-                        break
-                    main_window._return_to_setup = False
-                else:
-                    print("Failed to initialize video annotator")
-            else:
-                if not setup_dialog.start_video_flag and setup_result == QDialog.DialogCode.Rejected:
-                    break
-
-        return 0
-            
     except Exception as e:
-        print(f"An unhandled error occurred: {e}")
+        logger.critical("Unhandled error in main: %s", e, exc_info=True)
         return 1
 
 if __name__ == '__main__':

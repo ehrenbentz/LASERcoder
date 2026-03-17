@@ -5,7 +5,7 @@
 #
 # Can be run from build_LaserTAG_Linux.sh or independently:
 #   ./create_deb.sh                                                     # uses defaults
-#   ./create_deb.sh ./dist_Linux/LaserTAG.dist ./dist_Linux 1.3.1
+#   ./create_deb.sh ./dist_Linux_amd64_v1_3_1/LaserTAG.dist ./dist_Linux_amd64_v1_3_1 1.3.1
 #
 # Arguments:
 #   APP_DIR       Path to the Nuitka .dist directory
@@ -18,13 +18,14 @@ set -e
 # Version — read from current_version.txt if no argument provided
 # ==================================================================
 if [ -z "$3" ]; then
-    if [ ! -f "current_version.txt" ]; then
-        echo "ERROR: No version argument provided and current_version.txt not found."
+    VERSION_FILE="../current_version.txt"
+    if [ ! -f "$VERSION_FILE" ]; then
+        echo "ERROR: No version argument provided and current_version.txt not found at $VERSION_FILE"
         exit 1
     fi
-    APP_VERSION=$(grep '^VERSION_NUMBER=' current_version.txt | cut -d'=' -f2)
+    APP_VERSION=$(grep '^VERSION_NUMBER=' "$VERSION_FILE" | cut -d'=' -f2 | tr -d '\r')
     if [ -z "$APP_VERSION" ]; then
-        echo "ERROR: Could not parse version from current_version.txt"
+        echo "ERROR: Could not parse version from $VERSION_FILE"
         exit 1
     fi
 else
@@ -48,7 +49,8 @@ fi
 # ==================================================================
 # Arguments and configuration
 # ==================================================================
-APP_DIR="${1:-./dist_Linux/LaserTAG.dist}"
+VER_UNDERSCORED=$(echo "$APP_VERSION" | tr '.' '_')
+APP_DIR="${1:-./dist_Linux_${DEB_ARCH}_v${VER_UNDERSCORED}/LaserTAG.dist}"
 OUTPUT_DIR="${2:-$(dirname "$APP_DIR")}"
 APP_NAME="LaserTAG"
 DEB_NAME="${APP_NAME}_v${APP_VERSION}_linux_${DEB_ARCH}.deb"
@@ -61,7 +63,7 @@ if [ ! -d "$APP_DIR" ]; then
     echo "ERROR: Application directory not found at $APP_DIR"
     echo ""
     echo "Usage: $0 [APP_DIR] [OUTPUT_DIR] [APP_VERSION]"
-    echo "  APP_DIR defaults to ./dist_Linux/LaserTAG.dist"
+    echo "  APP_DIR defaults to ./dist_Linux_v${VER_UNDERSCORED}/LaserTAG.dist"
     exit 1
 fi
 
