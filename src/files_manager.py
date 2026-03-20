@@ -24,7 +24,7 @@ import theme
 
 
 class FilesManager(QDialog):
-    """Dialog for selecting output directory and video file."""
+    """Dialog for selecting output directory and video file"""
 
     def __init__(self, parent=None, initial_output_dir=str(Path.home()),
                  initial_video_dir=str(Path.home()),
@@ -76,9 +76,9 @@ class FilesManager(QDialog):
         self.setMinimumSize(int(dialog_w * 0.8), int(dialog_h * 0.8))
         self.resize(dialog_w, dialog_h)
 
-    # ------------------------------------------------------------------
+
     # UI setup
-    # ------------------------------------------------------------------
+
 
     def _setup_ui(self):
         main_layout = QHBoxLayout(self)
@@ -286,9 +286,9 @@ class FilesManager(QDialog):
         self._populate_video_dir_list(self.initial_video_dir)
         self._populate_file_list(self.initial_video_dir)
 
-    # ------------------------------------------------------------------
+
     # Directory navigation
-    # ------------------------------------------------------------------
+
 
     def _go_up(self, panel):
         if panel == "output":
@@ -384,9 +384,9 @@ class FilesManager(QDialog):
             self._populate_video_dir_list(new_dir)
             self._populate_file_list(new_dir)
 
-    # ------------------------------------------------------------------
+
     # List population
-    # ------------------------------------------------------------------
+
 
     def _populate_dir_list(self, directory):
         self.output_dir_listbox.clear()
@@ -432,7 +432,7 @@ class FilesManager(QDialog):
             pass
 
     def _get_all_video_statuses(self, filenames):
-        """Check session state JSONs for all videos at once."""
+        """Check session state JSONs for all videos at once"""
         result = {}
         if not self.output_dir:
             return result
@@ -464,7 +464,7 @@ class FilesManager(QDialog):
 
     @staticmethod
     def _status_icon(status):
-        """Create a small colored circle icon for video status."""
+        """Create a small colored circle icon for video status"""
         size = 14
         pixmap = QPixmap(QSize(size, size))
         pixmap.fill(QColor(0, 0, 0, 0))
@@ -486,9 +486,9 @@ class FilesManager(QDialog):
         painter.end()
         return QIcon(pixmap)
 
-    # ------------------------------------------------------------------
+
     # Video context menu
-    # ------------------------------------------------------------------
+
 
     def _show_video_context_menu(self, pos):
         item = self.video_file_listbox.itemAt(pos)
@@ -571,19 +571,19 @@ class FilesManager(QDialog):
 
         self._populate_file_list(self.current_video_dir)
 
-    # ------------------------------------------------------------------
+
     # Backup guard
-    # ------------------------------------------------------------------
+
 
     def _is_backup_dir(self, path):
-        """Return True if *path* is a backup directory."""
+        """Return True if *path* is a backup directory"""
         if os.path.isfile(os.path.join(path, ".no_project")):
             return True
         return get_config().is_backup_dir(path)
 
-    # ------------------------------------------------------------------
+
     # Backup project
-    # ------------------------------------------------------------------
+
 
     def _backup_project(self):
         if not self.output_dir:
@@ -638,9 +638,9 @@ class FilesManager(QDialog):
             f"Project backed up to:\n{dest}",
             icon="information")
 
-    # ------------------------------------------------------------------
+
     # Directory actions
-    # ------------------------------------------------------------------
+
 
     def _create_directory(self):
         name, ok = get_text(
@@ -725,9 +725,9 @@ class FilesManager(QDialog):
         self.dir_selected_label.setText(
             f"Selected Output Directory: {self.output_dir}")
 
-    # ------------------------------------------------------------------
+
     # Video selection
-    # ------------------------------------------------------------------
+
 
     def _select_video_file(self, _item=None):
         current_item = self.video_file_listbox.currentItem()
@@ -753,9 +753,9 @@ class FilesManager(QDialog):
                 self, "Note", "You must select a video file to proceed",
                 icon="information")
 
-    # ------------------------------------------------------------------
+
     # View annotations
-    # ------------------------------------------------------------------
+
 
     def _show_view_annotations(self):
         ann_dir = ""
@@ -945,9 +945,9 @@ class FilesManager(QDialog):
                 parent_dlg, "Visualization Error",
                 f"Failed to create visualization: {exc}")
 
-    # ------------------------------------------------------------------
+
     # Delete annotations
-    # ------------------------------------------------------------------
+
 
     def _show_delete_annotations(self):
         ann_dir = ""
@@ -1047,9 +1047,9 @@ class FilesManager(QDialog):
 
         parent_dlg.accept()
 
-    # ------------------------------------------------------------------
+
     # Summary statistics
-    # ------------------------------------------------------------------
+
 
     def _open_summary_statistics(self):
         if self.output_dir:
@@ -1141,7 +1141,7 @@ class FilesManager(QDialog):
         dlg.open()
 
     def _generate_boxplots_flow(self):
-        """Generate combined summaries then show box plots."""
+        """Generate combined summaries then show box plots"""
         if not self.output_dir:
             show_message(
                 self, "Warning",
@@ -1229,7 +1229,7 @@ class FilesManager(QDialog):
         show_boxplot_viewer(self, comb_dir)
 
     def _view_existing_summaries(self, directory, kind):
-        """Show a picker for existing summary CSVs."""
+        """Show a picker for existing summary CSVs"""
         files = sorted(
             f for f in os.listdir(directory)
             if f.endswith(".csv") and not is_os_junk(f))
@@ -1278,9 +1278,9 @@ class FilesManager(QDialog):
                 self.output_dir, "Summary", "Combined_summaries")
         show_boxplot_viewer(self, comb_dir)
 
-    # ------------------------------------------------------------------
+
     # Settings menu
-    # ------------------------------------------------------------------
+
 
     def _show_settings_menu(self):
         menu = QMenu(self)
@@ -1314,9 +1314,9 @@ class FilesManager(QDialog):
             if hasattr(w, 'apply_theme'):
                 w.apply_theme()
 
-    # ------------------------------------------------------------------
+
     # Key handling
-    # ------------------------------------------------------------------
+
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:

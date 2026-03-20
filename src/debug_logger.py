@@ -1,4 +1,4 @@
-# debug_logger.py — Singleton debug logger with crash-resilient file output
+# debug_logger.py
 
 import os
 import sys
@@ -9,7 +9,7 @@ from datetime import datetime
 
 
 class FlushFileHandler(logging.FileHandler):
-    """FileHandler that flushes after every emit for crash resilience."""
+    """FileHandler that flushes after every emit for crash resilience"""
 
     def emit(self, record):
         super().emit(record)
@@ -17,7 +17,7 @@ class FlushFileHandler(logging.FileHandler):
 
 
 class TeeStream:
-    """Redirect a stream (stdout/stderr) to both the original and a logger."""
+    """Redirect a stream (stdout/stderr) to both the original and a logger"""
 
     def __init__(self, original, logger, level=logging.INFO):
         self._original = original
@@ -53,7 +53,7 @@ class TeeStream:
 
 
 class DebugLogger:
-    """Singleton logger with two-phase file output."""
+    """Singleton logger with two-phase file output"""
 
     def __init__(self, debug_mode):
         self._debug_mode = debug_mode
@@ -104,7 +104,7 @@ class DebugLogger:
             self._orig_excepthook(exc_type, exc_value, exc_tb)
 
     def switch_to_output_dir(self, output_dir):
-        """Phase 2: copy temp log to output_dir/Debug/ and switch handler."""
+        """Phase 2: copy temp log to output_dir/Debug/ and switch handler"""
         if not self._debug_mode or self._switched:
             return
         self._switched = True
@@ -164,7 +164,7 @@ _instance = None
 
 
 def init_logging(debug_mode=False):
-    """Initialize the singleton logger. Call once at startup."""
+    """Call once at startup"""
     global _instance
     if _instance is None:
         _instance = DebugLogger(debug_mode)
@@ -172,7 +172,7 @@ def init_logging(debug_mode=False):
 
 
 def get_logger():
-    """Return the singleton logger. Returns a NullHandler logger if not initialized."""
+    """Return the logger"""
     global _instance
     if _instance is None:
         _instance = DebugLogger(False)

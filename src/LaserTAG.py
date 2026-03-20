@@ -9,7 +9,7 @@ import ctypes
 os.environ["LC_NUMERIC"] = "C"
 os.environ["QT_LOGGING_RULES"] = "qt.qpa.window.debug=false"
 
-# --- Debug logging (set to False to disable) ---
+# Debug logging (set to False to disable)
 DEBUG_MODE = True
 from debug_logger import init_logging, get_logger
 init_logging(DEBUG_MODE)
@@ -66,7 +66,7 @@ from video_annotator import VideoAnnotator
 import theme
 
 class MainWindow(QMainWindow):
-    """Main window class for the LaserTAG application."""
+    """Main window class"""
 
     annotator_finished = Signal()
 
@@ -76,23 +76,21 @@ class MainWindow(QMainWindow):
         self.annotator_finished.connect(self._on_annotator_finished)
 
     def apply_theme(self):
-        """Update the main window background and title bar to match the current theme."""
+        """Update the main window background and title bar to match the current theme"""
         self.setStyleSheet(f"background-color: {theme.color('window_bg')};")
         theme.apply_titlebar_theme(self)
 
-    # ------------------------------------------------------------------
     # Setup / annotate cycle
-    # ------------------------------------------------------------------
 
     def start_setup_cycle(self):
-        """Create a SetupManager and begin the setup flow."""
+        """Create a SetupManager and begin the setup flow"""
         setup = SetupManager(config_manager=get_config(), parent=self)
         setup.finished.connect(
             lambda result: self._on_setup_finished(setup, result))
         setup.start()
 
     def _on_setup_finished(self, setup, result):
-        """Handle the result of the setup flow."""
+        """Handle the result of the setup flow"""
         if result == QDialog.DialogCode.Rejected and not setup.start_video_flag:
             setup.deleteLater()
             QApplication.instance().quit()
@@ -120,13 +118,8 @@ class MainWindow(QMainWindow):
                 event_file=event_file,
                 output_dir=output_dir
             ):
-                # On macOS, VideoAnnotator.__init__ already showed the
-                # parent with fullscreen presentation.  An extra show()
-                # here would reset the dock/menubar hiding.
                 if sys.platform != "darwin":
                     self.show()
-                # Annotator runs in the single app event loop.
-                # When done, it emits annotator_finished.
             else:
                 logger.error("Failed to initialize video annotator")
                 self.start_setup_cycle()
@@ -135,13 +128,13 @@ class MainWindow(QMainWindow):
             QApplication.instance().quit()
 
     def _on_annotator_finished(self):
-        """Clean up annotator and start a new setup cycle."""
+        """Clean up annotator and start a new setup cycle"""
         if self.video_annotator:
             self.video_annotator.hide()
             self.video_annotator.deleteLater()
             self.video_annotator = None
         self.setCentralWidget(None)
-        # Restore normal window (remove FramelessWindowHint)
+
         self.hide()
         self.setWindowFlags(Qt.WindowType.Window)
         self.apply_theme()
@@ -150,12 +143,10 @@ class MainWindow(QMainWindow):
             QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         self.start_setup_cycle()
 
-    # ------------------------------------------------------------------
     # Video annotator
-    # ------------------------------------------------------------------
 
     def init_video_annotator(self, video_path, session_state_file, event_file, output_dir):
-        """Initialize the video annotator component."""
+        """Initialize the video annotator component"""
         try:
             # If there's an existing video_annotator, clean it up first
             if self.video_annotator:
@@ -182,10 +173,6 @@ class MainWindow(QMainWindow):
             # Set as central widget
             self.setCentralWidget(self.video_annotator)
 
-            # On macOS, VideoAnnotator.__init__ already showed the parent
-            # with fullscreen flags.  Calling show() again would reset the
-            # display.  On other platforms the window may still be hidden
-            # from the hide() call above.
             if sys.platform != "darwin":
                 self.show()
             self.apply_theme()
@@ -199,7 +186,7 @@ class MainWindow(QMainWindow):
             return False
 
 def main():
-    """Main entry point for the LaserTAG application."""
+    """Main entry point"""
     try:
         logger.info("LaserTAG starting")
 

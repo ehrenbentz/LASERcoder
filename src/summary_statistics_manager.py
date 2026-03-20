@@ -18,7 +18,7 @@ import theme
 
 
 class SummaryStatisticsManager(QDialog):
-    """Dialog for generating and combining summary statistics."""
+    """Dialog for generating and combining summary statistics"""
 
     def __init__(self, parent=None, initial_dir=str(Path.home())):
         super().__init__(parent)
@@ -41,9 +41,7 @@ class SummaryStatisticsManager(QDialog):
         self.setMinimumSize(int(dialog_w * 0.4), int(dialog_h * 0.7))
         self.resize(dialog_w, dialog_h)
 
-    # ------------------------------------------------------------------
     # UI setup
-    # ------------------------------------------------------------------
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -134,9 +132,7 @@ class SummaryStatisticsManager(QDialog):
 
         return frame
 
-    # ------------------------------------------------------------------
     # Directory navigation
-    # ------------------------------------------------------------------
 
     def _go_up(self):
         parent = os.path.dirname(self.current_dir)
@@ -212,9 +208,7 @@ class SummaryStatisticsManager(QDialog):
                 selected.append(os.path.join(self.current_dir, item.text()))
         return selected
 
-    # ------------------------------------------------------------------
     # Summary generation
-    # ------------------------------------------------------------------
 
     def _generate_individual_summaries(self):
         selected = self._get_selected_files()
@@ -385,13 +379,11 @@ class SummaryStatisticsManager(QDialog):
                 self, "Error",
                 f"Error generating combined analysis: {exc}")
 
-    # ------------------------------------------------------------------
     # Helpers
-    # ------------------------------------------------------------------
 
     def _combine_annotation_files(self, file_paths, experiment_name,
                                   combined_annotations_dir):
-        """Merge multiple annotation CSVs into a single file."""
+        """Merge multiple annotation CSVs into a single file"""
         out_path = os.path.join(
             combined_annotations_dir,
             f"{experiment_name}_Annotations_Combined.csv")
@@ -463,7 +455,7 @@ class SummaryStatisticsManager(QDialog):
 
     def _show_combined_result(self, combined_sum_path, individual_paths,
                               experiment_name, ann_name):
-        """Show result dialog with options to view summary or box plots."""
+        """Show result dialog with options to view summary or box plots"""
         from summary_viewer import show_boxplot_viewer
 
         result_dlg = QDialog(self)

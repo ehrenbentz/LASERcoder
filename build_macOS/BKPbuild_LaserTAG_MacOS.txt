@@ -5,7 +5,7 @@
 # Directory structure:
 #   LaserTAG/
 #     current_version.txt    Shared version file
-#     src/                   Python source files including LaserTAG.py
+#     CodeBase/              Python source files including LaserTAG.py
 #     build_MacOS/           This script, Icons.icns, collect_dylibs.sh,
 #                            create_dmg.sh, create_pkg.sh, Info.plist
 #       libs_arm64/          Pre-collected dylibs for Apple Silicon
@@ -14,7 +14,7 @@
 #
 # Auto-detects architecture (arm64 or x86_64) and uses the matching
 # libs and output directories. The compiled binary always references
-# libs/ (no architecture suffix) so the source stays universal.
+# libs/ (no architecture suffix) so the CodeBase stays universal.
 #
 # Prerequisites:
 #   brew install mpv (only needed if libs_<arch>/ does not exist yet)
@@ -49,14 +49,6 @@ else
 fi
 
 # ==================================================================
-# Verify Nuitka
-# ==================================================================
-if ! $PYTHON -m nuitka --version &>/dev/null; then
-    echo "ERROR: Nuitka not installed. Run: pip install nuitka"
-    exit 1
-fi
-
-# ==================================================================
 # Read version from current_version.txt
 # ==================================================================
 VERSION_FILE="../current_version.txt"
@@ -77,7 +69,7 @@ fi
 # ==================================================================
 APP_NAME="LaserTAG"
 MAIN_SCRIPT="LaserTAG.py"
-SOURCE_DIR="../src"
+CODBASE_DIR="../CodeBase"
 LIBS_DIR="./libs_${ARCH_LABEL}"
 VER_UNDERSCORED=$(echo "$APP_VERSION" | tr '.' '_')
 OUTPUT_DIR="./dist_macOS_${ARCH_LABEL}_v${VER_UNDERSCORED}"
@@ -137,14 +129,14 @@ echo ""
 # ==================================================================
 # Verify directory structure
 # ==================================================================
-if [ ! -d "$SOURCE_DIR" ]; then
-    echo "ERROR: source directory not found at $SOURCE_DIR"
+if [ ! -d "$CODBASE_DIR" ]; then
+    echo "ERROR: CodeBase directory not found at $CODBASE_DIR"
     echo "Run this script from inside LaserTAG/build_MacOS/"
     exit 1
 fi
 
-if [ ! -f "$SOURCE_DIR/$MAIN_SCRIPT" ]; then
-    echo "ERROR: $MAIN_SCRIPT not found in $SOURCE_DIR/"
+if [ ! -f "$CODBASE_DIR/$MAIN_SCRIPT" ]; then
+    echo "ERROR: $MAIN_SCRIPT not found in $CODBASE_DIR/"
     exit 1
 fi
 
@@ -181,7 +173,7 @@ rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
 # Copy Python source into output for Nuitka to compile
-cp "$SOURCE_DIR"/*.py "$OUTPUT_DIR/"
+cp "$CODBASE_DIR"/*.py "$OUTPUT_DIR/"
 
 # Copy build resources into output (libs/ without arch suffix for the binary)
 cp Icons.icns "$OUTPUT_DIR/"
@@ -199,69 +191,18 @@ find . -name '._*' -delete
 
 $PYTHON -m nuitka \
     --standalone \
-    --assume-yes-for-downloads \
-    --remove-output \
     --macos-create-app-bundle \
     --macos-app-icon=Icons.icns \
     --macos-app-name="$APP_NAME" \
     --output-filename="$APP_NAME" \
     --enable-plugin=pyside6 \
     --nofollow-import-to=PIL \
-    --nofollow-import-to=PySide6.QtWebEngineWidgets \
-    --nofollow-import-to=PySide6.QtWebEngineCore \
-    --nofollow-import-to=PySide6.QtWebEngine \
-    --nofollow-import-to=PySide6.QtWebChannel \
-    --nofollow-import-to=PySide6.QtWebSockets \
-    --nofollow-import-to=PySide6.QtQuick \
-    --nofollow-import-to=PySide6.QtQuick3D \
-    --nofollow-import-to=PySide6.QtQml \
-    --nofollow-import-to=PySide6.Qt3DCore \
-    --nofollow-import-to=PySide6.Qt3DRender \
-    --nofollow-import-to=PySide6.Qt3DInput \
-    --nofollow-import-to=PySide6.Qt3DLogic \
-    --nofollow-import-to=PySide6.Qt3DExtras \
-    --nofollow-import-to=PySide6.Qt3DAnimation \
-    --nofollow-import-to=PySide6.QtBluetooth \
-    --nofollow-import-to=PySide6.QtNfc \
-    --nofollow-import-to=PySide6.QtRemoteObjects \
-    --nofollow-import-to=PySide6.QtSensors \
-    --nofollow-import-to=PySide6.QtSerialPort \
-    --nofollow-import-to=PySide6.QtSerialBus \
-    --nofollow-import-to=PySide6.QtTest \
-    --nofollow-import-to=PySide6.QtPositioning \
-    --nofollow-import-to=PySide6.QtMultimedia \
-    --nofollow-import-to=PySide6.QtMultimediaWidgets \
-    --nofollow-import-to=PySide6.QtDesigner \
-    --nofollow-import-to=PySide6.QtHelp \
-    --nofollow-import-to=PySide6.QtSql \
-    --nofollow-import-to=PySide6.QtXml \
-    --nofollow-import-to=PySide6.QtPdf \
-    --nofollow-import-to=PySide6.QtPdfWidgets \
-    --nofollow-import-to=PySide6.QtHttpServer \
-    --nofollow-import-to=PySide6.QtSpatialAudio \
-    --nofollow-import-to=PySide6.QtTextToSpeech \
-    --nofollow-import-to=PySide6.QtVirtualKeyboard \
-    --nofollow-import-to=PySide6.QtDataVisualization \
-    --nofollow-import-to=PySide6.QtGraphs \
-    --nofollow-import-to=PySide6.QtScxml \
-    --nofollow-import-to=PySide6.QtStateMachine \
     "--include-data-files=libs/*.dylib=libs/" \
     "$MAIN_SCRIPT"
 
 # Clean up source copies (keep only build artifacts)
 rm -f *.py *.icns
 rm -rf libs
-
-# ==================================================================
-# Remove unused Qt runtime libraries not caught by --nofollow-import-to
-# ==================================================================
-echo ""
-echo "Removing unused Qt runtime libraries..."
-MACOS_DIR="${APP_BUNDLE}/Contents/MacOS"
-rm -f "${MACOS_DIR}/QtPdf" 2>/dev/null
-rm -f "${MACOS_DIR}/PySide6/qt-plugins/imageformats/libqpdf.dylib" 2>/dev/null
-rm -f "${MACOS_DIR}/Qt3DCore" 2>/dev/null
-rm -f "${MACOS_DIR}/PySide6/Qt3DCore.so" 2>/dev/null
 
 ## Replace Nuitka's auto-generated Info.plist with our custom one
 ## and stamp the version from APP_VERSION
@@ -300,6 +241,7 @@ popd > /dev/null
 # ==================================================================
 echo ""
 echo "Cleaning up..."
+rm -rf "$OUTPUT_DIR/${APP_NAME}.build"
 rm -rf "$OUTPUT_DIR/${APP_NAME}.dist"
 rm -rf "$OUTPUT_DIR/${APP_NAME}.app"
 

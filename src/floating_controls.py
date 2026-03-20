@@ -10,14 +10,9 @@ logger = get_logger()
 
 
 def create_toggle_buttons(annotator):
-    """Create the two small floating toggle buttons (behaviour grid + controls).
-
-    Attaches the windows to *annotator.floating_windows* and stores
-    references as *annotator.event_toggle_window*, etc.
-    """
     parent = annotator.parent
 
-    # Behaviour toggle
+    # Event toggle
     annotator.event_toggle_window = QWidget(parent)
     annotator.event_toggle_window.setWindowFlags(
         Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
@@ -92,7 +87,7 @@ def create_toggle_buttons(annotator):
 
 
 def toggle_zoom_mode(annotator):
-    """Toggle video zoom mode on/off."""
+    """Toggle video zoom mode on/off"""
     annotator.zoom_active = not annotator.zoom_active
 
     if annotator.zoom_active:
@@ -109,7 +104,7 @@ def toggle_zoom_mode(annotator):
 
 
 def toggle_floating_controls(annotator):
-    """Toggle the playback-controls floating panel."""
+    """Toggle the playback controls floating panel"""
     logger.debug("toggle_floating_controls")
     if (hasattr(annotator, "floating_controls_window")
             and annotator.floating_controls_window):
@@ -170,7 +165,7 @@ def _create_floating_controls(annotator):
 
 
 def toggle_event_buttons(annotator):
-    """Toggle the floating behaviour-buttons panel."""
+    """Toggle the floating event-buttons panel"""
     logger.debug("toggle_event_buttons")
     if (hasattr(annotator, "event_buttons_window")
             and annotator.event_buttons_window):
@@ -185,7 +180,7 @@ def toggle_event_buttons(annotator):
 
 
 def _custom_btn_stylesheet(hex_color):
-    """Generate a semi-transparent button stylesheet from a hex color."""
+    """Generate a semi-transparent button stylesheet from a hex color"""
     from PySide6.QtGui import QColor
     c = QColor(hex_color)
     r, g, b = c.red(), c.green(), c.blue()
@@ -214,7 +209,7 @@ def _create_event_buttons(annotator):
     main_layout.setSpacing(10)
     main_layout.setContentsMargins(10, 10, 10, 10)
 
-    # Separate behaviours by type
+    # Separate events by type
     point_events = []
     state_events = []
     for name, key, btype, _ in store.events:
@@ -287,7 +282,7 @@ def _create_event_buttons(annotator):
 
 
 def _hidden_by_settings(annotator):
-    """Return the set of floating windows the user has hidden via settings."""
+    """Return the set of floating windows the user has hidden via settings"""
     from config_manager import get_config
     cfg = get_config()
     hidden = set()
@@ -309,7 +304,7 @@ def _hidden_by_settings(annotator):
 
 
 def update_floating_visibility(annotator):
-    """Hide/show floating windows when the main window is minimised or deactivated."""
+    """Hide/show floating windows when the main window is minimised or deactivated"""
 
     is_minimized = bool(
         annotator.parent.windowState() & Qt.WindowState.WindowMinimized)

@@ -22,9 +22,7 @@ from display_utils import (get_screen_geometry,
                            is_os_junk)
 
 
-# ---------------------------------------------------------------------------
 # CSV helper
-# ---------------------------------------------------------------------------
 
 def _load_csv(path):
     try:
@@ -34,12 +32,10 @@ def _load_csv(path):
         return []
 
 
-# ===========================================================================
-# Sortable table item (numeric-aware)
-# ===========================================================================
+# Sortable table item
 
 class _NumericTableItem(QTableWidgetItem):
-    """QTableWidgetItem that sorts numerically when the text is a number."""
+    """QTableWidgetItem that sorts numerically when the text is a number"""
 
     def __lt__(self, other):
         try:
@@ -48,12 +44,10 @@ class _NumericTableItem(QTableWidgetItem):
             return self.text().lower() < other.text().lower()
 
 
-# ===========================================================================
-# 1.  Simple read-only spreadsheet viewer
-# ===========================================================================
+# Spreadsheet viewer
 
 def show_table_viewer(parent, csv_path, title=None):
-    """Open a plain read-only spreadsheet dialog for a summary CSV."""
+    """Open a plain read-only spreadsheet dialog for a summary CSV"""
     rows = _load_csv(csv_path)
     if not rows:
         show_message(
@@ -119,11 +113,8 @@ class _TableViewer(QDialog):
         layout.addLayout(btn_row)
 
 
-# ===========================================================================
-# 2.  Combined-summary bar chart viewer ("boxplots")
-# ===========================================================================
+# Combined-summary box plot viewer
 
-# Numeric columns from individual summaries for box plots (per-video values)
 _BOXPLOT_COLS = [
     ("Count",                   "Count"),
     ("Observations_per_minute", "Observations / min"),
@@ -133,7 +124,7 @@ _BOXPLOT_COLS = [
 
 
 def show_boxplot_viewer(parent, combined_dir):
-    """Open the combined-summary box plot viewer."""
+    """Open the combined-summary box plot viewer"""
     dlg = _BoxplotViewer(parent, combined_dir)
     dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     dlg.open()
@@ -202,16 +193,14 @@ class _BoxplotViewer(QDialog):
         if self._available:
             self._load_file(0)
 
-    # ------------------------------------------------------------------
     # UI construction
-    # ------------------------------------------------------------------
 
     def _build_ui(self):
         outer = QHBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
 
-        # ── Left control panel (fixed width, internally scrollable) ─────
+        # Left control panel (fixed width, internally scrollable) 
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setFixedWidth(260)
@@ -223,7 +212,7 @@ class _BoxplotViewer(QDialog):
         left_lay.setContentsMargins(4, 4, 4, 4)
         left_lay.setSpacing(6)
 
-        # ── File selector ────────────────────────────────────────────────
+        # File selector 
         file_box = QGroupBox("Summary File")
         file_lay = QVBoxLayout(file_box)
         self._file_combo = QComboBox()
@@ -241,7 +230,7 @@ class _BoxplotViewer(QDialog):
         file_lay.addWidget(self._file_combo)
         left_lay.addWidget(file_box)
 
-        # ── Calculate per ────────────────────────────────────────────────
+        # Calculate per 
         calc_box = QGroupBox("Calculate per")
         calc_lay = QVBoxLayout(calc_box)
         calc_lay.setContentsMargins(4, 4, 4, 4)
@@ -258,7 +247,7 @@ class _BoxplotViewer(QDialog):
         calc_lay.addWidget(self._rb_whole)
         left_lay.addWidget(calc_box)
 
-        # ── Events (checkboxes + order + colours) ───────────────────────
+        # Events (checkboxes + order + colors) 
         events_box = QGroupBox("Events")
         events_box_lay = QVBoxLayout(events_box)
         events_box_lay.setContentsMargins(4, 4, 4, 4)
@@ -279,7 +268,7 @@ class _BoxplotViewer(QDialog):
         events_box_lay.addWidget(self._events_scroll)
         left_lay.addWidget(events_box, 1)
 
-        # ── Columns (show / hide) ───────────────────────────────────────
+        # Columns (show / hide)
         cols_box = QGroupBox("Columns")
         cols_lay = QVBoxLayout(cols_box)
         cols_lay.setContentsMargins(4, 4, 4, 4)
@@ -301,7 +290,7 @@ class _BoxplotViewer(QDialog):
             self._col_cbs[col] = cb
         left_lay.addWidget(cols_box)
 
-        # ── Buttons ──────────────────────────────────────────────────────
+        # Buttons
         export_btn = QPushButton("Export...")
         export_btn.clicked.connect(self._export)
         left_lay.addWidget(export_btn)
@@ -313,7 +302,7 @@ class _BoxplotViewer(QDialog):
         left_scroll.setWidget(left_inner)
         outer.addWidget(left_scroll)
 
-        # ── Right: figure scroll area ────────────────────────────────────
+        # Right: figure scroll area
         self._fig_scroll = QScrollArea()
         self._fig_scroll.setWidgetResizable(True)
         self._fig_scroll.setWidget(
@@ -326,9 +315,7 @@ class _BoxplotViewer(QDialog):
         right_lay.addWidget(self._fig_scroll)
         outer.addWidget(right_frame, 1)
 
-    # ------------------------------------------------------------------
     # File loading
-    # ------------------------------------------------------------------
 
     def _load_file(self, index):
         if not self._available or index < 0 or index >= len(self._available):
@@ -373,7 +360,7 @@ class _BoxplotViewer(QDialog):
         self._generate()
 
     def _compute_whole_video_rows(self):
-        """Recompute individual summary rows ignoring coding parameters."""
+        """Recompute individual summary rows ignoring coding parameters"""
         if self._whole_computed:
             return
         self._whole_computed = True
@@ -391,9 +378,7 @@ class _BoxplotViewer(QDialog):
                 if rows:
                     self._whole_rows.extend(rows)
 
-    # ------------------------------------------------------------------
     # Calculate-per toggle
-    # ------------------------------------------------------------------
 
     def _on_calc_mode_changed(self, btn_id, checked):
         if not checked:
@@ -403,9 +388,7 @@ class _BoxplotViewer(QDialog):
             self._compute_whole_video_rows()
         self._generate()
 
-    # ------------------------------------------------------------------
-    # Event list (checkboxes + arrows + colour swatches)
-    # ------------------------------------------------------------------
+    # Event list (checkboxes + arrows + color swatches)
 
     def _on_events_select_all(self, state):
         checked = bool(state)
@@ -505,9 +488,7 @@ class _BoxplotViewer(QDialog):
         self._events_select_all.blockSignals(False)
         self._generate()
 
-    # ------------------------------------------------------------------
     # Column visibility
-    # ------------------------------------------------------------------
 
     def _on_cols_select_all(self, state):
         checked = bool(state)
@@ -526,9 +507,7 @@ class _BoxplotViewer(QDialog):
         self._cols_select_all.blockSignals(False)
         self._generate()
 
-    # ------------------------------------------------------------------
     # Figure generation — box plots from individual per-video data
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _msg_widget(text):
@@ -541,7 +520,7 @@ class _BoxplotViewer(QDialog):
         self._fig_scroll.setWidget(widget)
 
     def _active_rows(self):
-        """Return the row set matching the current calculate-per mode."""
+        """Return the row set matching the current calculate-per mode"""
         if self._use_whole_video:
             return self._whole_rows
         return self._ind_rows
@@ -549,7 +528,7 @@ class _BoxplotViewer(QDialog):
     @staticmethod
     def _compute_box_stats(values):
         """Return (lower_extreme, lower_quartile, median, upper_quartile,
-        upper_extreme) for a list of floats, or None if too few values."""
+        upper_extreme) for a list of floats, or None if too few values"""
         if not values:
             return None
         s = sorted(values)
@@ -621,7 +600,7 @@ class _BoxplotViewer(QDialog):
                 self._msg_widget("No data for the selected events and columns."))
             return
 
-        # Resolve theme colours for chart background / text
+        # Resolve theme colors for chart background / text
         chart_bg = QColor(theme.color("dialog_bg"))
         text_color = QColor(theme.color("text"))
         grid_color = QColor(theme.color("border"))
@@ -716,9 +695,7 @@ class _BoxplotViewer(QDialog):
         container_lay.addStretch()
         self._set_fig_widget(container)
 
-    # ------------------------------------------------------------------
     # Colour picking
-    # ------------------------------------------------------------------
 
     def _make_color_cb(self, event_name):
         def _pick():
@@ -733,9 +710,7 @@ class _BoxplotViewer(QDialog):
                 self._generate()
         return _pick
 
-    # ------------------------------------------------------------------
     # Export
-    # ------------------------------------------------------------------
 
     def _export(self):
         if not self._chart_views:

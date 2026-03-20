@@ -5,12 +5,10 @@ import json
 
 
 def compute_summary_rows(annotations_file, use_whole_video=False):
-    """Compute per-event summary rows from an annotation CSV.
+    """Compute per-event summary rows from an annotation CSV
 
-    Returns a list of dicts (one per event) or ``None`` when the file
-    contains no annotations.  When *use_whole_video* is ``True`` the
-    coding-start / coding-duration session parameters are ignored and
-    the full data span is used instead.
+    When use_whole_video is True the coding-start / coding-duration
+    session parameters are ignored and the full data span is used instead
     """
     base_name = os.path.basename(annotations_file)
     video_name = base_name.replace("_Annotations.csv", "")
@@ -21,7 +19,7 @@ def compute_summary_rows(annotations_file, use_whole_video=False):
     if not rows:
         return None
 
-    # --- coding parameters from session state ----------------------------
+    # coding parameters from session state
     coding_start = 0.0
     coding_duration = None
 
@@ -44,7 +42,7 @@ def compute_summary_rows(annotations_file, use_whole_video=False):
             except (json.JSONDecodeError, ValueError, OSError):
                 pass
 
-    # --- total duration from the data ------------------------------------
+    # total duration from the data
     total_duration_seconds = 0.0
     for row in rows:
         for col in ("End", "Start"):
@@ -61,14 +59,14 @@ def compute_summary_rows(annotations_file, use_whole_video=False):
                          else total_duration_seconds)
     analysis_minutes = analysis_duration / 60 if analysis_duration else 0
 
-    # --- group rows by behaviour name ------------------------------------
+    # group rows by event name 
     rows_by_name = {}
     for row in rows:
         name = row.get("Event", "").strip()
         if name:
             rows_by_name.setdefault(name, []).append(row)
 
-    # --- compute per-behaviour stats -------------------------------------
+    # per-event stats
     summary_rows = []
 
     for name, brows in rows_by_name.items():
@@ -107,7 +105,7 @@ def compute_summary_rows(annotations_file, use_whole_video=False):
 
 def generate_summary_statistics(annotations_file, custom_output_file=None):
     """
-    Generate summary statistics from an annotation CSV file.
+    Generate summary statistics from an annotation CSV file
 
     """
     summary_rows = compute_summary_rows(annotations_file)
@@ -141,7 +139,7 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
 
 def combine_summaries(summary_files, output_file):
     """
-    Combine multiple per-video summary CSVs into an aggregate summary.
+    Combine multiple per-video summary CSVs into an aggregate summary
 
     """
     all_rows = []
@@ -205,17 +203,15 @@ def combine_summaries(summary_files, output_file):
     return output_file
 
 
-# ======================================================================
 # Internal helpers
-# ======================================================================
 
 def _mean(values):
-    """Return the arithmetic mean of *values*, or 0 when empty."""
+    """Return the arithmetic mean of *values*, or 0 when empty"""
     return sum(values) / len(values) if values else 0
 
 
 def _safe_float(raw):
-    """Convert *raw* to float, returning *None* on failure."""
+    """Convert raw to float"""
     if not raw or raw == "NA":
         return None
     try:
@@ -225,7 +221,7 @@ def _safe_float(raw):
 
 
 def _infer_type(rows):
-    """Infer whether a set of annotation rows represents a State or Point."""
+    """Infer whether a set of annotation rows represents a State or Point"""
     for row in rows:
         raw = row.get("Type", "").strip()
         if raw:
@@ -239,7 +235,7 @@ def _infer_type(rows):
 
 
 def _sum_state_durations(rows, coding_start, coding_duration):
-    """Sum durations for state-behaviour rows, clipping to the coding period."""
+    """Sum durations for state-event rows, clipping to the coding period"""
     total = 0.0
     coding_end = (coding_start + coding_duration
                   if coding_duration is not None else None)

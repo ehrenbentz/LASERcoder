@@ -1,4 +1,4 @@
-# theme.py — Centralized dark/light/system theme for LaserTAG
+# theme.py
 
 import sys
 import ctypes
@@ -7,11 +7,9 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 _current_theme = "system"
-_theme_objc_cache = {}  # cached macOS ObjC bindings for apply_titlebar_theme
+_theme_objc_cache = {}
 
-# ---------------------------------------------------------------------------
-# Dark palette (matches existing hardcoded colors)
-# ---------------------------------------------------------------------------
+# Dark palette
 _DARK = {
     # Core backgrounds
     "window_bg": "#2b2b2b",
@@ -69,9 +67,7 @@ _DARK = {
     "viz_grid": "#c8c8c8",
 }
 
-# ---------------------------------------------------------------------------
 # Light palette
-# ---------------------------------------------------------------------------
 _LIGHT = {
     # Core backgrounds
     "window_bg": "#e8e8e8",
@@ -131,10 +127,7 @@ _LIGHT = {
 
 _palettes = {"dark": _DARK, "light": _LIGHT}
 
-# ---------------------------------------------------------------------------
 # System detection
-# ---------------------------------------------------------------------------
-
 def _detect_system_theme():
     if sys.platform == "darwin":
         try:
@@ -154,10 +147,7 @@ def _detect_system_theme():
             return "dark" if lightness < 128 else "light"
         return "dark"
 
-# ---------------------------------------------------------------------------
 # Public API
-# ---------------------------------------------------------------------------
-
 def load_theme(name: str):
     global _current_theme
     _current_theme = name
@@ -176,12 +166,10 @@ def color(role: str) -> str:
 def qcolor(role: str) -> QColor:
     return QColor(color(role))
 
-# ---------------------------------------------------------------------------
 # Title-bar theming (OS-level)
-# ---------------------------------------------------------------------------
 
 def _hex_to_colorref(hex_color: str) -> int:
-    """Convert '#RRGGBB' to a COLORREF (0x00BBGGRR) for the Windows DWM API."""
+    """Convert '#RRGGBB' to a COLORREF (0x00BBGGRR) for the Windows DWM API"""
     c = QColor(hex_color)
     return c.red() | (c.green() << 8) | (c.blue() << 16)
 
@@ -281,14 +269,12 @@ def apply_titlebar_theme(window) -> None:
 
 
 def apply_dialog_theme(dialog) -> None:
-    """Apply dialog stylesheet and native title-bar colors in one call."""
+    """Apply dialog stylesheet and native title-bar colors in one call"""
     dialog.setStyleSheet(dialog_stylesheet())
     apply_titlebar_theme(dialog)
 
 
-# ---------------------------------------------------------------------------
 # Stylesheet generators
-# ---------------------------------------------------------------------------
 
 def app_stylesheet() -> str:
     p = _resolved()
@@ -445,10 +431,8 @@ def groupbox_stylesheet() -> str:
         f"QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 3px; }}"
     )
 
-# ---------------------------------------------------------------------------
-# Floating-control stylesheets
-# ---------------------------------------------------------------------------
-
+color# Floating-control stylesheets
+color
 def toggle_btn_stylesheet() -> str:
     p = _resolved()
     return (

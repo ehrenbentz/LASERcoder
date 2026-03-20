@@ -29,7 +29,7 @@ def _legend_swatch(base_color):
     return QColor(base_color)
 
 class AnnotationsVisualizer(QFrame):
-    """Timeline visualization widget for annotations."""
+    """Timeline visualization widget for annotations"""
 
     def __init__(self, parent, video_name, state_events, point_events,
                  video_duration, parse_time_func, bounds=None):
@@ -58,7 +58,7 @@ class AnnotationsVisualizer(QFrame):
         self.whole_video = True
         self._apply_range()
 
-        # Active (visible) events — start with all
+        # Active (visible) events. Start with all
         self.state_events = list(self._raw_state_events)
         self.point_events = list(self._raw_point_events)
 
@@ -78,7 +78,7 @@ class AnnotationsVisualizer(QFrame):
         self.section_spacing = 14
         self.legend_row_height = 22
 
-        # Build color map from ALL events {name: QColor}
+        # Build color map from ALL events
         all_events = set()
         for e in self._all_state_events:
             if e['Event']:
@@ -98,12 +98,11 @@ class AnnotationsVisualizer(QFrame):
         self.state_event_names, self.point_event_names = self._unique_events()
         self._recalc_height()
 
-    # ------------------------------------------------------------------
+
     # Public methods
-    # ------------------------------------------------------------------
 
     def update_data(self, state_events, point_events):
-        """Re-set visible events and repaint."""
+        """Re-set visible events and repaint"""
         self.state_events = list(state_events)
         self.point_events = list(point_events)
         self.state_event_names, self.point_event_names = self._unique_events()
@@ -124,16 +123,15 @@ class AnnotationsVisualizer(QFrame):
         self.update()
 
     def set_event_order(self, state_order, point_order):
-        """Set custom display order for events and repaint."""
+        """Set custom display order for events and repaint"""
         self._state_order = list(state_order)
         self._point_order = list(point_order)
         self.state_event_names, self.point_event_names = self._unique_events()
         self._recalc_height()
         self.update()
 
-    # ------------------------------------------------------------------
+
     # Internals
-    # ------------------------------------------------------------------
 
     def _apply_range(self):
         if self.has_bounds and not self.whole_video:
@@ -154,7 +152,7 @@ class AnnotationsVisualizer(QFrame):
         self.video_duration = self.effective_duration
 
     def _unique_events(self):
-        """Return visible events in custom order."""
+        """Return visible events in custom order"""
         visible_state = {e['Event'] for e in self.state_events if e['Event']}
         visible_point = {e['Event'] for e in self.point_events if e['Event']}
         state = [n for n in self._state_order if n in visible_state]
@@ -230,9 +228,8 @@ class AnnotationsVisualizer(QFrame):
             filtered.append(adj)
         return filtered
 
-    # ------------------------------------------------------------------
+
     # Painting
-    # ------------------------------------------------------------------
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -257,7 +254,7 @@ class AnnotationsVisualizer(QFrame):
         axis_width = w - self.margin_left - self.margin_right
         tick_count = max(4, min(12, int(axis_width / 100)))
 
-        # ---- Title ----
+        # Title
         if self.show_title:
             painter.setPen(text_color)
             title_font = QFont("Arial", 16, QFont.Weight.Bold)
@@ -268,7 +265,7 @@ class AnnotationsVisualizer(QFrame):
                 self.video_name,
             )
 
-        # ---- Tracks ----
+        # Tracks
         title_h = self.title_height if self.show_title else 0
         y = self.margin_top + title_h
         track_font = QFont("Arial", 10)
@@ -399,7 +396,7 @@ class AnnotationsVisualizer(QFrame):
 
                 y += self.track_height + self.track_spacing
 
-        # ---- Time axis (X axis) at bottom of tracks ----
+        # Time axis (X axis) at bottom of tracks
         axis_y = y + 2
         tick_font = QFont("Arial", 9, QFont.Weight.Bold)
         painter.setFont(tick_font)
@@ -427,7 +424,7 @@ class AnnotationsVisualizer(QFrame):
                 self._fmt(display_time),
             )
 
-        # ---- Legend ----
+        # Legend
         if self.show_legend:
             legend_y = axis_y + self.axis_height
             self._draw_legend(painter, legend_y, w, text_color)
@@ -468,9 +465,8 @@ class AnnotationsVisualizer(QFrame):
                              name)
             x += item_w
 
-    # ------------------------------------------------------------------
+
     # Helpers
-    # ------------------------------------------------------------------
 
     def _time_to_x(self, time_value, axis_width):
         if self.video_duration <= 0:
@@ -485,9 +481,8 @@ class AnnotationsVisualizer(QFrame):
             return f"{s // 3600}:{(s % 3600) // 60:02d}:{s % 60:02d}"
         return f"{s // 60}:{s % 60:02d}"
 
-    # ------------------------------------------------------------------
+
     # Export
-    # ------------------------------------------------------------------
 
     def render_to_image(self, image_format="PNG", dpi=300):
         scale = dpi / 96.0
@@ -505,15 +500,13 @@ class AnnotationsVisualizer(QFrame):
         return image, None
 
 
-# ======================================================================
 # Dialog
-# ======================================================================
 
 def show_visualization_dialog(parent, video_name, state_events, point_events,
                               video_duration, parse_time_func, center_window_func,
                               output_dir, bounds=None, store=None,
                               on_closed=None):
-    """Create and show the visualization dialog with event selection panel."""
+    """Create and show the visualization dialog with event selection panel"""
     try:
         viz_dialog = QDialog(parent)
         theme.apply_dialog_theme(viz_dialog)
@@ -532,7 +525,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
         content_layout = QHBoxLayout()
         content_layout.setSpacing(8)
 
-        # ---- Selection panel ----
+        # Selection panel
         select_group = QGroupBox("Select Annotations")
         select_group.setFixedWidth(270)
         select_layout = QVBoxLayout(select_group)
@@ -556,18 +549,18 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                 if bname in timeline_widget._color_map:
                     timeline_widget._color_map[bname] = QColor(hex_color)
 
-        # Canonical order from the visualizer
+        # Order from the visualizer
         state_order = list(timeline_widget._state_order)
         point_order = list(timeline_widget._point_order)
 
-        # ---- Scrollable event rows ----
+        # Scrollable event rows
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        # We'll store per-event widgets and rebuild the layout on reorder
-        checkboxes = {}      # name -> QCheckBox
-        color_buttons = {}   # name -> QPushButton
+        # Store per-event widgets and rebuild the layout on reorder
+        checkboxes = {}
+        color_buttons = {}
 
         arrow_btn_style = (
             "QPushButton { border: none; padding: 0px;"
@@ -588,7 +581,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
         if store is not None:
             saved_unchecked = set(store.load_viz_unchecked())
 
-        # Create widgets for all events (state + point)
+        # Create widgets for all events
         all_names = state_order + point_order
         for name in all_names:
             cb = QCheckBox(name)
@@ -605,10 +598,10 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             color_buttons[name] = color_btn
 
         # Container widget that gets rebuilt on reorder
-        cb_container = [None]  # mutable ref
+        cb_container = [None]
 
         def build_event_list():
-            """(Re)build the scroll area contents from current order lists."""
+            """build the scroll area contents from current order lists"""
             old = cb_container[0]
             if old is not None:
                 old.setParent(None)
@@ -650,7 +643,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             cb_container[0] = container
 
         def _make_row(name, idx, order_list, section):
-            """Build a single event row: [up][down] [checkbox] [color]."""
+            """Build a single event row: [up] [down] [checkbox] [color]"""
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -685,7 +678,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             return row_widget
 
         def _move(name, section, direction):
-            """Move a event up or down within its section."""
+            """Move a event up or down within its section"""
             lst = state_order if section == "state" else point_order
             idx = lst.index(name)
             new_idx = idx + direction
@@ -700,7 +693,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
         build_event_list()
         select_layout.addWidget(scroll, 1)
 
-        # ---- Options below the event list ----
+        # Options below the event list
         saved_options = {}
         if store is not None:
             saved_options = store.load_viz_options()
@@ -748,7 +741,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
 
         content_layout.addWidget(select_group)
 
-        # ---- Timeline (in a scroll area) ----
+        # Timeline
         timeline_scroll = QScrollArea()
         timeline_scroll.setWidgetResizable(True)
         timeline_scroll.setWidget(timeline_widget)
@@ -756,7 +749,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
 
         outer.addLayout(content_layout, 1)
 
-        # ---- Interaction logic ----
+        # Interaction logic
         all_checked = [True]
         dialog_alive = [True]
 
@@ -769,7 +762,6 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             filt_point = [e for e in timeline_widget._raw_point_events
                           if e.get('Event') in checked]
             timeline_widget.update_data(filt_state, filt_point)
-            # Persist unchecked selections
             if store is not None:
                 unchecked = [n for n, cb in checkboxes.items()
                              if not cb.isChecked()]
@@ -786,7 +778,6 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                     cb.setChecked(True)
                 toggle_btn.setText("Deselect All")
                 all_checked[0] = True
-            # on_checkbox_changed fires via stateChanged, but update toggle state
             if store is not None:
                 unchecked = [n for n, cb in checkboxes.items()
                              if not cb.isChecked()]
@@ -849,7 +840,7 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                     timeline_widget.set_event_color(event_name, chosen)
                     color_buttons[event_name].setIcon(
                         make_color_icon(chosen))
-                    # Persist custom colors to session state
+                    # Save custom colors to session state
                     if store is not None:
                         custom = {}
                         for n, c in timeline_widget._color_map.items():
@@ -871,15 +862,15 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
         for name, btn in color_buttons.items():
             btn.clicked.connect(make_color_callback(name))
 
-        # Apply initial checkbox filter if any were saved as unchecked
+        # Apply initial checkbox filter
         if saved_unchecked:
             on_checkbox_changed()
-            # Update toggle button text if not all are checked
+            # Update toggle button text
             if any(not cb.isChecked() for cb in checkboxes.values()):
                 toggle_btn.setText("Select All")
                 all_checked[0] = False
 
-        # ---- Export bar ----
+        # Export bar
         export_frame = QFrame()
         export_layout = QHBoxLayout(export_frame)
 

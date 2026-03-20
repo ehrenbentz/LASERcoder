@@ -2,6 +2,7 @@
 import os
 import sys
 import csv
+import time
 import types
 import locale
 
@@ -26,7 +27,7 @@ from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, QSysInfo, QEventLoop
 from PySide6.QtGui import QColor, QOpenGLContext
 
 from display_utils import get_screen_geometry, center_window
-from progress_bar import ProgressBarWithText
+from progress_bar import ProgressBar
 from annotation_store import (
     AnnotationStore, format_time_human, format_time_machine, parse_time,
 )
@@ -49,7 +50,7 @@ logger = get_logger()
 
 
 def _fmt_current(secs):
-    """Format seconds as H:MM:SS.ss for the progress bar current time."""
+    """Format seconds as H:MM:SS.ss for the progress bar current time"""
     h = int(secs) // 3600
     m = (int(secs) % 3600) // 60
     s = secs % 60
@@ -57,7 +58,7 @@ def _fmt_current(secs):
 
 
 def _fmt_total(secs):
-    """Format seconds as H:MM:SS for the progress bar total time."""
+    """Format seconds as H:MM:SS for the progress bar total time"""
     h = int(secs) // 3600
     m = (int(secs) % 3600) // 60
     s = int(secs) % 60
@@ -65,7 +66,7 @@ def _fmt_total(secs):
 
 
 class MpvOpenGLWidget(QOpenGLWidget):
-    """OpenGL widget that lets libmpv render frames into a Qt GL surface."""
+    """OpenGL widget that lets libmpv render frames into a Qt GL surface"""
 
     _frame_ready = Signal()
 
@@ -87,7 +88,7 @@ class MpvOpenGLWidget(QOpenGLWidget):
             self._first_frame_cb()
 
     def init_mpv_render(self, player):
-        """Create the mpv render context. Widget must be visible first."""
+        """Create the mpv render context. Widget must be visible first"""
         self.player = player
 
         # Force Qt to create the native window and GL context
@@ -124,14 +125,14 @@ class MpvOpenGLWidget(QOpenGLWidget):
         self.hide()
 
     def _on_mpv_frame_ready(self):
-        """Called from mpv's decoder thread. Emit signal to repaint on GUI thread."""
+        """Called from mpv's decoder thread. Emit signal to repaint on GUI thread"""
         try:
             self._frame_ready.emit()
         except RuntimeError:
             pass
 
     def _gl_clear_black(self):
-        """Clear the framebuffer to black."""
+        """Clear the framebuffer to black"""
         funcs = QOpenGLContext.currentContext().functions()
         funcs.glClearColor(0.0, 0.0, 0.0, 1.0)
         funcs.glClear(0x00004000)  # GL_COLOR_BUFFER_BIT
@@ -156,7 +157,7 @@ class MpvOpenGLWidget(QOpenGLWidget):
             self._gl_clear_black()
 
     def cleanup(self):
-        """Free the render context. Must be called before destroying the player."""
+        """Free the render context. Must be called before destroying the player"""
         if self.render_ctx:
             self.render_ctx.update_cb = None
             self.makeCurrent()
@@ -192,6 +193,7 @@ class VideoAnnotator(QFrame):
         self._activation_pending = False
         self._suppress_floating_hide = False
         self._hide_pending = False
+        self._last_time_pos_update = 0
 
         # Event types the filter actually handles — everything else is
         # passed through immediately to avoid per-event Python overhead.
@@ -296,9 +298,7 @@ class VideoAnnotator(QFrame):
         self.point_annotations_tree.itemSelectionChanged.connect(
             self._on_point_item_selected)
 
-    # ------------------------------------------------------------------
     # Layout
-    # ------------------------------------------------------------------
 
     def _setup_layout(self):
         self.main_layout = QHBoxLayout(self)
@@ -332,7 +332,7 @@ class VideoAnnotator(QFrame):
         self.left_layout.addWidget(self.video_frame)
 
     def _reposition_floating_windows(self):
-            """Reanchor floating toggle buttons to the video frame."""
+            """Reanchor floating toggle buttons to the video frame"""
             if not hasattr(self, "video_frame") or not self.video_frame:
                 return
             video_pos = self.video_frame.mapToGlobal(QPoint(0, 0))
@@ -412,7 +412,7 @@ class VideoAnnotator(QFrame):
         self.floating_windows[:] = live
 
     def _handle_activation_deferred(self):
-        """Run once after ActivationChange events settle (debounced)."""
+        """Run once after ActivationChange events settle (debounced)"""
         self._activation_pending = False
         if self._shutting_down:
             return
@@ -428,7 +428,7 @@ class VideoAnnotator(QFrame):
                 QTimer.singleShot(400, self._commit_floating_hide)
 
     def _commit_floating_hide(self):
-        """Actually hide floating windows if still deactivated."""
+        """Actually hide floating windows if still deactivated"""
         if not self._hide_pending or self._shutting_down:
             return
         self._hide_pending = False
@@ -455,9 +455,7 @@ class VideoAnnotator(QFrame):
                 pass
         self.floating_windows[:] = live
 
-    # ------------------------------------------------------------------
     # Progress bar
-    # ------------------------------------------------------------------
 
     def _create_progress_bar(self):
         self.progress_frame = QFrame()
@@ -475,7 +473,7 @@ class VideoAnnotator(QFrame):
         self.coding_info_label.setFixedHeight(20)
         frame_layout.addWidget(self.coding_info_label)
 
-        self.progress_bar = ProgressBarWithText(
+        self.progress_bar = ProgressBar(
             self.progress_frame, annotator=self)
         self.progress_bar.setFixedSize(
             self.progress_bar_width, self.progress_bar_height)
@@ -499,6 +497,7 @@ class VideoAnnotator(QFrame):
         self.progress_bar.set_left_text(_fmt_current(current))
         self.progress_bar.set_center_text(f"({self.player.speed:.1f}x)")
         self.progress_bar.set_right_text(_fmt_total(total))
+        self.progress_bar.update()
 
     def _show_coding_end_prompt(self, current_sec):
         if self._shutting_down:
@@ -539,11 +538,8 @@ class VideoAnnotator(QFrame):
         total = self._mpv_duration
         if total <= 0:
             return
-        self.progress_bar.set_progress(current / total)
-        self.progress_bar.set_left_text(_fmt_current(current))
-        self.progress_bar.set_center_text(f"({self.player.speed:.1f}x)")
 
-        # Check coding-end
+        # Coding-end check runs at full frame rate
         if (self.coding_duration is not None
                 and self.coding_start is not None
                 and current >= self.coding_start + self.coding_duration
@@ -555,11 +551,24 @@ class VideoAnnotator(QFrame):
             self.save_session_state()
             self._auto_saving = False
             self._show_coding_end_prompt(current)
+            return
+
+        # Throttle progress bar updates
+        now = time.monotonic()
+        if now - self._last_time_pos_update < 0.0334: # Update 30 times per second
+            return
+        self._last_time_pos_update = now
+
+        self.progress_bar.set_progress(current / total)
+        self.progress_bar.set_left_text(_fmt_current(current))
+        self.progress_bar.set_center_text(f"({self.player.speed:.1f}x)")
+        self.progress_bar.update()
 
     def _on_duration_changed(self, total):
-        """Handle mpv duration property changes on the GUI thread."""
+        """Handle mpv duration property changes on the GUI thread"""
         self._mpv_duration = total
         self.progress_bar.set_right_text(_fmt_total(total))
+        self.progress_bar.update()
 
         if self.coding_duration is not None and self.coding_duration > 0:
             end_time = self.coding_start + self.coding_duration
@@ -574,6 +583,7 @@ class VideoAnnotator(QFrame):
         self.progress_bar.set_left_text("0:00:00.00")
         self.progress_bar.set_center_text("(1.0x)")
         self.progress_bar.set_right_text("0:00:00")
+        self.progress_bar.update()
 
     def on_progress_click(self, ratio):
         total = self.player.duration or 0
@@ -605,9 +615,7 @@ class VideoAnnotator(QFrame):
         else:
             self.coding_info_label.setVisible(False)
 
-    # ------------------------------------------------------------------
     # MPV player
-    # ------------------------------------------------------------------
 
     def _init_mpv_player(self):
         if not self.parent.isVisible():
@@ -618,8 +626,8 @@ class VideoAnnotator(QFrame):
         self.player = mpv.MPV(
             vo="libmpv",
             keep_open="yes",
-            log_handler=print,
-            hwdec="auto-copy",
+            log_handler=lambda *a: None,
+            hwdec="auto",
             profile="fast",
         )
         self.gl_widget.init_mpv_render(self.player)
@@ -684,9 +692,7 @@ class VideoAnnotator(QFrame):
                 w.setVisible(False)
         QTimer.singleShot(100, self._scroll_annotations_to_bottom)
 
-    # ------------------------------------------------------------------
     # Annotation panel
-    # ------------------------------------------------------------------
 
     def _create_annotation_panel(self):
         tree_font = "12px"
@@ -732,7 +738,7 @@ class VideoAnnotator(QFrame):
         self._panel_buttons = []
         self._big_buttons = []
 
-        # State behaviours
+        # State events
         sf, sl, self.state_events_tree = _make_tree(
             ["Event", "Key", "ME Group"], [0.5, 0.15, 0.25], pane_h)
         sb_header = QWidget()
@@ -752,7 +758,7 @@ class VideoAnnotator(QFrame):
         sl.addWidget(self.state_events_tree)
         main_layout.addWidget(sf)
 
-        # Point behaviours
+        # Point events
         pf, pl, self.point_events_tree = _make_tree(
             ["Event", "Key"], [0.6, 0.3], pane_h)
         lbl2 = QLabel("Point Events"); lbl2.setStyleSheet(label_style)
@@ -852,9 +858,7 @@ class VideoAnnotator(QFrame):
             lambda item: self._handle_tree_selection(
                 self.point_annotations_tree, item))
 
-    # ------------------------------------------------------------------
     # Annotation data helpers
-    # ------------------------------------------------------------------
 
     def _update_annotations(self):
         self.state_annotations_tree.clear()
@@ -913,9 +917,7 @@ class VideoAnnotator(QFrame):
             for c in range(item.columnCount()):
                 item.setBackground(c, QColor("transparent"))
 
-    # ------------------------------------------------------------------
     # Settings menu
-    # ------------------------------------------------------------------
 
     def _show_settings_menu(self):
         menu = QMenu(self.parent)
@@ -1167,7 +1169,7 @@ class VideoAnnotator(QFrame):
         dlg.open()
 
     def _apply_video_settings(self):
-        """Apply saved video settings to the player. Per-video overrides global."""
+        """Apply saved video settings to the player. Per-video overrides global"""
         per_video = self.store.load_video_settings()
         if per_video:
             settings = per_video
@@ -1255,9 +1257,7 @@ class VideoAnnotator(QFrame):
             toggle_event_buttons(self)
             toggle_event_buttons(self)
 
-    # ------------------------------------------------------------------
     # Sorting
-    # ------------------------------------------------------------------
 
     def _sort_state_annotations(self):
         self.store.state_events.sort(
@@ -1271,9 +1271,7 @@ class VideoAnnotator(QFrame):
         self.store.save_sorted_annotations()
         self._update_annotations()
 
-    # ------------------------------------------------------------------
     # Session state
-    # ------------------------------------------------------------------
 
     def save_session_state(self):
         current = self.player.time_pos
@@ -1289,7 +1287,7 @@ class VideoAnnotator(QFrame):
         return ok
 
     def _restore_active_state_events(self):
-        """Re-populate active_state_events from incomplete annotations on disk."""
+        """Re-populate active_state_events from incomplete annotations on disk"""
         name_to_key = {v: k for k, v in self.store.state_event_keys.items()}
         for evt in self.store.state_events:
             if evt["end_time"] is None and evt["start_time"] is not None:
@@ -1362,9 +1360,7 @@ class VideoAnnotator(QFrame):
             QTimer.singleShot(
                 200, lambda: self._schedule_resume(timestamp_sec))
 
-    # ------------------------------------------------------------------
     # Key bindings
-    # ------------------------------------------------------------------
 
     def _setup_key_bindings(self):
         self.parent.installEventFilter(self)
@@ -1408,9 +1404,6 @@ class VideoAnnotator(QFrame):
         if etype not in self._watched_events:
             return super().eventFilter(obj, event)
 
-        # Keyboard events can come from any focused widget — always process them.
-        # For non-keyboard events, skip widgets we don't monitor.
-        # Exception: macOS click suppression needs MouseButtonPress from any widget.
         if etype != QEvent.Type.KeyPress:
             if obj is not self.parent and obj is not self.gl_widget:
                 if not (sys.platform == "darwin"
@@ -1437,10 +1430,7 @@ class VideoAnnotator(QFrame):
         if (sys.platform == "darwin"
                 and etype == QEvent.Type.MouseButtonPress
                 and isinstance(obj, QWidget)):
-            # On macOS, clicking anywhere inside the main window (video,
-            # background, controls) can briefly drop applicationState to
-            # Inactive, triggering the floating-window hide path.  Suppress
-            # that hide for any click whose top-level window is ours.
+
             obj_window = obj.window()
             if obj_window == self.parent or obj_window in self.floating_windows:
                 self._hide_pending = False
@@ -1546,9 +1536,7 @@ class VideoAnnotator(QFrame):
 
         return super().eventFilter(obj, event)
 
-    # ------------------------------------------------------------------
-    # Behaviour handling
-    # ------------------------------------------------------------------
+    # Event handling
 
     def _handle_event_key(self, key):
         info = self.store.event_map[key]
@@ -1711,9 +1699,7 @@ class VideoAnnotator(QFrame):
             self._populate_event_trees()
         return True
 
-    # ------------------------------------------------------------------
     # Playback controls
-    # ------------------------------------------------------------------
 
     def toggle_play_pause(self):
         self.player.pause = not self.player.pause
@@ -1759,12 +1745,14 @@ class VideoAnnotator(QFrame):
             if new_rate < current:
                 self.player.command("seek", 0, "relative+exact")
             self.progress_bar.set_center_text(f"({new_rate:.1f}x)")
+            self.progress_bar.update()
 
     def _reset_speed(self):
         if self.player.speed != 1.0:
             self.player.speed = 1.0
             self.player.command("seek", 0, "relative+exact")
             self.progress_bar.set_center_text("(1.0x)")
+            self.progress_bar.update()
 
     def _reset_coding_end_flag(self):
         current = self.player.time_pos or 0
@@ -1774,9 +1762,7 @@ class VideoAnnotator(QFrame):
                 and self.coding_end_reached):
             self.coding_end_reached = False
 
-    # ------------------------------------------------------------------
     # Selection helpers
-    # ------------------------------------------------------------------
 
     def _on_state_item_selected(self):
         self.selected_treeview = self.state_annotations_tree
@@ -1800,9 +1786,7 @@ class VideoAnnotator(QFrame):
         else:
             self.selected_index = tree.indexOfTopLevelItem(item)
 
-    # ------------------------------------------------------------------
     # Context menu & annotation actions
-    # ------------------------------------------------------------------
 
     def _show_annotation_menu(self, point):
         if self.player:
@@ -1901,9 +1885,7 @@ class VideoAnnotator(QFrame):
         self._update_annotations()
         self._populate_event_trees()
 
-    # ------------------------------------------------------------------
     # Delegates to dialog module
-    # ------------------------------------------------------------------
 
     def set_coding_start(self):
         show_coding_start_dialog(self)
@@ -1914,9 +1896,7 @@ class VideoAnnotator(QFrame):
     def view_annotation_details(self):
         show_annotation_details(self)
 
-    # ------------------------------------------------------------------
     # Save helpers (point / state edit callbacks used by dialogs)
-    # ------------------------------------------------------------------
 
     def save_point_annotation(self, new_entries, dialog, selected, old_time):
         if not self.store.check_file_access():
@@ -2028,9 +2008,7 @@ class VideoAnnotator(QFrame):
                     break
         return result
 
-    # ------------------------------------------------------------------
     # Visualize annotations
-    # ------------------------------------------------------------------
 
     def visualize_annotations(self):
         was_playing = False
@@ -2135,9 +2113,7 @@ class VideoAnnotator(QFrame):
 
         return state_ann, point_ann
 
-    # ------------------------------------------------------------------
     # Event key editor
-    # ------------------------------------------------------------------
 
     def _mark_video_complete(self):
         is_complete = self._video_completed
@@ -2238,12 +2214,10 @@ class VideoAnnotator(QFrame):
                 "Error",
                 f"Failed to open event key editor: {exc}")
 
-    # ------------------------------------------------------------------
     # Error handling
-    # ------------------------------------------------------------------
 
     def _show_warning(self, title, message):
-        """Show a warning dialog above the fullscreen window."""
+        """Show a warning dialog above the fullscreen window"""
         logger.warning("Warning dialog: %s — %s", title, message)
         self.dialog_open = True
         dlg = QMessageBox(self.parent)
@@ -2282,9 +2256,7 @@ class VideoAnnotator(QFrame):
         dlg.finished.connect(_on_finished)
         dlg.open()
 
-    # ------------------------------------------------------------------
     # Cleanup
-    # ------------------------------------------------------------------
 
     def on_closing(self):
         logger.info("on_closing() started")
@@ -2413,9 +2385,7 @@ class VideoAnnotator(QFrame):
         finally:
             self._returning = False
 
-    # ------------------------------------------------------------------
     # Convenience aliases (used by floating_controls / dialogs modules)
-    # ------------------------------------------------------------------
 
     def format_time_human_readable(self, t):
         return format_time_human(t)

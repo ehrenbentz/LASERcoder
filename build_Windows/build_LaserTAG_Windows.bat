@@ -5,7 +5,7 @@ REM
 REM Directory structure:
 REM   LaserTAG\
 REM     current_version.txt    Shared version file
-REM     CodeBase\              Python source files including LaserTAG.py
+REM     src\              Python source files including LaserTAG.py
 REM     build_Windows\         This script, libmpv-2.dll, laser.ico, LaserTAG.iss
 REM       dist_Windows_x64_v#_#_#\ Created by this script (arch + version-stamped)
 REM         LaserTAG_v{ver}_windows_x64_setup.exe    Installer
@@ -22,7 +22,7 @@ setlocal enabledelayedexpansion
 
 set APP_NAME=LaserTAG
 set MAIN_SCRIPT=LaserTAG.py
-set CODBASE_DIR=..\CodeBase
+set SOURCE_DIR=..\src
 set VERSION_FILE=..\current_version.txt
 
 REM Code signing — reads cert and password from files in user home directory.
@@ -47,16 +47,31 @@ if exist "%HOME_CERT%" (
 )
 
 REM =====================================================================
+REM Verify build tools
+REM =====================================================================
+python --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ERROR: Python not found on PATH.
+    exit /b 1
+)
+
+python -m nuitka --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ERROR: Nuitka not installed. Run: pip install nuitka
+    exit /b 1
+)
+
+REM =====================================================================
 REM Verify directory structure
 REM =====================================================================
-if not exist "%CODBASE_DIR%" (
-    echo ERROR: CodeBase directory not found at %CODBASE_DIR%
+if not exist "%SOURCE_DIR%" (
+    echo ERROR: source directory not found at %SOURCE_DIR%
     echo Run this script from inside LaserTAG\build_Windows\
     exit /b 1
 )
 
-if not exist "%CODBASE_DIR%\%MAIN_SCRIPT%" (
-    echo ERROR: %MAIN_SCRIPT% not found in %CODBASE_DIR%\
+if not exist "%SOURCE_DIR%\%MAIN_SCRIPT%" (
+    echo ERROR: %MAIN_SCRIPT% not found in %SOURCE_DIR%\
     exit /b 1
 )
 
@@ -98,15 +113,6 @@ set SETUP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_setup.exe
 set ZIP_NAME=%APP_NAME%_v%APP_VERSION%_windows_x64_portable.zip
 
 REM =====================================================================
-REM Parse version components from APP_VERSION (e.g. 1.3.0)
-REM =====================================================================
-for /f "tokens=1,2,3 delims=." %%a in ("%APP_VERSION%") do (
-    set VER_MAJOR=%%a
-    set VER_MINOR=%%b
-    set VER_PATCH=%%c
-)
-
-REM =====================================================================
 REM Prepare output directory
 REM =====================================================================
 echo Preparing output directory...
@@ -117,45 +123,9 @@ if exist "%OUTPUT_DIR%" (
 )
 mkdir "%OUTPUT_DIR%"
 
-REM =====================================================================
-REM Generate version_info.txt in output directory
-REM =====================================================================
-echo Generating version_info.txt for v%APP_VERSION%...
-(
-echo # UTF-8
-echo VSVersionInfo(
-echo   ffi=FixedFileInfo(
-echo     filevers=(%VER_MAJOR%, %VER_MINOR%, %VER_PATCH%^),
-echo     prodvers=(%VER_MAJOR%, %VER_MINOR%, %VER_PATCH%^),
-echo     mask=0x3f,
-echo     flags=0x0,
-echo     OS=0x40004,
-echo     fileType=0x1,
-echo     subtype=0x0,
-echo     date=(0, 0^)
-echo     ^),
-echo   kids=[
-echo     StringFileInfo(
-echo       [
-echo       StringTable(
-echo         u'040904b0',
-echo         [StringStruct(u'CompanyName', u'Cornell University'^),
-echo         StringStruct(u'FileDescription', u'LaserTAG - Lightweight application for scoring ethology recordings and Tracking Animals Gooder'^),
-echo         StringStruct(u'FileVersion', u'%APP_VERSION%'^),
-echo         StringStruct(u'InternalName', u'LaserTAG'^),
-echo         StringStruct(u'LegalCopyright', u'Copyright 2025 Ehren Bentz. Licensed under GNU GPL v3. See https://github.com/ehrenbentz/LaserTAG'^),
-echo         StringStruct(u'OriginalFilename', u'LaserTAG.exe'^),
-echo         StringStruct(u'ProductName', u'LaserTAG'^),
-echo         StringStruct(u'ProductVersion', u'%APP_VERSION%'^)]^)
-echo       ]^),
-echo     VarFileInfo([VarStruct(u'Translation', [1033, 1200]^)^]^)
-echo   ]
-echo ^)
-) > "%OUTPUT_DIR%\version_info.txt"
-
 REM Copy Python source into output for Nuitka to compile
-echo Copying source from %CODBASE_DIR%...
-copy "%CODBASE_DIR%\*.py" "%OUTPUT_DIR%\" >nul
+echo Copying source from %SOURCE_DIR%...
+copy "%SOURCE_DIR%\*.py" "%OUTPUT_DIR%\" >nul
 
 REM Copy build resources into output
 copy "laser.ico" "%OUTPUT_DIR%\" >nul
@@ -171,11 +141,51 @@ pushd "%OUTPUT_DIR%"
 
 python -m nuitka ^
     --standalone ^
+    --assume-yes-for-downloads ^
+    --remove-output ^
     --windows-console-mode=disable ^
     --windows-icon-from-ico=laser.ico ^
     --output-filename=%APP_NAME%.exe ^
     --enable-plugin=pyside6 ^
     --nofollow-import-to=PIL ^
+    --nofollow-import-to=PySide6.QtWebEngineWidgets ^
+    --nofollow-import-to=PySide6.QtWebEngineCore ^
+    --nofollow-import-to=PySide6.QtWebEngine ^
+    --nofollow-import-to=PySide6.QtWebChannel ^
+    --nofollow-import-to=PySide6.QtWebSockets ^
+    --nofollow-import-to=PySide6.QtQuick ^
+    --nofollow-import-to=PySide6.QtQuick3D ^
+    --nofollow-import-to=PySide6.QtQml ^
+    --nofollow-import-to=PySide6.Qt3DCore ^
+    --nofollow-import-to=PySide6.Qt3DRender ^
+    --nofollow-import-to=PySide6.Qt3DInput ^
+    --nofollow-import-to=PySide6.Qt3DLogic ^
+    --nofollow-import-to=PySide6.Qt3DExtras ^
+    --nofollow-import-to=PySide6.Qt3DAnimation ^
+    --nofollow-import-to=PySide6.QtBluetooth ^
+    --nofollow-import-to=PySide6.QtNfc ^
+    --nofollow-import-to=PySide6.QtRemoteObjects ^
+    --nofollow-import-to=PySide6.QtSensors ^
+    --nofollow-import-to=PySide6.QtSerialPort ^
+    --nofollow-import-to=PySide6.QtSerialBus ^
+    --nofollow-import-to=PySide6.QtTest ^
+    --nofollow-import-to=PySide6.QtPositioning ^
+    --nofollow-import-to=PySide6.QtMultimedia ^
+    --nofollow-import-to=PySide6.QtMultimediaWidgets ^
+    --nofollow-import-to=PySide6.QtDesigner ^
+    --nofollow-import-to=PySide6.QtHelp ^
+    --nofollow-import-to=PySide6.QtSql ^
+    --nofollow-import-to=PySide6.QtXml ^
+    --nofollow-import-to=PySide6.QtPdf ^
+    --nofollow-import-to=PySide6.QtPdfWidgets ^
+    --nofollow-import-to=PySide6.QtHttpServer ^
+    --nofollow-import-to=PySide6.QtSpatialAudio ^
+    --nofollow-import-to=PySide6.QtTextToSpeech ^
+    --nofollow-import-to=PySide6.QtVirtualKeyboard ^
+    --nofollow-import-to=PySide6.QtDataVisualization ^
+    --nofollow-import-to=PySide6.QtGraphs ^
+    --nofollow-import-to=PySide6.QtScxml ^
+    --nofollow-import-to=PySide6.QtStateMachine ^
     --include-data-files=libmpv-2.dll=libmpv-2.dll ^
     --include-data-files=laser.ico=laser.ico ^
     --windows-file-version=%APP_VERSION% ^
@@ -203,7 +213,13 @@ echo Cleaning up staged files...
 del "%OUTPUT_DIR%\*.py" >nul 2>&1
 del "%OUTPUT_DIR%\laser.ico" >nul 2>&1
 del "%OUTPUT_DIR%\libmpv-2.dll" >nul 2>&1
-del "%OUTPUT_DIR%\version_info.txt" >nul 2>&1
+
+REM =====================================================================
+REM Remove unused Qt runtime libraries not caught by --nofollow-import-to
+REM =====================================================================
+echo Removing unused Qt runtime libraries...
+del "%OUTPUT_DIR%\%APP_NAME%.dist\qt6pdf.dll" >nul 2>&1
+del "%OUTPUT_DIR%\%APP_NAME%.dist\PySide6\qt-plugins\imageformats\qpdf.dll" >nul 2>&1
 
 REM =====================================================================
 REM Code signing
@@ -231,15 +247,27 @@ REM Create installer with Inno Setup (if available)
 REM =====================================================================
 echo.
 echo Creating installer...
-
 set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist %ISCC% (
     if exist "LaserTAG.iss" (
-        %ISCC% /DAppVer=%APP_VERSION% "LaserTAG.iss"
+        if defined CERT_FILE if defined CERT_PASS (
+            %ISCC% /DSignEnabled "/Smysign=signtool.exe sign /f !CERT_FILE! /p !CERT_PASS! /fd sha256 /td sha256 /tr http://timestamp.digicert.com $f" /DAppVer=%APP_VERSION% "LaserTAG.iss"
+        ) else (
+            %ISCC% /DAppVer=%APP_VERSION% "LaserTAG.iss"
+        )
         if !errorlevel! neq 0 (
             echo WARNING: Inno Setup compilation failed.
         ) else (
             echo Installer created: %OUTPUT_DIR%\%SETUP_NAME%
+            if defined CERT_FILE if defined CERT_PASS (
+                echo Signing installer...
+                signtool.exe sign /f "%CERT_FILE%" /p !CERT_PASS! /fd sha256 /td sha256 /tr http://timestamp.digicert.com /a "%OUTPUT_DIR%\%SETUP_NAME%"
+                if !errorlevel! neq 0 (
+                    echo WARNING: Installer signing failed.
+                ) else (
+                    echo Installer signed successfully.
+                )
+            )
         )
     ) else (
         echo WARNING: LaserTAG.iss not found. Skipping installer creation.
@@ -267,14 +295,10 @@ if %errorlevel% neq 0 (
 )
 
 REM =====================================================================
-REM Clean up build and distribution directories
+REM Clean up distribution directory
 REM =====================================================================
 echo.
 echo Cleaning up...
-if exist "%OUTPUT_DIR%\%APP_NAME%.build" (
-    echo Removing build directory...
-    rmdir /s /q "%OUTPUT_DIR%\%APP_NAME%.build"
-)
 if exist "%OUTPUT_DIR%\%APP_NAME%.dist" (
     echo Removing distribution directory...
     rmdir /s /q "%OUTPUT_DIR%\%APP_NAME%.dist"

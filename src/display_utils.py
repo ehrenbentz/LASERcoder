@@ -27,11 +27,10 @@ _OS_JUNK_PREFIXES = ("._", "~", ".Trash-")
 
 
 def is_os_junk(name):
-    """Return True if *name* is an OS-generated metadata/index file."""
+    """Return True if name is an OS metadata/index file"""
     if name in _OS_JUNK_FILES or name.lower() in _OS_JUNK_FILES:
         return True
     return any(name.startswith(p) for p in _OS_JUNK_PREFIXES)
-
 
 # Keep the old name as an alias for backward compatibility
 is_macos_resource_fork = is_os_junk
@@ -39,7 +38,6 @@ is_macos_resource_fork = is_os_junk
 
 def get_screen_geometry():
     """Return the available screen geometry for the primary monitor.
-
     Returns a dict with keys: width, height, x, y, scaling_factor.
     """
     app = QApplication.instance() or QApplication([])
@@ -56,7 +54,7 @@ def get_screen_geometry():
 
 
 def center_window(window, width, height, screen_info=None):
-    """Center *window* on the primary screen, clamping to available space."""
+    """Center *window* on the primary screen"""
     if screen_info is None:
         screen_info = get_screen_geometry()
 
@@ -65,7 +63,6 @@ def center_window(window, width, height, screen_info=None):
     avail_x = screen_info["x"]
     avail_y = screen_info["y"]
 
-    # Clamp to available space
     width = min(width, int(avail_w * 0.95))
     height = min(height, int(avail_h * 0.95))
 
@@ -92,7 +89,6 @@ _HUE_OFFSET = 30.0
 
 
 def generate_default_colors(event_names):
-    """Generate distinct colors for a set of event names using golden-angle hue spacing."""
     cmap = {}
     for i, name in enumerate(sorted(event_names)):
         hue = (_HUE_OFFSET + i * _HUE_ANGLE) % 360
@@ -102,7 +98,6 @@ def generate_default_colors(event_names):
 
 
 def make_color_icon(color, size=16):
-    """Create a small colored rounded-rect icon."""
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)

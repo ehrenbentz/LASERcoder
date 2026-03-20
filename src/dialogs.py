@@ -21,24 +21,15 @@ def _apply_dialog_theme(dialog):
 
 
 def _cleanup_dialog(dlg, annotator):
-    """Clean up after a dialog closes."""
+    """Clean up after a dialog closes"""
     logger.debug("Dialog cleanup: %s", dlg.windowTitle())
     dlg.deleteLater()
 
 
-
-
-
-# ======================================================================
 # Coding-start / duration dialog
-# ======================================================================
 
 def show_coding_start_dialog(annotator):
-    """Present the "Set Coding Start and Duration" dialog.
-
-    Modifies annotator.coding_start / coding_duration / coding_end
-    directly when the user clicks Save.
-    """
+    """Present the "Set Coding Start and Duration" dialog"""
     was_playing = False
     if hasattr(annotator, "player") and annotator.player:
         was_playing = not annotator.player.pause
@@ -263,12 +254,12 @@ def show_coding_start_dialog(annotator):
     dialog.open()
 
 
-# ======================================================================
+
 # Add-note dialog
-# ======================================================================
+
 
 def show_note_dialog(annotator):
-    """Show dialog to add/edit a note on the selected annotation."""
+    """Show dialog to add/edit a note on the selected annotation"""
     if not hasattr(annotator, "selected_treeview") or not annotator.selected_item:
         return
 
@@ -341,12 +332,12 @@ def show_note_dialog(annotator):
     dlg.open()
 
 
-# ======================================================================
+
 # View annotation details
-# ======================================================================
+
 
 def show_annotation_details(annotator):
-    """Display a read-only details dialog for the selected annotation."""
+    """Display a read-only details dialog for the selected annotation"""
     if not hasattr(annotator, "selected_treeview") or not annotator.selected_item:
         return
 
@@ -433,12 +424,12 @@ def show_annotation_details(annotator):
     dlg.open()
 
 
-# ======================================================================
+
 # Comprehensive edit dialog
-# ======================================================================
+
 
 def show_comprehensive_edit(annotator, annotation, annotation_type):
-    """Open a combined timing + notes edit dialog."""
+    """Open a combined timing + notes edit dialog"""
     if not annotator.store.check_file_access():
         if hasattr(annotator, "player") and annotator.player:
             annotator.player.pause = True
@@ -551,12 +542,12 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
     dlg.open()
 
 
-# ======================================================================
+
 # Simple edit dialogs (point / state)
-# ======================================================================
+
 
 def show_edit_point_dialog(annotator):
-    """Edit a point annotation's name and time."""
+    """Edit a point annotation's name and time"""
     if annotator.store.active_state_events if hasattr(annotator.store, 'active_state_events') else annotator.active_state_events:
         show_message(annotator, "Active Annotation",
                            "Please end the active state before editing.")
@@ -614,7 +605,7 @@ def show_edit_point_dialog(annotator):
 
 
 def show_video_settings_dialog(annotator):
-    """Show a dialog to adjust MPV video display properties."""
+    """Show a dialog to adjust MPV video display properties"""
     PROPS = ("brightness", "contrast", "gamma", "saturation", "hue")
 
     # Snapshot current player values for Cancel rollback
@@ -690,7 +681,7 @@ def show_video_settings_dialog(annotator):
     layout.addWidget(btn_frame)
 
     def _load_scope_values(settings):
-        """Load settings dict into sliders and update player preview."""
+        """Load settings dict into sliders and update player preview"""
         for prop in PROPS:
             val = int(settings.get(prop, 0)) if settings else 0
             sliders[prop].blockSignals(True)
@@ -753,7 +744,7 @@ def show_video_settings_dialog(annotator):
 
 
 def show_edit_state_dialog(annotator):
-    """Edit a state annotation's name, start, and end time."""
+    """Edit a state annotation's name, start, and end time"""
     if annotator.selected_index is None:
         return
     if not annotator.store.check_file_access():
@@ -813,19 +804,11 @@ def show_edit_state_dialog(annotator):
     dlg.open()
 
 
-# ======================================================================
-# Themed message box and input dialog
-# ======================================================================
+
+# Message box and input dialog
 
 def show_message(parent, title, text, icon="warning", callback=None):
-    """Show a themed QMessageBox.
-
-    If *callback* is provided, uses open() (window-modal, non-blocking).
-    The callback receives the QMessageBox result as its argument.
-
-    If *callback* is None, falls back to exec() (application-modal, blocking)
-    for callsites not yet migrated.
-    """
+    """Show a themed QMessageBox"""
     icons = {
         "warning": QMessageBox.Icon.Warning,
         "critical": QMessageBox.Icon.Critical,
@@ -850,18 +833,13 @@ def show_message(parent, title, text, icon="warning", callback=None):
         dlg.finished.connect(_on_finished)
         dlg.open()
     else:
-        # Sync fallback for callers that haven't migrated to callbacks
         result = dlg.exec()
         dlg.deleteLater()
         return result
 
 
 def get_text(parent, title, label, text="", callback=None):
-    """Show a themed input dialog.
-
-    If *callback* is provided, uses open() and calls callback(text, ok).
-    If *callback* is None, falls back to exec() and returns (text, ok).
-    """
+    """Show a input dialog"""
     dlg = QDialog(parent)
     dlg.setWindowTitle(title)
     _apply_dialog_theme(dlg)
@@ -886,7 +864,7 @@ def get_text(parent, title, label, text="", callback=None):
         dlg.finished.connect(_on_finished)
         dlg.open()
     else:
-        # Sync fallback for callers that haven't migrated to callbacks
+        # Fallback
         ok = dlg.exec() == QDialog.DialogCode.Accepted
         result = line.text()
         dlg.deleteLater()

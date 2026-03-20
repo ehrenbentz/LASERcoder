@@ -1,11 +1,11 @@
-"""Platform-specific fullscreen helpers."""
+"""Platform-specific fullscreen helpers"""
 import sys
 import ctypes
 import ctypes.util
 
 
 def _get_nsapp():
-    """Get the NSApplication shared instance via the Objective-C runtime."""
+    """Get the NSApplication shared instance via the Objective-C runtime"""
     objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
     objc.objc_getClass.restype = ctypes.c_void_p
     objc.sel_registerName.restype = ctypes.c_void_p
@@ -20,7 +20,7 @@ def _get_nsapp():
 
 
 def enter_fullscreen_platform():
-    """Hide dock and menu bar on macOS. No-op on other platforms."""
+    """Hide dock and menu bar on macOS. No-op on other platforms"""
     if sys.platform != "darwin":
         return
     try:
@@ -37,7 +37,7 @@ def enter_fullscreen_platform():
 
 
 def exit_fullscreen_platform():
-    """Restore dock and menu bar on macOS. No-op on other platforms."""
+    """Restore dock and menu bar on macOS. No-op on other platforms"""
     if sys.platform != "darwin":
         return
     try:

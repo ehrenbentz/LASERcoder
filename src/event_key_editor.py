@@ -15,7 +15,7 @@ from dialogs import show_message, get_text
 import theme
 
 class EventKeyEditor(QDialog):
-    """Dialog for editing event key definitions."""
+    """Dialog for editing event key definitions"""
 
     def __init__(self, parent, event_key_dir, on_start_video, on_cancel,
                  config_manager):
@@ -53,9 +53,9 @@ class EventKeyEditor(QDialog):
 
         self._initialize_event_key()
 
-    # ------------------------------------------------------------------
+
     # UI setup
-    # ------------------------------------------------------------------
+
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -206,9 +206,9 @@ class EventKeyEditor(QDialog):
 
         return frame
 
-    # ------------------------------------------------------------------
+
     # Event key file management
-    # ------------------------------------------------------------------
+
 
     def _initialize_event_key(self):
         files = self._get_event_files()
@@ -236,7 +236,7 @@ class EventKeyEditor(QDialog):
             QTimer.singleShot(100, self._prompt_no_event_key)
 
     def _prompt_no_event_key(self):
-        """Show a dialog when no event key files exist."""
+        """Show a dialog when no event key files exist"""
         dlg = QDialog(self)
         dlg.setWindowTitle("No Event Key Found")
         theme.apply_dialog_theme(dlg)
@@ -272,7 +272,7 @@ class EventKeyEditor(QDialog):
         dlg.open()
 
     def _load_event_key_file(self):
-        """Import an existing event key CSV via a system file dialog."""
+        """Import an existing event key CSV via a system file dialog"""
         path, _ = QFileDialog.getOpenFileName(
             self, "Load Event Key File", "",
             "Event Key Files (*.csv);;All Files (*)")
@@ -381,9 +381,9 @@ class EventKeyEditor(QDialog):
             self._update_entries()
             self.config_manager.update_last_event_key(filename)
 
-    # ------------------------------------------------------------------
+
     # File operations
-    # ------------------------------------------------------------------
+
 
     def _new_event_key_file(self):
         if self._new_dialog_open:
@@ -601,9 +601,9 @@ class EventKeyEditor(QDialog):
                 self, "Error", f"Error saving events: {exc}")
             return False
 
-    # ------------------------------------------------------------------
+
     # Start / cancel
-    # ------------------------------------------------------------------
+
 
     def _start_video(self):
         if not any(e.text().strip() for e in self._name_entries):
@@ -688,9 +688,8 @@ class EventKeyEditor(QDialog):
             ])
         return result
 
-    # ------------------------------------------------------------------
+
     # Window events
-    # ------------------------------------------------------------------
 
     def closeEvent(self, event):
         event.ignore()
@@ -710,9 +709,9 @@ class EventKeyEditor(QDialog):
         else:
             super().keyPressEvent(event)
 
-    # ------------------------------------------------------------------
+
     # File access helpers
-    # ------------------------------------------------------------------
+
 
     def _check_file_access(self, path, for_writing=False):
         try:
@@ -741,7 +740,7 @@ class EventKeyEditor(QDialog):
 
 
 def _remove_temp(path):
-    """Silently remove a temporary file if it exists."""
+    """Silently remove a temporary file if it exists"""
     try:
         if os.path.exists(path):
             os.remove(path)

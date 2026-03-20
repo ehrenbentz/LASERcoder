@@ -25,7 +25,7 @@ class AnnotationStore:
         self.state_events = []
         self.point_events = []
 
-        # Behaviour definitions
+        # Event definitions
         self.events = []
         self.state_event_keys = {}   # key -> name
         self.point_event_keys = {}   # key -> name
@@ -38,12 +38,11 @@ class AnnotationStore:
         "Manual_Edit", "Notes",
     ]
 
-    # ------------------------------------------------------------------
-    # Behaviour definitions
-    # ------------------------------------------------------------------
+    
+    # Event definitions
 
     def load_events(self):
-        """Read behaviour key CSV and populate lookup structures."""
+        """Read event key CSV and populate lookup structures"""
         logger.info("Loading events from %s", self.event_key_file)
         self.events.clear()
         self.state_event_keys.clear()
@@ -73,12 +72,12 @@ class AnnotationStore:
                 self.event_map[key] = {"Event": name, "Type": btype.capitalize()}
                 self.events.append((name, key, btype, me_group))
 
-    # ------------------------------------------------------------------
+    
     # Annotation CSV
-    # ------------------------------------------------------------------
+    
 
     def load_annotations(self):
-        """Read annotations CSV into *state_events* and *point_events*."""
+        """Read annotations CSV into state_events and point_events"""
         logger.info("Loading annotations from %s", self.annotations_file)
         self.state_events.clear()
         self.point_events.clear()
@@ -116,7 +115,7 @@ class AnnotationStore:
                     })
 
     def append_annotation(self, record):
-        """Append a single annotation record to the CSV file.
+        """Append a single annotation record to the CSV file using atomic writes.
 
         """
         try:
@@ -147,7 +146,7 @@ class AnnotationStore:
             return False
 
     def save_sorted_annotations(self):
-        """Rewrite the full annotations CSV from in-memory data.
+        """Rewrite the full annotations CSV.
 
         """
         try:
@@ -195,13 +194,8 @@ class AnnotationStore:
                     pass
             return False
 
-    # ------------------------------------------------------------------
-    # Session state JSON
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Session state file (shared read/write helper)
-    # ------------------------------------------------------------------
+    
+    # Session state file (shared read/write helper)    
 
     def _session_state_path(self):
         return os.path.join(
@@ -209,9 +203,9 @@ class AnnotationStore:
             f"{self.video_name}_session_state.json")
 
     def _merge_and_write(self, updates):
-        """Read session state JSON, merge updates, write back with indentation.
+        """
+        Read session state JSON, merge updates, write back with indentation
 
-        Returns True on success.
         """
         path = self._session_state_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -242,9 +236,9 @@ class AnnotationStore:
 
     def save_session_state(self, current_time, coding_start, coding_duration,
                            coding_end, coding_end_reached):
-        """Persist the current session state to JSON.
-
-        Returns True on success.
+        """
+        Persist the current session state to JSON
+.
         """
         if current_time is None or current_time <= 0:
             return False
@@ -258,7 +252,7 @@ class AnnotationStore:
         })
 
     def load_session_state(self):
-        """Load session state from JSON."""
+        """Load session state from JSON"""
         path = self._session_state_path()
 
         if not os.path.exists(path):
@@ -290,16 +284,13 @@ class AnnotationStore:
         return result
 
     def mark_completed(self):
-        """Mark the current video as completed in the session state."""
         return self._merge_and_write({"completed": True})
 
     def unmark_completed(self):
-        """Remove the completed mark from the session state."""
         return self._merge_and_write({"completed": False})
 
-    # ------------------------------------------------------------------
-    # Visualization settings (stored in the same session state JSON)
-    # ------------------------------------------------------------------
+    
+    # Visualization settings
 
     def _read_session_key(self, key, default):
         path = self._session_state_path()
@@ -313,48 +304,44 @@ class AnnotationStore:
         return data.get(key, default)
 
     def save_viz_colors(self, color_map):
-        """Save event color selections {name: hex_string}."""
+        """Save event color selections {name: hex_string}"""
         self._merge_and_write({"viz_event_colors": color_map})
 
     def load_viz_colors(self):
-        """Load saved event colors. Returns {name: hex_string} or {}."""
+        """Load saved event colors. Returns {name: hex_string} or {}"""
         return self._read_session_key("viz_event_colors", {})
 
     def save_viz_unchecked(self, unchecked_list):
-        """Save list of unchecked event names."""
+        """Save list of unchecked event names"""
         self._merge_and_write({"viz_unchecked_events": unchecked_list})
 
     def load_viz_unchecked(self):
-        """Load list of unchecked event names. Returns [] if none."""
+        """Load list of unchecked event names. Returns [] if none"""
         return self._read_session_key("viz_unchecked_events", [])
 
     def save_video_settings(self, settings):
-        """Save per-video display settings (brightness, contrast, etc.)."""
+        """Save per-video display settings (brightness, contrast, etc.)"""
         self._merge_and_write({"video_settings": settings})
 
     def load_video_settings(self):
-        """Load per-video display settings. Returns None if not set."""
+        """Load per-video display settings. Returns None if not set"""
         return self._read_session_key("video_settings", None)
 
     def save_viz_options(self, options):
-        """Save visualization option checkboxes {name: bool}."""
+        """Save visualization option checkboxes {name: bool}"""
         self._merge_and_write({"viz_options": options})
 
     def load_viz_options(self):
-        """Load visualization option checkboxes. Returns {} if none."""
+        """Load visualization option checkboxes. Returns {} if none"""
         return self._read_session_key("viz_options", {})
 
-    # ------------------------------------------------------------------
+    
     # File access check
-    # ------------------------------------------------------------------
 
     def check_file_access(self):
         """Return True if the annotations file can be read and written.
 
-        Checks that the parent directory still exists first — on macOS,
-        file operations on a disconnected external volume can block
-        indefinitely, so we verify the directory is reachable before
-        attempting any I/O.
+        Checks that the parent directory still exists first.
         """
         try:
             logger.debug("Checking file access: %s", self.annotations_file)
@@ -375,32 +362,27 @@ class AnnotationStore:
             return False
 
 
-# ======================================================================
-# Module-level time helpers (used by AnnotationStore and VideoAnnotator)
-# ======================================================================
+
+# Module-level time helpers used by AnnotationStore and VideoAnnotator
 
 def format_time_human(elapsed):
-    """Format seconds as ``Xm Y.YYs``."""
+    """Format seconds as ``Xm Y.YYs``"""
     minutes, seconds = divmod(float(elapsed), 60)
     return f"{int(minutes)}m{seconds:04.2f}s"
 
 
 def format_time_machine(elapsed):
-    """Format seconds as a decimal string with two decimals."""
+    """Format seconds as a decimal string with two decimals"""
     return f"{float(elapsed):.2f}"
 
 
 def parse_time(time_str):
-    """Parse a human-readable time string (``Xm Y.YYs``) into seconds."""
+    """Parse a human-readable time string (``Xm Y.YYs``) into seconds"""
     if "m" in time_str and "s" in time_str:
         m, s = time_str.split("m")
         return int(m) * 60 + float(s.rstrip("s"))
     return float(time_str)
 
-
-# ======================================================================
-# Internal helpers
-# ======================================================================
 
 def _safe_float(value, default):
     if value is None or value == "null":

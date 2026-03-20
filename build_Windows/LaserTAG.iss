@@ -1,32 +1,60 @@
 ; LaserTAG.iss - Inno Setup Script
 ; Run from build_Windows\ directory
-; Expects compiled output in dist_Windows_v#_#_#\LaserTAG.dist\
+; Expects compiled output in dist_Windows_x64_v#_#_#\LaserTAG.dist\
 ;
-; Version is set here and can be overridden from the command line:
-;   ISCC /DAppVer=1.3.0 LaserTAG.iss
+; Version and signing are passed from the command line by the build script:
+;   ISCC /DAppVer=1.3.0 /DSignEnabled /Smysign=<signcmd> LaserTAG.iss
+;
+; If AppVer is not defined, version-specific fields are omitted.
+; If SignEnabled is not defined, code signing directives are omitted.
 
-#ifndef AppVer
-  #define AppVer "1.3.0"
+#ifdef AppVer
+  #define VerUnderscored StringChange(AppVer, ".", "_")
 #endif
-
-#define VerUnderscored StringChange(AppVer, ".", "_")
 
 [Setup]
 AppName=LaserTAG
+AppId={{E8F1A3B7-4C2D-4F6E-9A1B-3D5E7F9C2A4B}
+#ifdef AppVer
 AppVersion={#AppVer}
+VersionInfoVersion={#AppVer}
+VersionInfoProductVersion={#AppVer}
+#endif
 AppPublisher=Ehren Bentz
+AppPublisherURL=https://github.com/ehrenbentz/LaserTAG
+AppSupportURL=https://github.com/ehrenbentz/LaserTAG/issues
 DefaultDirName={autopf}\LaserTAG
 DefaultGroupName=LaserTAG
+#ifdef AppVer
 OutputDir=dist_Windows_x64_v{#VerUnderscored}
 OutputBaseFilename=LaserTAG_v{#AppVer}_windows_x64_setup
+#else
+OutputDir=dist_Windows_x64
+OutputBaseFilename=LaserTAG_windows_x64_setup
+#endif
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 Compression=lzma
 SolidCompression=yes
+SetupIconFile=laser.ico
 UninstallDisplayIcon={app}\laser.ico
 UninstallDisplayName=LaserTAG
+VersionInfoCompany=Ehren Bentz
+VersionInfoCopyright=Copyright 2025 Ehren Bentz. Licensed under GNU GPL v3.
+VersionInfoDescription=LaserTAG Setup
+VersionInfoProductName=LaserTAG
+#ifdef SignEnabled
+SignTool=mysign
+SignedUninstaller=yes
+#endif
 
 [Files]
+#ifdef AppVer
 Source: "dist_Windows_x64_v{#VerUnderscored}\LaserTAG.dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#else
+Source: "dist_Windows_x64\LaserTAG.dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 Source: "laser.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

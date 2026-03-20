@@ -4,11 +4,7 @@ from PySide6.QtGui import QColor, QPainter, QPen
 
 import theme
 
-class ProgressBarWithText(QWidget):
-    """
-    Progress bar that displays current time, speed, and total time.
-
-    """
+class ProgressBar(QWidget):
 
     def __init__(self, parent=None, annotator=None):
         super().__init__(parent)
@@ -19,33 +15,26 @@ class ProgressBarWithText(QWidget):
         self._annotator = annotator
         self.setMouseTracking(True)
 
-        # Floating hover-timestamp label — parented to the top-level window
-        # so it is never clipped by intermediate containers.
-        self._hover_label = None  # created lazily on first hover
+        # Floating hover-timestamp label
+        self._hover_label = None
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(self.backgroundRole(), QColor(0, 0, 0))
         self.setPalette(palette)
 
-    # --- public setters ------------------------------------------------
-
     def set_progress(self, value):
         self._progress = max(0.0, min(1.0, value))
-        self.update()
 
     def set_left_text(self, text):
         self._left_text = text
-        self.update()
 
     def set_center_text(self, text):
         self._center_text = text
-        self.update()
 
     def set_right_text(self, text):
         self._right_text = text
-        self.update()
 
-    # --- painting ------------------------------------------------------
+    # painting
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -95,14 +84,9 @@ class ProgressBarWithText(QWidget):
 
         painter.end()
 
-    # --- mouse ---------------------------------------------------------
+    # Mouse
 
     def _ensure_hover_label(self):
-        """Lazily create the hover label parented to the left_container.
-
-        Using left_container (not the top-level window) avoids disrupting
-        the z-order of floating Tool windows on macOS.
-        """
         if self._hover_label is not None:
             return
         container = getattr(self._annotator, "left_container", None)
@@ -162,7 +146,7 @@ class ProgressBarWithText(QWidget):
 
 
 def _format_hover_time(secs):
-    """Format seconds as H:MM:SS or M:SS for the hover tooltip."""
+    """Format seconds as H:MM:SS or M:SS"""
     secs = int(secs)
     h = secs // 3600
     m = (secs % 3600) // 60

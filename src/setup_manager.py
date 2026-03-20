@@ -15,12 +15,7 @@ from dialogs import show_message
 
 
 class SetupManager(QObject):
-    """Coordinator for the setup flow (file selection → event key → start).
-
-    SetupManager is not a widget — it is a QObject that orchestrates
-    child dialogs parented to MainWindow.  Call start() to begin the
-    flow; connect to the finished signal to receive the result.
-    """
+    """Coordinate setup flow"""
 
     finished = Signal(int)
 
@@ -47,16 +42,14 @@ class SetupManager(QObject):
         self._files_manager = None
 
     def start(self):
-        """Begin the setup flow by showing the files manager."""
+        """Begin the setup flow by showing the files manager"""
         self._show_files_manager()
 
     def _finish(self, result):
-        """Emit finished signal with result code."""
+        """Emit finished signal with result code"""
         self.finished.emit(result)
 
-    # ------------------------------------------------------------------
     # Files manager
-    # ------------------------------------------------------------------
 
     def _show_files_manager(self):
         try:
@@ -101,9 +94,7 @@ class SetupManager(QObject):
                 self.parent(), "Error", f"Error in setup process: {exc}")
             self._finish(QDialog.DialogCode.Rejected)
 
-    # ------------------------------------------------------------------
     # Directory and file initialization
-    # ------------------------------------------------------------------
 
     def _init_output_dirs(self):
         try:
@@ -112,14 +103,16 @@ class SetupManager(QObject):
             self.annotations_dir = os.path.join(
                 self.output_dir, "Annotations")
             self.resume_dir = os.path.join(self.output_dir, "Resume")
-            self.debug_dir = os.path.join(self.output_dir, "Debug")
             for d in (self.output_dir, self.event_key_dir,
-                      self.annotations_dir, self.resume_dir,
-                      self.debug_dir):
+                      self.annotations_dir, self.resume_dir):
                 os.makedirs(d, exist_ok=True)
 
             from debug_logger import get_logger
-            get_logger().switch_to_output_dir(self.output_dir)
+            dl = get_logger()
+            if dl._debug_mode:
+                self.debug_dir = os.path.join(self.output_dir, "Debug")
+                os.makedirs(self.debug_dir, exist_ok=True)
+            dl.switch_to_output_dir(self.output_dir)
         except OSError as exc:
             show_message(
                 self.parent(), "Error", f"Error creating directories: {exc}")
@@ -176,9 +169,7 @@ class SetupManager(QObject):
 
         return True
 
-    # ------------------------------------------------------------------
     # Session management
-    # ------------------------------------------------------------------
 
     def _check_existing_session(self):
         try:
@@ -239,9 +230,7 @@ class SetupManager(QObject):
             self.start_frame = 0
         self._show_event_key_editor()
 
-    # ------------------------------------------------------------------
     # Event key editor
-    # ------------------------------------------------------------------
 
     def _show_event_key_editor(self):
         try:
@@ -287,7 +276,7 @@ class SetupManager(QObject):
 
 
 def _remove_temp(path):
-    """Silently remove a temporary file if it exists."""
+    """Silently remove a temporary file if it exists"""
     try:
         if os.path.exists(path):
             os.remove(path)
