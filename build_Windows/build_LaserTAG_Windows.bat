@@ -192,7 +192,7 @@ python -m nuitka ^
     --windows-product-version=%APP_VERSION% ^
     --windows-company-name="Cornell University" ^
     --windows-product-name=LaserTAG ^
-    --windows-file-description="LaserTAG - Lightweight application for scoring ethology recordings and Tracking Animals Gooder" ^
+    --windows-file-description="LaserTAG - Lightweight annotation software for ethology research and Tracking Animals Gooder" ^
     %MAIN_SCRIPT%
 
 if %errorlevel% neq 0 (

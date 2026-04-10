@@ -64,6 +64,7 @@ from setup_manager import SetupManager
 from config_manager import get_config
 from video_annotator import VideoAnnotator
 import theme
+import icons_rc
 
 class MainWindow(QMainWindow):
     """Main window class"""
@@ -174,7 +175,7 @@ class MainWindow(QMainWindow):
             self.setCentralWidget(self.video_annotator)
 
             if sys.platform != "darwin":
-                self.show()
+                self.showMaximized()
             self.apply_theme()
 
             logger.info("VideoAnnotator initialized successfully")
@@ -197,6 +198,9 @@ def main():
         # Initialize config manager and load theme
         config_manager = get_config()
         theme.load_theme(config_manager.get_theme())
+        hover_hex = config_manager.get_button_hover_color()
+        if hover_hex:
+            theme.set_override("button_hover", hover_hex)
         app.setStyleSheet(theme.app_stylesheet())
 
         # Create main window and show as maximized background

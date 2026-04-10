@@ -116,7 +116,7 @@ Architecture: ${DEB_ARCH}
 Depends: libgl1, libegl1
 Maintainer: Ehren Bentz <ehren.bentz@cornell.edu>
 Homepage: https://github.com/ehrenbentz/LaserTAG
-Description: Lightweight Application for Scoring Ethology Recordings
+Description: Lightweight annotation software for ethology research and Tracking Animals Gooder
  LaserTAG is a free, open-source desktop application for behavioral
  annotation of video recordings. Designed for researchers in ethology,
  animal behavior, ecology, and psychology.

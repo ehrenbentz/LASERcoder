@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
+
+<svg
+   width="600"
+   height="627.96118"
+   viewBox="0 0 384 401.89516"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="zoom.svg"
+   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.51625"
+     inkscape:cx="299.42292"
+     inkscape:cy="299.75268"
+     inkscape:window-width="2560"
+     inkscape:window-height="1494"
+     inkscape:window-x="-11"
+     inkscape:window-y="-11"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" />
+  <title
+     id="title1">zoom-selection</title>
+  <g
+     id="Page-1"
+     stroke="none"
+     stroke-width="1"
+     fill="none"
+     fill-rule="evenodd"
+     transform="translate(-64,-64)"
+     style="fill:#ffffff">
+    <g
+       id="zoom-out"
+       fill="#000000"
+       transform="translate(64,64)"
+       style="fill:#ffffff">
+      <path
+         d="M 202.66667,106.66667 C 267.46808,106.66667 320,159.19859 320,224 c 0,24.69323 -7.62799,47.60485 -20.65616,66.50703 l 81.21797,81.21822 -30.16989,30.16989 -81.21833,-81.21789 c -18.90216,13.02812 -41.81374,20.65608 -66.50692,20.65608 -64.80141,0 -117.333337,-52.53192 -117.333337,-117.33333 0,-64.80141 52.531927,-117.33333 117.333337,-117.33333 z m 0,42.66666 C 161.4294,149.33333 128,182.76274 128,224 c 0,41.23726 33.4294,74.66667 74.66667,74.66667 41.23726,0 74.66666,-33.42941 74.66666,-74.66667 0,-41.23726 -33.4294,-74.66667 -74.66666,-74.66667 z m 181.33333,64 v 64 h -42.66667 v -64 z m -341.333333,0 v 21.33334 H 64 v 42.66666 H 0 v -64 z m 0,-106.66666 v 64 H 0 v -64 z m 341.333333,0 v 64 h -42.66667 v -64 z M 384,0 V 64 H 341.33333 V 42.666667 H 320 V 0 Z M 64,0 V 42.666667 H 42.666667 V 64 H 0 V 0 Z m 213.33333,0 v 42.666667 h -64 V 0 Z M 170.66667,0 v 42.666667 h -64 V 0 Z"
+         id="Combined-Shape"
+         style="fill:#ffffff" />
+    </g>
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>zoom-selection</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>

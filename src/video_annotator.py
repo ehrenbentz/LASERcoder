@@ -11,6 +11,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtCore import Signal
 from mpv import MpvRenderContext
 
+import math
 import ctypes
 
 # Define above the class
@@ -21,13 +22,14 @@ from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTreeWidget, QTreeWidgetItem, QMenu, QMessageBox,
     QAbstractItemView, QApplication, QSizePolicy, QColorDialog,
-    QDialog, QGridLayout,
+    QDialog, QGridLayout, QSplitter, QSlider, QStyle, QHeaderView,
 )
-from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, QSysInfo, QEventLoop
-from PySide6.QtGui import QColor, QOpenGLContext
+from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, QSysInfo, QEventLoop, QSize
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QOpenGLContext
 
 from display_utils import get_screen_geometry, center_window
 from progress_bar import ProgressBar
+from waveform_widget import WaveformWidget
 from annotation_store import (
     AnnotationStore, format_time_human, format_time_machine, parse_time,
 )
@@ -38,8 +40,8 @@ from floating_controls import (
 )
 from dialogs import (
     show_coding_start_dialog, show_note_dialog, show_annotation_details,
-    show_comprehensive_edit, show_edit_point_dialog, show_edit_state_dialog,
-    show_message,
+    show_edit_point_dialog, show_edit_state_dialog,
+    show_message, show_colors_theme_dialog,
 )
 from config_manager import get_config
 from debug_logger import get_logger
@@ -76,9 +78,12 @@ class MpvOpenGLWidget(QOpenGLWidget):
         self.render_ctx = None
         self._has_first_frame = False
         self._first_frame_cb = None
+        self._shutting_down = False
         self._frame_ready.connect(self._on_frame_signal)
 
     def _on_frame_signal(self):
+        if self._shutting_down or self.render_ctx is None:
+            return
         first = not self._has_first_frame
         self._has_first_frame = True
         if first:
@@ -120,12 +125,10 @@ class MpvOpenGLWidget(QOpenGLWidget):
         self.render_ctx.update_cb = self._on_mpv_frame_ready
         self.doneCurrent()
 
-        # Hide the GL surface until the first video frame is decoded;
-        # prevents white/strobe flashes during player initialisation.
-        self.hide()
-
     def _on_mpv_frame_ready(self):
         """Called from mpv's decoder thread. Emit signal to repaint on GUI thread"""
+        if self._shutting_down:
+            return
         try:
             self._frame_ready.emit()
         except RuntimeError:
@@ -135,13 +138,13 @@ class MpvOpenGLWidget(QOpenGLWidget):
         """Clear the framebuffer to black"""
         funcs = QOpenGLContext.currentContext().functions()
         funcs.glClearColor(0.0, 0.0, 0.0, 1.0)
-        funcs.glClear(0x00004000)  # GL_COLOR_BUFFER_BIT
+        funcs.glClear(0x00004000)
 
     def initializeGL(self):
         self._gl_clear_black()
 
     def paintGL(self):
-        if self.render_ctx is None or not self._has_first_frame:
+        if self._shutting_down or self.render_ctx is None or not self._has_first_frame:
             self._gl_clear_black()
             return
         try:
@@ -158,12 +161,30 @@ class MpvOpenGLWidget(QOpenGLWidget):
 
     def cleanup(self):
         """Free the render context. Must be called before destroying the player"""
+        self._shutting_down = True
         if self.render_ctx:
             self.render_ctx.update_cb = None
             self.makeCurrent()
             self.render_ctx.free()
             self.render_ctx = None
             self.doneCurrent()
+
+class _AutoFitButton(QPushButton):
+    """QPushButton that shrinks its font to fit the available width."""
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        text = self.text()
+        if not text:
+            return
+        font = self.font()
+        pad = 8
+        avail = self.width() - pad
+        for size in range(14, 6, -1):
+            font.setPixelSize(size)
+            if QFontMetrics(font).horizontalAdvance(text) <= avail:
+                break
+        self.setFont(font)
+
 
 class VideoAnnotator(QFrame):
     """
@@ -189,14 +210,14 @@ class VideoAnnotator(QFrame):
         self.zoom_active = False
         self._zoom_pan_x = 0.0
         self._zoom_pan_y = 0.0
+        self._zoom_multiplier = 2.0
         self._shutting_down = False
         self._activation_pending = False
         self._suppress_floating_hide = False
         self._hide_pending = False
         self._last_time_pos_update = 0
 
-        # Event types the filter actually handles — everything else is
-        # passed through immediately to avoid per-event Python overhead.
+        # passed through immediately
         self._watched_events = frozenset({
             QEvent.Type.Move,
             QEvent.Type.ActivationChange,
@@ -220,6 +241,7 @@ class VideoAnnotator(QFrame):
         self.coding_duration = None
         self.coding_end = None
         self.coding_end_reached = False
+        self.limit_timeline_to_coding = False
         self._video_completed = False
         self.active_state_events = {}
         self.used_point_events = set()
@@ -270,7 +292,6 @@ class VideoAnnotator(QFrame):
             avail = self.parent.screen().availableGeometry()
             self.display_width = avail.width()
             self.display_height = avail.height()
-            self.parent.showMaximized()
 
         # Layout measurements
         self.panel_width = int(self.display_width * 0.2)
@@ -283,6 +304,7 @@ class VideoAnnotator(QFrame):
         # Build UI
         self._setup_layout()
         self._create_video_frame()
+        self._create_waveform_widget()
         self._create_progress_bar()
         self._create_annotation_panel()
         self._setup_key_bindings()
@@ -331,38 +353,59 @@ class VideoAnnotator(QFrame):
 
         self.left_layout.addWidget(self.video_frame)
 
+    def _create_waveform_widget(self):
+        cfg = get_config()
+        multiplier = cfg.get_waveform_height_multiplier()
+        waveform_height = int(self.progress_bar_height * multiplier)
+
+        self.waveform_widget = WaveformWidget(parent=None, annotator=self)
+        self.waveform_widget.setContentsMargins(0, 0, 0, 0)
+        self.waveform_widget.setFixedSize(self.progress_bar_width, waveform_height)
+
+        hex_color = cfg.get_waveform_color()
+        if hex_color:
+            self.waveform_widget.set_fill_color(QColor(hex_color))
+        self.waveform_widget.set_opacity(cfg.get_waveform_opacity())
+
+        self.left_layout.addWidget(self.waveform_widget)
+
+        is_visible = cfg.get_waveform_visible()
+        self.waveform_widget.setVisible(is_visible)
+        if is_visible:
+            self.video_frame.setFixedHeight(self.video_height - waveform_height)
+
     def _reposition_floating_windows(self):
             """Reanchor floating toggle buttons to the video frame"""
             if not hasattr(self, "video_frame") or not self.video_frame:
                 return
             video_pos = self.video_frame.mapToGlobal(QPoint(0, 0))
-            margin = 5
+            margin = 2
 
             if hasattr(self, "event_toggle_window") and self.event_toggle_window:
                 self.event_toggle_window.move(
-                    video_pos.x() + margin, video_pos.y() + 20)
-
-            if hasattr(self, "controls_window") and self.controls_window:
-                self.controls_window.move(
-                    video_pos.x() + margin,
-                    video_pos.y() + self.video_height - 20)
+                    video_pos.x() + margin + 5, video_pos.y() + margin - 10)
 
             if hasattr(self, "zoom_toggle_window") and self.zoom_toggle_window:
                 self.zoom_toggle_window.move(
-                    video_pos.x() + self.video_width - 40 - margin,
-                    video_pos.y() + 20)
+                    video_pos.x() + self.video_width - 30 - margin - 5,
+                    video_pos.y() + margin - 10)
+
+            if hasattr(self, "zoom_slider_window") and self.zoom_slider_window:
+                self.zoom_slider_window.move(
+                    video_pos.x() + self.video_width - 30 - margin - 5 - 145,
+                    video_pos.y() + margin - 10)
 
             if hasattr(self, "floating_controls_window") and self.floating_controls_window:
                 win_w = self.floating_controls_window.width()
                 x = video_pos.x() + (self.video_width - win_w) // 2
                 y = (video_pos.y() + self.video_height
-                     - self.floating_controls_window.height() - 10)
+                     - self.floating_controls_window.height() - 50)
                 self.floating_controls_window.move(x, y)
 
             if hasattr(self, "event_buttons_window") and self.event_buttons_window:
                 toggle_width = self.event_toggle_button.width()
-                x = video_pos.x() + 10 + toggle_width + 10
-                y = video_pos.y() + 10
+                x = video_pos.x() + margin + 5 + toggle_width + 10
+                y = video_pos.y() + margin - 20
                 self.event_buttons_window.move(x, y)
 
     def _set_floating_visible(self, visible):
@@ -377,10 +420,7 @@ class VideoAnnotator(QFrame):
         if visible:
             cfg = get_config()
             hidden = set()
-            if not cfg.get_show_video_controls_toggle():
-                w = getattr(self, "controls_window", None)
-                if w:
-                    hidden.add(w)
+            if not cfg.get_show_floating_controls():
                 w2 = getattr(self, "floating_controls_window", None)
                 if w2:
                     hidden.add(w2)
@@ -395,6 +435,10 @@ class VideoAnnotator(QFrame):
                 w = getattr(self, "zoom_toggle_window", None)
                 if w:
                     hidden.add(w)
+            if not cfg.get_show_zoom_button() or not self.zoom_active:
+                w2 = getattr(self, "zoom_slider_window", None)
+                if w2:
+                    hidden.add(w2)
         else:
             hidden = None
 
@@ -459,19 +503,15 @@ class VideoAnnotator(QFrame):
 
     def _create_progress_bar(self):
         self.progress_frame = QFrame()
-        self.progress_frame.setStyleSheet("background-color: #000000;")
+        self.progress_frame.setFrameShape(QFrame.Shape.NoFrame)
+        self.progress_frame.setContentsMargins(0, 0, 0, 0)
+        self.progress_frame.setStyleSheet("background-color: #000000; margin: 0px; padding: 0px;")
         self.progress_frame.setFixedSize(
-            self.progress_bar_width, self.progress_bar_height + 20)
+            self.progress_bar_width, self.progress_bar_height)
 
         frame_layout = QVBoxLayout(self.progress_frame)
         frame_layout.setContentsMargins(0, 0, 0, 0)
         frame_layout.setSpacing(0)
-
-        self.coding_info_label = QLabel()
-        self.coding_info_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.coding_info_label.setStyleSheet(theme.coding_info_label_style())
-        self.coding_info_label.setFixedHeight(20)
-        frame_layout.addWidget(self.coding_info_label)
 
         self.progress_bar = ProgressBar(
             self.progress_frame, annotator=self)
@@ -481,7 +521,6 @@ class VideoAnnotator(QFrame):
 
         self.left_layout.addWidget(self.progress_frame)
         self.left_container.setStyleSheet("background-color: #000000;")
-        self.update_coding_info_display()
 
     def update_progress(self):
         if not hasattr(self, 'player') or not self.player:
@@ -493,41 +532,18 @@ class VideoAnnotator(QFrame):
             return
 
         self._mpv_duration = total
-        self.progress_bar.set_progress(current / total)
+        self.progress_bar.set_progress(self._time_to_ratio(current))
         self.progress_bar.set_left_text(_fmt_current(current))
         self.progress_bar.set_center_text(f"({self.player.speed:.1f}x)")
-        self.progress_bar.set_right_text(_fmt_total(total))
+        if self.limit_timeline_to_coding and self.coding_end is not None:
+            self.progress_bar.set_right_text(_fmt_total(self.coding_end))
+        else:
+            self.progress_bar.set_right_text(_fmt_total(total))
         self.progress_bar.update()
 
-    def _show_coding_end_prompt(self, current_sec):
-        if self._shutting_down:
-            return
-        dlg = QMessageBox(self.parent)
-        theme.apply_dialog_theme(dlg)
-        dlg.setWindowTitle("Coding Duration Reached")
-
-        if self.active_state_events:
-            dlg.setIcon(QMessageBox.Icon.Question)
-            dlg.setText("Coding duration reached\n"
-                        "Do you wish to end the active state events?")
-            dlg.setStandardButtons(
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-
-            def _on_finished(result):
-                dlg.deleteLater()
-                if result == QMessageBox.StandardButton.Yes:
-                    for key in list(self.active_state_events):
-                        self.handle_state_event(
-                            key, current_sec, format_time_human(current_sec))
-
-            dlg.finished.connect(_on_finished)
-            dlg.open()
-        else:
-            dlg.setIcon(QMessageBox.Icon.Information)
-            dlg.setText("Coding duration reached")
-            dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
-            dlg.finished.connect(lambda _: dlg.deleteLater())
-            dlg.open()
+        if hasattr(self, 'waveform_widget') and self.waveform_widget.isVisible():
+            self.waveform_widget.set_progress(self._time_to_ratio(current))
+            self.waveform_widget.update()
 
     def _on_time_pos_changed(self, current):
         """Handle mpv time-pos property changes on the GUI thread."""
@@ -550,7 +566,6 @@ class VideoAnnotator(QFrame):
             self._auto_saving = True
             self.save_session_state()
             self._auto_saving = False
-            self._show_coding_end_prompt(current)
             return
 
         # Throttle progress bar updates
@@ -559,15 +574,22 @@ class VideoAnnotator(QFrame):
             return
         self._last_time_pos_update = now
 
-        self.progress_bar.set_progress(current / total)
+        self.progress_bar.set_progress(self._time_to_ratio(current))
         self.progress_bar.set_left_text(_fmt_current(current))
         self.progress_bar.set_center_text(f"({self.player.speed:.1f}x)")
         self.progress_bar.update()
 
+        if hasattr(self, 'waveform_widget') and self.waveform_widget.isVisible():
+            self.waveform_widget.set_progress(self._time_to_ratio(current))
+            self.waveform_widget.update()
+
     def _on_duration_changed(self, total):
         """Handle mpv duration property changes on the GUI thread"""
         self._mpv_duration = total
-        self.progress_bar.set_right_text(_fmt_total(total))
+        if self.limit_timeline_to_coding and self.coding_end is not None:
+            self.progress_bar.set_right_text(_fmt_total(self.coding_end))
+        else:
+            self.progress_bar.set_right_text(_fmt_total(total))
         self.progress_bar.update()
 
         if self.coding_duration is not None and self.coding_duration > 0:
@@ -576,20 +598,21 @@ class VideoAnnotator(QFrame):
             if current >= end_time:
                 self.player.pause = True
                 self.coding_end_reached = True
-                QTimer.singleShot(
-                    500, lambda: self._show_coding_end_prompt(current))
 
     def _init_progress_bar(self):
         self.progress_bar.set_left_text("0:00:00.00")
         self.progress_bar.set_center_text("(1.0x)")
         self.progress_bar.set_right_text("0:00:00")
+        hex_color = get_config().get_progress_bar_color()
+        if hex_color:
+            self.progress_bar.set_fill_color(QColor(hex_color))
         self.progress_bar.update()
 
     def on_progress_click(self, ratio):
         total = self.player.duration or 0
         if total <= 0:
             return
-        target = ratio * total
+        target = self._ratio_to_time(ratio)
         if target >= total - 0.1:
             self.player.time_pos = total - 0.5
             self.player.pause = True
@@ -598,43 +621,101 @@ class VideoAnnotator(QFrame):
         self.coding_end_reached = False
         self.update_progress()
 
-    def update_coding_info_display(self):
-        if not hasattr(self, "coding_info_label"):
-            return
-        if self.coding_start and self.coding_start > 0:
-            start_str = format_time_human(self.coding_start)
-            if self.coding_duration and self.coding_duration > 0:
-                end_time = self.coding_start + self.coding_duration
-                self.coding_info_label.setText(
-                    f"Coding Start: {start_str} | "
-                    f"Duration: {format_time_human(self.coding_duration)} | "
-                    f"End: {format_time_human(end_time)}")
-            else:
-                self.coding_info_label.setText(f"Coding Start: {start_str}")
-            self.coding_info_label.setVisible(True)
+    def _toggle_waveform(self):
+        cfg = get_config()
+        visible = not self.waveform_widget.isVisible()
+        self.waveform_widget.setVisible(visible)
+        cfg.set_waveform_visible(visible)
+
+        waveform_h = self.waveform_widget.height()
+        if visible:
+            self.video_frame.setFixedHeight(self.video_height - waveform_h)
+            resume_dir = os.path.join(self.store.output_dir, "Resume")
+            self.waveform_widget.start_extraction(self.video_path, resume_dir)
         else:
-            self.coding_info_label.setVisible(False)
+            self.video_frame.setFixedHeight(self.video_height)
+
+    def _start_waveform_extraction(self):
+        if not hasattr(self, 'waveform_widget'):
+            return
+        resume_dir = os.path.join(self.store.output_dir, "Resume")
+        self.waveform_widget.start_extraction(self.video_path, resume_dir)
+
+    def update_coding_info_display(self):
+        return
+
+    def _time_to_ratio(self, time_sec):
+        if (self.limit_timeline_to_coding
+                and self.coding_start is not None
+                and self.coding_end is not None
+                and self.coding_end > self.coding_start):
+            r = (time_sec - self.coding_start) / (self.coding_end - self.coding_start)
+        else:
+            total = self._mpv_duration or (self.player.duration if self.player else 0) or 0
+            if total <= 0:
+                return 0.0
+            r = time_sec / total
+        return max(0.0, min(1.0, r))
+
+    def _ratio_to_time(self, ratio):
+        ratio = max(0.0, min(1.0, ratio))
+        if (self.limit_timeline_to_coding
+                and self.coding_start is not None
+                and self.coding_end is not None
+                and self.coding_end > self.coding_start):
+            return self.coding_start + ratio * (self.coding_end - self.coding_start)
+        total = self._mpv_duration or (self.player.duration if self.player else 0) or 0
+        return ratio * total
+
+    def _timeline_duration(self):
+        if (self.limit_timeline_to_coding
+                and self.coding_start is not None
+                and self.coding_end is not None
+                and self.coding_end > self.coding_start):
+            return self.coding_end - self.coding_start
+        return self._mpv_duration or (self.player.duration if self.player else 0) or 0
 
     # MPV player
-
     def _init_mpv_player(self):
         if not self.parent.isVisible():
             self.parent.show()
         QApplication.processEvents(
             QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         locale.setlocale(locale.LC_NUMERIC, "C")
-        self.player = mpv.MPV(
+
+        common_opts = dict(
             vo="libmpv",
             keep_open="yes",
             log_handler=lambda *a: None,
-            hwdec="auto",
             profile="fast",
+            video_sync="desync",
+            framedrop="vo",
         )
+
+        if sys.platform == "win32":
+            platform_opts = dict(
+                hwdec="auto-copy",
+                opengl_swapinterval=0,
+            )
+        elif sys.platform == "darwin":
+            platform_opts = dict(
+                hwdec="auto-copy",
+                opengl_swapinterval=0,
+            )
+        else:  # Linux
+            platform_opts = dict(
+                hwdec="auto-copy",
+                opengl_swapinterval=0,
+            )
+
+        self.player = mpv.MPV(**common_opts, **platform_opts)
         self.gl_widget.init_mpv_render(self.player)
 
         # Observe mpv properties for progress updates (callbacks fire on mpv thread)
         @self.player.property_observer("time-pos")
         def _on_time_pos(_name, value):
+            if self._shutting_down:
+                return
             if value is not None:
                 try:
                     self._time_pos_changed.emit(float(value))
@@ -643,6 +724,8 @@ class VideoAnnotator(QFrame):
 
         @self.player.property_observer("duration")
         def _on_duration(_name, value):
+            if self._shutting_down:
+                return
             if value is not None and value > 0:
                 try:
                     self._duration_changed.emit(float(value))
@@ -653,14 +736,16 @@ class VideoAnnotator(QFrame):
         self.store.load_events()
         self.store.load_annotations()
         self._restore_active_state_events()
-        self._update_annotations()
+        self._update_annotations(scroll_to_bottom=True)
         self._populate_event_trees()
         self._init_progress_bar()
+        self._restore_volume()
         self._load_session_state()
         self._auto_save_session_state()
 
         self.parent.update()
 
+        self.player.pause = True
         self.player.play(self.video_path)
 
         # Safety: ensure GL widget is visible even if first-frame signal
@@ -674,14 +759,13 @@ class VideoAnnotator(QFrame):
         QTimer.singleShot(300, self._apply_video_settings)
         # Delay floating windows until after video starts
         QTimer.singleShot(500, self._show_floating_controls)
+        # Start waveform extraction only if widget is already visible
+        if hasattr(self, 'waveform_widget') and self.waveform_widget.isVisible():
+            QTimer.singleShot(1000, self._start_waveform_extraction)
 
     def _show_floating_controls(self):
         create_toggle_buttons(self)
         cfg = get_config()
-        if not cfg.get_show_video_controls_toggle():
-            w = getattr(self, "controls_window", None)
-            if w:
-                w.setVisible(False)
         if not cfg.get_show_events_toggle():
             w = getattr(self, "event_toggle_window", None)
             if w:
@@ -690,44 +774,52 @@ class VideoAnnotator(QFrame):
             w = getattr(self, "zoom_toggle_window", None)
             if w:
                 w.setVisible(False)
-        QTimer.singleShot(100, self._scroll_annotations_to_bottom)
+        self._update_annotations(scroll_to_bottom=True)
+        self.update_play_pause_icon()
 
     # Annotation panel
 
     def _create_annotation_panel(self):
         tree_font = "12px"
-        heading_font = "12px"
+        heading_font = "14px"
 
         available_h = self.panel_height - self.progress_bar_height
-        btn_area_h = 90
-        pane_h = (available_h - btn_area_h - 15) // 4
+        btn_area_h = 95
 
         self.annotation_frame = QFrame(self)
-        self.annotation_frame.setFrameStyle(
-            QFrame.Shape.Box | QFrame.Shadow.Raised)
-        self.annotation_frame.setStyleSheet(theme.panel_frame_stylesheet())
+        self.annotation_frame.setFrameShape(QFrame.Shape.NoFrame)
+        self.annotation_frame.setStyleSheet(
+            f"QFrame {{ background-color: {theme.color('panel_bg')}; border: none; }}")
         self.right_layout.addWidget(self.annotation_frame)
 
         main_layout = QVBoxLayout(self.annotation_frame)
-        main_layout.setContentsMargins(3, 3, 3, 3)
-        main_layout.setSpacing(3)
+        main_layout.setContentsMargins(2, 2, 2, 2)
+        main_layout.setSpacing(2)
 
         tree_style = theme.tree_stylesheet(heading_font)
         label_style = theme.heading_label_style(heading_font)
-        btn_style = theme.button_stylesheet(heading_font)
-        big_btn_style = theme.button_large_stylesheet(heading_font)
+        btn_style = theme.button_stylesheet("11px")
+        big_btn_style = theme.button_large_stylesheet("11px")
 
-        def _make_tree(headers, widths, height):
+        def _make_tree(headers):
             frame = QFrame()
-            frame.setFixedHeight(height)
+            frame.setFrameShape(QFrame.Shape.NoFrame)
+            frame.setStyleSheet("QFrame { border: none; background: transparent; }")
+            frame.setMinimumHeight(60)
             lay = QVBoxLayout(frame)
             lay.setContentsMargins(0, 0, 0, 0)
-            lay.setSpacing(1)
+            lay.setSpacing(0)
             tree = QTreeWidget()
+            tree.setRootIsDecorated(False)
+            tree.setIndentation(10)
             tree.setStyleSheet(tree_style)
             tree.setHeaderLabels(headers)
-            for i, w in enumerate(widths):
-                tree.setColumnWidth(i, int(self.panel_width * w))
+            header = tree.header()
+            header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            for i in range(1, len(headers)):
+                header.setSectionResizeMode(
+                    i, QHeaderView.ResizeMode.ResizeToContents)
             tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             return frame, lay, tree
@@ -738,9 +830,12 @@ class VideoAnnotator(QFrame):
         self._panel_buttons = []
         self._big_buttons = []
 
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+
         # State events
         sf, sl, self.state_events_tree = _make_tree(
-            ["Event", "Key", "ME Group"], [0.5, 0.15, 0.25], pane_h)
+            ["Event", "Key", "ME Group"])
         sb_header = QWidget()
         sb_header.setStyleSheet(theme.header_widget_stylesheet())
         self._header_widgets.append(sb_header)
@@ -749,27 +844,32 @@ class VideoAnnotator(QFrame):
         self._heading_labels.append(lbl)
         sb_hlay.addWidget(lbl)
         sb_hlay.addStretch()
-        self._gear_btn = QPushButton("Settings"); self._gear_btn.setStyleSheet(btn_style)
-        self._gear_btn.setFixedHeight(22)
+        self._gear_btn = QPushButton(""); self._gear_btn.setStyleSheet(btn_style)
+        self._gear_btn.setIcon(theme.themed_icon("settings"))
+        self._gear_btn.setIconSize(QSize(16, 16))
+        self._gear_btn.setFixedSize(26, 26)
         self._gear_btn.clicked.connect(self._show_settings_menu)
         self._panel_buttons.append(self._gear_btn)
         sb_hlay.addWidget(self._gear_btn)
         sl.insertWidget(0, sb_header)
         sl.addWidget(self.state_events_tree)
-        main_layout.addWidget(sf)
+        splitter.addWidget(sf)
 
         # Point events
         pf, pl, self.point_events_tree = _make_tree(
-            ["Event", "Key"], [0.6, 0.3], pane_h)
+            ["Event", "Key"])
         lbl2 = QLabel("Point Events"); lbl2.setStyleSheet(label_style)
         self._heading_labels.append(lbl2)
         pl.insertWidget(0, lbl2)
         pl.addWidget(self.point_events_tree)
-        main_layout.addWidget(pf)
+        splitter.addWidget(pf)
 
         # State annotations
         saf, sal, self.state_annotations_tree = _make_tree(
-            ["Event", "Start", "End"], [0.33, 0.25, 0.25], pane_h)
+            ["Event", "Start", "End"])
+        for col in (1, 2):
+            self.state_annotations_tree.headerItem().setTextAlignment(
+                col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         sa_header = QWidget()
         sa_header.setStyleSheet(theme.header_widget_stylesheet())
         self._header_widgets.append(sa_header)
@@ -783,16 +883,18 @@ class VideoAnnotator(QFrame):
         self._panel_buttons.append(sort_btn)
         hlay.addStretch(); hlay.addWidget(sort_btn)
         sal.insertWidget(0, sa_header)
+        self.state_annotations_tree.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection)
         self.state_annotations_tree.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu)
         self.state_annotations_tree.customContextMenuRequested.connect(
             self._show_annotation_menu)
         sal.addWidget(self.state_annotations_tree)
-        main_layout.addWidget(saf)
+        splitter.addWidget(saf)
 
         # Point annotations
         paf, pal, self.point_annotations_tree = _make_tree(
-            ["Event", "Time"], [0.4, 0.5], pane_h)
+            ["Event", "Time"])
         pa_header = QWidget()
         pa_header.setStyleSheet(theme.header_widget_stylesheet())
         self._header_widgets.append(pa_header)
@@ -806,12 +908,24 @@ class VideoAnnotator(QFrame):
         self._panel_buttons.append(sort_btn2)
         hlay2.addStretch(); hlay2.addWidget(sort_btn2)
         pal.insertWidget(0, pa_header)
+        self.point_annotations_tree.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection)
         self.point_annotations_tree.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu)
         self.point_annotations_tree.customContextMenuRequested.connect(
             self._show_annotation_menu)
         pal.addWidget(self.point_annotations_tree)
-        main_layout.addWidget(paf)
+        splitter.addWidget(paf)
+
+        saved_sizes = get_config().get_splitter_sizes()
+        if saved_sizes and len(saved_sizes) == 4:
+            splitter.setSizes(saved_sizes)
+        else:
+            quarter = (available_h - btn_area_h - 15) // 4
+            splitter.setSizes([quarter, quarter, quarter, quarter])
+        splitter.splitterMoved.connect(
+            lambda: get_config().set_splitter_sizes(splitter.sizes()))
+        main_layout.addWidget(splitter, 1)
 
         # Bottom buttons — two rows
         btn_frame = QFrame()
@@ -820,33 +934,123 @@ class VideoAnnotator(QFrame):
         btn_outer.setContentsMargins(0, 3, 0, 0)
         btn_outer.setSpacing(4)
 
-        top_row = QHBoxLayout()
-        top_row.setSpacing(6)
-        for text, callback in [
-            ("Set\nCoding Start", self.set_coding_start),
-            ("Visualize\nAnnotations", self.visualize_annotations),
-            ("Edit\nEvent Key", self._edit_event_key),
-        ]:
-            b = QPushButton(text)
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(6)
+        btn_h = 30
+        grid_btns = [
+            ("Coding Segment", self.set_coding_start, 0, 0),
+            ("Visualize", self.visualize_annotations, 0, 1),
+            ("Edit Event Key", self._edit_event_key, 0, 2),
+            ("Mark Complete", self._mark_video_complete, 1, 0),
+        ]
+        for text, callback, row, col in grid_btns:
+            b = _AutoFitButton(text)
             b.setStyleSheet(big_btn_style)
+            b.setFixedHeight(btn_h)
             b.clicked.connect(callback)
             self._big_buttons.append(b)
-            top_row.addWidget(b)
-        btn_outer.addLayout(top_row)
+            btn_grid.addWidget(b, row, col)
+            if text == "Mark Complete":
+                self._mark_complete_btn = b
+        btn_outer.addLayout(btn_grid)
 
-        bottom_row = QHBoxLayout()
-        bottom_row.setSpacing(6)
-        self._mark_complete_btn = QPushButton("Mark Video\nComplete")
-        self._mark_complete_btn.setStyleSheet(big_btn_style)
-        self._mark_complete_btn.clicked.connect(self._mark_video_complete)
-        self._big_buttons.append(self._mark_complete_btn)
-        bottom_row.addWidget(self._mark_complete_btn)
-        for _ in range(2):
-            spacer = QPushButton()
-            spacer.setStyleSheet(big_btn_style + "QPushButton { border: none; background: transparent; }")
-            spacer.setEnabled(False)
-            bottom_row.addWidget(spacer)
-        btn_outer.addLayout(bottom_row)
+        audio_row = QHBoxLayout()
+        audio_row.setSpacing(2)
+
+        ctrl_btn_w = 24
+        ctrl_btn_h = 22
+        ctrl_style = (
+            f"QPushButton {{ background: transparent; color: {theme.color('text')};"
+            f"  border: none; font-size: 18px; padding: 0px; }}"
+            f"QPushButton:hover {{ background: rgba(128,128,128,40); border-radius: 3px; }}"
+            f"QPushButton:pressed {{ background: rgba(128,128,128,80); border-radius: 3px; }}"
+        )
+
+        # Playback controls — left side
+        playback_buttons = [
+            ("back_big", lambda: self.seek_relative(-10000)),
+            ("back",     lambda: self.seek_relative(-1000)),
+            ("play",     self.toggle_play_pause),
+            ("forward",  lambda: self.seek_relative(1000)),
+            ("forward_big", lambda: self.seek_relative(10000)),
+        ]
+
+        self._ctrl_buttons = []
+        for i, (icon_name, callback) in enumerate(playback_buttons):
+            btn = QPushButton("")
+            btn.setIcon(theme.themed_icon(icon_name))
+            btn.setIconSize(QSize(16, 16))
+            btn.setStyleSheet(ctrl_style)
+            btn.setFixedSize(ctrl_btn_w, ctrl_btn_h)
+            btn.clicked.connect(callback)
+            self._ctrl_buttons.append(btn)
+            audio_row.addWidget(btn)
+            if i == 2:
+                self._panel_play_pause_btn = btn
+
+        # Spacer between playback and speed controls
+        audio_row.addStretch()
+
+        # Speed controls — center
+        speed_down = QPushButton("")
+        speed_down.setIcon(theme.themed_icon("minus"))
+        speed_down.setIconSize(QSize(16, 16))
+        speed_down.setStyleSheet(ctrl_style)
+        speed_down.setFixedSize(ctrl_btn_w, ctrl_btn_h)
+        speed_down.clicked.connect(lambda: self.change_speed(-1))
+        self._ctrl_buttons.append(speed_down)
+        audio_row.addWidget(speed_down)
+
+        speed_up = QPushButton("")
+        speed_up.setIcon(theme.themed_icon("plus"))
+        speed_up.setIconSize(QSize(16, 16))
+        speed_up.setStyleSheet(ctrl_style)
+        speed_up.setFixedSize(ctrl_btn_w, ctrl_btn_h)
+        speed_up.clicked.connect(lambda: self.change_speed(1))
+        self._ctrl_buttons.append(speed_up)
+        audio_row.addWidget(speed_up)
+
+        # Spacer between speed and volume controls
+        audio_row.addStretch()
+
+        # Volume slider and mute — right side
+        self._volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self._volume_slider.setRange(0, 100)
+        self._volume_slider.setValue(100)
+        self._volume_slider.setTickPosition(QSlider.TickPosition.NoTicks)
+        self._volume_slider.setMaximumWidth(80)
+        self._volume_slider.setStyleSheet(
+            "QSlider::groove:horizontal { background: #555; height: 6px;"
+            "  border-radius: 3px; }"
+            "QSlider::handle:horizontal { background: #ccc; width: 12px;"
+            "  margin: -3px 0; border-radius: 6px; }"
+            "QSlider::sub-page:horizontal { background: #888; border-radius: 3px; }"
+        )
+        self._volume_slider.valueChanged.connect(self._on_volume_changed)
+
+        def _volume_click(event):
+            if event.button() == Qt.MouseButton.LeftButton:
+                val = QStyle.sliderValueFromPosition(
+                    self._volume_slider.minimum(),
+                    self._volume_slider.maximum(),
+                    int(event.position().x()),
+                    self._volume_slider.width())
+                self._volume_slider.setValue(val)
+            QSlider.mousePressEvent(self._volume_slider, event)
+
+        self._volume_slider.mousePressEvent = _volume_click
+        audio_row.addWidget(self._volume_slider)
+
+        self._mute_btn = QPushButton("")
+        self._mute_btn.setIcon(theme.themed_icon("sound"))
+        self._mute_btn.setIconSize(QSize(16, 16))
+        self._mute_btn.setStyleSheet(ctrl_style)
+        self._mute_btn.setFixedSize(ctrl_btn_w, ctrl_btn_w)
+        self._mute_btn.clicked.connect(self._toggle_mute)
+        self._ctrl_buttons.append(self._mute_btn)
+        audio_row.addWidget(self._mute_btn)
+
+        btn_outer.addLayout(audio_row)
 
         main_layout.addWidget(btn_frame)
 
@@ -860,28 +1064,33 @@ class VideoAnnotator(QFrame):
 
     # Annotation data helpers
 
-    def _update_annotations(self):
-        self.state_annotations_tree.clear()
-        for evt in self.store.state_events:
-            start = format_time_human(evt["start_time"])
-            end = format_time_human(evt["end_time"]) if evt["end_time"] else ""
-            self.state_annotations_tree.addTopLevelItem(
-                QTreeWidgetItem([evt["Event"], start, end]))
-
-        self.point_annotations_tree.clear()
-        for evt in self.store.point_events:
-            self.point_annotations_tree.addTopLevelItem(
-                QTreeWidgetItem([evt["Event"], evt["time"]]))
-
-        QTimer.singleShot(50, self._scroll_annotations_to_bottom)
-
-    def _scroll_annotations_to_bottom(self):
-        for tree in (self.state_annotations_tree, self.point_annotations_tree):
-            n = tree.topLevelItemCount()
-            if n > 0:
-                tree.scrollToItem(
-                    tree.topLevelItem(n - 1),
-                    QAbstractItemView.ScrollHint.EnsureVisible)
+    def _update_annotations(self, scroll_to_bottom=False):
+        for tree, events, fmt_fn in [
+            (self.state_annotations_tree, self.store.state_events,
+             lambda evt: [evt["Event"],
+                          format_time_human(evt["start_time"]),
+                          format_time_human(evt["end_time"]) if evt["end_time"] else ""]),
+            (self.point_annotations_tree, self.store.point_events,
+             lambda evt: [evt["Event"], evt["time"]]),
+        ]:
+            scrollbar = tree.verticalScrollBar()
+            saved_pos = scrollbar.value()
+            tree.clear()
+            for evt in events:
+                item = QTreeWidgetItem(fmt_fn(evt))
+                if tree is self.state_annotations_tree:
+                    for col in (1, 2):
+                        item.setTextAlignment(
+                            col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                tree.addTopLevelItem(item)
+            if scroll_to_bottom:
+                n = tree.topLevelItemCount()
+                if n > 0:
+                    tree.scrollToItem(
+                        tree.topLevelItem(n - 1),
+                        QAbstractItemView.ScrollHint.EnsureVisible)
+            else:
+                scrollbar.setValue(saved_pos)
 
     def _populate_event_trees(self):
         self.state_events_tree.clear()
@@ -923,23 +1132,25 @@ class VideoAnnotator(QFrame):
         menu = QMenu(self.parent)
         menu.setStyleSheet(theme.menu_stylesheet())
 
-        theme_menu = menu.addMenu("Theme")
-        current = theme.current_theme()
-        for name in ("system", "dark", "light"):
-            action = theme_menu.addAction(name.capitalize())
-            action.setCheckable(True)
-            action.setChecked(name == current)
-            action.triggered.connect(
-                lambda checked, n=name: self._apply_theme(n))
-
         cfg = get_config()
 
-        controls_action = menu.addAction("Show Video Controls Toggle")
+        controls_action = menu.addAction("Show Floating Controls")
         controls_action.setCheckable(True)
-        controls_action.setChecked(cfg.get_show_video_controls_toggle())
+        controls_action.setChecked(
+            hasattr(self, "floating_controls_window")
+            and self.floating_controls_window is not None)
         controls_action.triggered.connect(
             lambda checked: self._toggle_floating_item(
                 "video_controls", checked))
+
+        waveform_action = menu.addAction("Show Audio Track")
+        waveform_action.setCheckable(True)
+        waveform_action.setChecked(
+            hasattr(self, "waveform_widget")
+            and self.waveform_widget.isVisible())
+        waveform_action.triggered.connect(
+            lambda checked: self._toggle_floating_item(
+                "waveform", checked))
 
         events_action = menu.addAction("Show Events Toggle")
         events_action.setCheckable(True)
@@ -956,12 +1167,10 @@ class VideoAnnotator(QFrame):
                 "zoom", checked))
 
         menu.addSeparator()
-        menu.addAction("Video Settings...").triggered.connect(
-            self._show_video_settings_dialog)
-        menu.addAction("Highlight Colors...").triggered.connect(
-            self._show_highlight_color_dialog)
-        menu.addAction("Button Colors...").triggered.connect(
-            self._show_button_color_dialog)
+        menu.addAction("Audio && Video Settings").triggered.connect(
+            self._show_av_settings_dialog)
+        menu.addAction("Appearance").triggered.connect(
+            self._show_colors_theme_dialog)
 
         btn = self.sender()
         if btn:
@@ -973,16 +1182,17 @@ class VideoAnnotator(QFrame):
                 self.dialog_open = False
 
     def _toggle_floating_item(self, item, checked):
+        from floating_controls import toggle_floating_controls
         cfg = get_config()
         if item == "video_controls":
-            cfg.set_show_video_controls_toggle(checked)
-            w = getattr(self, "controls_window", None)
-            if w:
-                w.setVisible(checked)
-            # Also hide/show the expanded controls panel
-            w2 = getattr(self, "floating_controls_window", None)
-            if w2 and not checked:
-                w2.setVisible(False)
+            has_panel = (hasattr(self, "floating_controls_window")
+                         and self.floating_controls_window is not None)
+            if checked and not has_panel:
+                toggle_floating_controls(self)
+            elif not checked and has_panel:
+                toggle_floating_controls(self)
+        elif item == "waveform":
+            self._toggle_waveform()
         elif item == "events":
             cfg.set_show_events_toggle(checked)
             w = getattr(self, "event_toggle_window", None)
@@ -997,176 +1207,42 @@ class VideoAnnotator(QFrame):
             w = getattr(self, "zoom_toggle_window", None)
             if w:
                 w.setVisible(checked)
+            w2 = getattr(self, "zoom_slider_window", None)
+            if w2 and not checked:
+                w2.setVisible(False)
 
-    def _show_video_settings_dialog(self):
-        from dialogs import show_video_settings_dialog
-        show_video_settings_dialog(self)
+    def _show_av_settings_dialog(self):
+        from dialogs import show_av_settings_dialog
+        show_av_settings_dialog(self)
 
-    def _show_highlight_color_dialog(self):
-        cfg = get_config()
-        state_hex = cfg.get_state_highlight_color()
-        point_hex = cfg.get_point_highlight_color()
-        state_color = (QColor(state_hex) if state_hex
-                       else theme.qcolor("active_color"))
-        point_color = (QColor(point_hex) if point_hex
-                       else theme.qcolor("highlight_color"))
-
-        dlg = QDialog(self.parent)
-        dlg.setWindowTitle("Highlight Colors")
-        theme.apply_dialog_theme(dlg)
-
-
-        layout = QGridLayout(dlg)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        colors = {"state": state_color, "point": point_color}
-
-        def make_swatch(key):
-            btn = QPushButton()
-            btn.setFixedSize(60, 28)
-            _update_swatch(btn, colors[key])
-            btn.clicked.connect(lambda: _pick_color(key, btn))
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            return btn
-
-        def _update_swatch(btn, c):
-            btn.setStyleSheet(
-                f"QPushButton {{ background-color: {c.name()};"
-                f"  border: 1px solid grey; border-radius: 4px; }}"
-                f"QPushButton:hover {{ border: 2px solid white; }}")
-
-        def _pick_color(key, btn):
-            c = QColorDialog.getColor(
-                colors[key], dlg, f"Select {key.title()} Highlight Color")
-            if c.isValid():
-                colors[key] = c
-                _update_swatch(btn, c)
-
-        layout.addWidget(QLabel("State Event Highlight:"), 0, 0)
-        layout.addWidget(make_swatch("state"), 0, 1)
-
-        layout.addWidget(QLabel("Point Event Highlight:"), 1, 0)
-        layout.addWidget(make_swatch("point"), 1, 1)
-
-        # Reset to defaults button
-        def _reset():
-            colors["state"] = theme.qcolor("active_color")
-            colors["point"] = theme.qcolor("highlight_color")
-            for i, key in enumerate(("state", "point")):
-                btn = layout.itemAtPosition(i, 1).widget()
-                _update_swatch(btn, colors[key])
-
-        btn_row = QHBoxLayout()
-        reset_btn = QPushButton("Reset to Defaults")
-        reset_btn.clicked.connect(_reset)
-        btn_row.addWidget(reset_btn)
-        btn_row.addStretch()
-        ok_btn = QPushButton("OK")
-        ok_btn.clicked.connect(dlg.accept)
-        btn_row.addWidget(ok_btn)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(dlg.reject)
-        btn_row.addWidget(cancel_btn)
-        layout.addLayout(btn_row, 2, 0, 1, 2)
-
-        self.dialog_open = True
-
-        def _on_finished(result):
-            self.dialog_open = False
-            dlg.deleteLater()
-            if result == QDialog.DialogCode.Accepted:
-                cfg.set_state_highlight_color(colors["state"].name())
-                cfg.set_point_highlight_color(colors["point"].name())
-                self._populate_event_trees()
-
-        dlg.finished.connect(_on_finished)
-        dlg.open()
-
-    def _show_button_color_dialog(self):
+    def _show_colors_theme_dialog(self):
         from floating_controls import toggle_event_buttons
-        cfg = get_config()
-        point_hex = cfg.get_point_button_color()
-        state_hex = cfg.get_state_button_color()
-        point_color = (QColor(point_hex) if point_hex
-                       else theme.qcolor("float_point_bg"))
-        state_color = (QColor(state_hex) if state_hex
-                       else theme.qcolor("float_state_bg"))
-
-        dlg = QDialog(self.parent)
-        dlg.setWindowTitle("Button Colors")
-        theme.apply_dialog_theme(dlg)
-
-
-        layout = QGridLayout(dlg)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        colors = {"point": point_color, "state": state_color}
-
-        def make_swatch(key):
-            btn = QPushButton()
-            btn.setFixedSize(60, 28)
-            _update_swatch(btn, colors[key])
-            btn.clicked.connect(lambda: _pick_color(key, btn))
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            return btn
-
-        def _update_swatch(btn, c):
-            btn.setStyleSheet(
-                f"QPushButton {{ background-color: {c.name()};"
-                f"  border: 1px solid grey; border-radius: 4px; }}"
-                f"QPushButton:hover {{ border: 2px solid white; }}")
-
-        def _pick_color(key, btn):
-            c = QColorDialog.getColor(
-                colors[key], dlg, f"Select {key.title()} Button Color")
-            if c.isValid():
-                colors[key] = c
-                _update_swatch(btn, c)
-
-        layout.addWidget(QLabel("Point Event Buttons:"), 0, 0)
-        layout.addWidget(make_swatch("point"), 0, 1)
-
-        layout.addWidget(QLabel("State Event Buttons:"), 1, 0)
-        layout.addWidget(make_swatch("state"), 1, 1)
-
-        def _reset():
-            colors["point"] = theme.qcolor("float_point_bg")
-            colors["state"] = theme.qcolor("float_state_bg")
-            for i, key in enumerate(("point", "state")):
-                btn = layout.itemAtPosition(i, 1).widget()
-                _update_swatch(btn, colors[key])
-
-        btn_row = QHBoxLayout()
-        reset_btn = QPushButton("Reset to Defaults")
-        reset_btn.clicked.connect(_reset)
-        btn_row.addWidget(reset_btn)
-        btn_row.addStretch()
-        ok_btn = QPushButton("OK")
-        ok_btn.clicked.connect(dlg.accept)
-        btn_row.addWidget(ok_btn)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(dlg.reject)
-        btn_row.addWidget(cancel_btn)
-        layout.addLayout(btn_row, 2, 0, 1, 2)
-
         self.dialog_open = True
 
-        def _on_finished(result):
-            self.dialog_open = False
-            dlg.deleteLater()
-            if result == QDialog.DialogCode.Accepted:
-                cfg.set_point_button_color(colors["point"].name())
-                cfg.set_state_button_color(colors["state"].name())
-                # Refresh event buttons if they're open
-                if (hasattr(self, "event_buttons_window")
-                        and self.event_buttons_window):
-                    toggle_event_buttons(self)
-                    toggle_event_buttons(self)
+        def _on_accept(new_theme, colors):
+            # Full theme refresh (panels, trees, buttons, etc.)
+            self._apply_theme(new_theme)
+            # Refresh annotator-specific elements
+            self._populate_event_trees()
+            self.progress_bar.set_fill_color(colors["progress_fill"])
+            self.progress_bar.update()
+            if hasattr(self, 'waveform_widget'):
+                cfg = get_config()
+                self.waveform_widget.set_fill_color(
+                    colors.get("waveform_fill", QColor(0, 150, 255)))
+                self.waveform_widget.set_opacity(cfg.get_waveform_opacity())
+                new_h = int(self.progress_bar_height
+                            * cfg.get_waveform_height_multiplier())
+                self.waveform_widget.setFixedHeight(new_h)
+                if self.waveform_widget.isVisible():
+                    self.video_frame.setFixedHeight(self.video_height - new_h)
+            if (hasattr(self, "event_buttons_window")
+                    and self.event_buttons_window):
+                toggle_event_buttons(self)
+                toggle_event_buttons(self)
 
-        dlg.finished.connect(_on_finished)
-        dlg.open()
+        dlg = show_colors_theme_dialog(self.parent, on_accept=_on_accept)
+        dlg.finished.connect(lambda _: setattr(self, 'dialog_open', False))
 
     def _apply_video_settings(self):
         """Apply saved video settings to the player. Per-video overrides global"""
@@ -1188,7 +1264,7 @@ class VideoAnnotator(QFrame):
         cfg = get_config()
         cfg.update_theme(name)
 
-        heading_font = "12px"
+        heading_font = "14px"
 
         # Re-apply global stylesheet
         app = QApplication.instance()
@@ -1198,7 +1274,8 @@ class VideoAnnotator(QFrame):
         self.parent.apply_theme()
 
         # Re-apply annotation panel frame
-        self.annotation_frame.setStyleSheet(theme.panel_frame_stylesheet())
+        self.annotation_frame.setStyleSheet(
+            f"QFrame {{ background-color: {theme.color('panel_bg')}; border: none; }}")
 
         # Re-apply tree styles
         tree_style = theme.tree_stylesheet(heading_font)
@@ -1217,27 +1294,49 @@ class VideoAnnotator(QFrame):
             hw.setStyleSheet(header_bg)
 
         # Re-apply small panel buttons (Sort, gear)
-        btn_style = theme.button_stylesheet(heading_font)
+        btn_style = theme.button_stylesheet("11px")
         for btn in self._panel_buttons:
             btn.setStyleSheet(btn_style)
+        if hasattr(self, '_gear_btn'):
+            self._gear_btn.setIcon(theme.themed_icon("settings"))
+
+        # Re-apply transport control buttons
+        ctrl_style = (
+            f"QPushButton {{ background: transparent; color: {theme.color('text')};"
+            f"  border: none; font-size: 18px; padding: 0px; }}"
+            f"QPushButton:hover {{ background: rgba(128,128,128,40); border-radius: 3px; }}"
+            f"QPushButton:pressed {{ background: rgba(128,128,128,80); border-radius: 3px; }}"
+        )
+        ctrl_icons = ["back_big", "back", "play", "forward", "forward_big",
+                      "minus", "plus"]
+        for i, btn in enumerate(getattr(self, '_ctrl_buttons', [])):
+            btn.setStyleSheet(ctrl_style)
+            if i < len(ctrl_icons):
+                icon_name = ctrl_icons[i]
+                if i == 2:
+                    paused = getattr(self.player, 'pause', True)
+                    icon_name = "play" if paused else "pause"
+                btn.setIcon(theme.themed_icon(icon_name))
+        mute_btn = getattr(self, '_mute_btn', None)
+        if mute_btn:
+            muted = getattr(self.player, 'mute', False)
+            mute_btn.setIcon(theme.themed_icon("mute" if muted else "sound"))
 
         # Re-apply big bottom buttons
-        big_btn_style = theme.button_large_stylesheet(heading_font)
+        big_btn_style = theme.button_large_stylesheet("11px")
         for btn in self._big_buttons:
             btn.setStyleSheet(big_btn_style)
-
-        # Re-apply coding info label
-        self.coding_info_label.setStyleSheet(theme.coding_info_label_style())
 
         # Refresh QPainter-based widgets
         self.progress_bar.update()
 
         # Refresh floating toggle buttons
-        for attr in ("event_toggle_button", "controls_button"):
+        for attr in ("event_toggle_button",):
             btn = getattr(self, attr, None)
             if btn:
                 try:
                     btn.setStyleSheet(theme.toggle_btn_stylesheet())
+                    btn.setIcon(theme.themed_icon("event_toggle"))
                 except RuntimeError:
                     pass
         if hasattr(self, "zoom_toggle_button") and self.zoom_toggle_button:
@@ -1246,6 +1345,7 @@ class VideoAnnotator(QFrame):
                     self.zoom_toggle_button.setStyleSheet(theme.zoom_active_stylesheet())
                 else:
                     self.zoom_toggle_button.setStyleSheet(theme.toggle_btn_stylesheet())
+                self.zoom_toggle_button.setIcon(theme.themed_icon("zoom"))
             except RuntimeError:
                 pass
 
@@ -1279,7 +1379,8 @@ class VideoAnnotator(QFrame):
             return False
         ok = self.store.save_session_state(
             float(current), self.coding_start, self.coding_duration,
-            self.coding_end, self.coding_end_reached)
+            self.coding_end, self.coding_end_reached,
+            self.limit_timeline_to_coding)
         if not ok and not getattr(self, "_auto_saving", False):
             self.on_write_error(
                 "Cannot save session state.\n"
@@ -1306,6 +1407,7 @@ class VideoAnnotator(QFrame):
         self.coding_duration = state["coding_duration"]
         self.coding_end = state["coding_end"]
         self.coding_end_reached = state["coding_end_reached"]
+        self.limit_timeline_to_coding = state.get("limit_timeline_to_coding", False)
         self._update_mark_complete_btn(state.get("completed", False))
         self.update_coding_info_display()
 
@@ -1375,14 +1477,8 @@ class VideoAnnotator(QFrame):
             Qt.Key.Key_Space: blocked(self.toggle_play_pause),
             (Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier): blocked(lambda: self.seek_relative(1000)),
             (Qt.Key.Key_Left, Qt.KeyboardModifier.ShiftModifier): blocked(lambda: self.seek_relative(-1000)),
-            (Qt.Key.Key_D, Qt.KeyboardModifier.ShiftModifier): blocked(lambda: self.seek_relative(1000)),
-            (Qt.Key.Key_A, Qt.KeyboardModifier.ShiftModifier): blocked(lambda: self.seek_relative(-1000)),
             (Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier): blocked(lambda: self.seek_relative(5000)),
             (Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier): blocked(lambda: self.seek_relative(-5000)),
-            (Qt.Key.Key_D, Qt.KeyboardModifier.NoModifier): blocked(lambda: self.seek_relative(5000)),
-            (Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier): blocked(lambda: self.seek_relative(-5000)),
-            Qt.Key.Key_W: blocked(lambda: self.seek_relative(10000)),
-            Qt.Key.Key_S: blocked(lambda: self.seek_relative(-10000)),
             Qt.Key.Key_Equal: blocked(lambda: self.change_speed(1)),
             Qt.Key.Key_Plus: blocked(lambda: self.change_speed(1)),
             Qt.Key.Key_Minus: blocked(lambda: self.change_speed(-1)),
@@ -1392,7 +1488,19 @@ class VideoAnnotator(QFrame):
             Qt.Key.Key_Delete: blocked(self.delete_annotation),
             (Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier): blocked(self.undo_delete),
             (Qt.Key.Key_Z, Qt.KeyboardModifier.MetaModifier): blocked(self.undo_delete),
+            Qt.Key.Key_Comma: blocked(self.frame_back_step),
+            Qt.Key.Key_Period: blocked(self.frame_step),
         }
+
+        if get_config().get_wasd_navigation():
+            self.key_bindings.update({
+                (Qt.Key.Key_D, Qt.KeyboardModifier.ShiftModifier): blocked(lambda: self.seek_relative(1000)),
+                (Qt.Key.Key_A, Qt.KeyboardModifier.ShiftModifier): blocked(lambda: self.seek_relative(-1000)),
+                (Qt.Key.Key_D, Qt.KeyboardModifier.NoModifier): blocked(lambda: self.seek_relative(5000)),
+                (Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier): blocked(lambda: self.seek_relative(-5000)),
+                Qt.Key.Key_W: blocked(lambda: self.seek_relative(10000)),
+                Qt.Key.Key_S: blocked(lambda: self.seek_relative(-10000)),
+            })
 
     def eventFilter(self, obj, event):
         if self._shutting_down:
@@ -1451,7 +1559,7 @@ class VideoAnnotator(QFrame):
                     # First click: zoom in centered on click location
                     self._zoom_pan_x = 0.5 - click_x
                     self._zoom_pan_y = 0.5 - click_y
-                    self.player.video_zoom = 1
+                    self.player.video_zoom = math.log2(self._zoom_multiplier)
                     self.player.video_pan_x = self._zoom_pan_x
                     self.player.video_pan_y = self._zoom_pan_y
                 else:
@@ -1471,8 +1579,9 @@ class VideoAnnotator(QFrame):
                     displayed_h = w * vid_h / vid_w
                     dx = (pos.x() - self._drag_start_x) / w
                     dy = (pos.y() - self._drag_start_y) / displayed_h
-                    self._zoom_pan_x = self._drag_pan_start_x + dx / 2.0
-                    self._zoom_pan_y = self._drag_pan_start_y + dy / 2.0
+                    scale = 2 ** (self.player.video_zoom or 1)
+                    self._zoom_pan_x = self._drag_pan_start_x + dx / scale
+                    self._zoom_pan_y = self._drag_pan_start_y + dy / scale
                     self.player.video_pan_x = self._zoom_pan_x
                     self.player.video_pan_y = self._zoom_pan_y
                     return True
@@ -1584,7 +1693,7 @@ class VideoAnnotator(QFrame):
         })
         self.used_point_events.add(key)
         QTimer.singleShot(100, lambda: self.used_point_events.discard(key))
-        self._update_annotations()
+        self._update_annotations(scroll_to_bottom=True)
         self._populate_event_trees()
 
     def handle_state_event(self, key, frame_ts, formatted_ts):
@@ -1646,7 +1755,7 @@ class VideoAnnotator(QFrame):
                 "Mutually_Exclusive": "True" if me_group else "False",
                 "Notes": "",
             })
-            self._update_annotations()
+            self._update_annotations(scroll_to_bottom=True)
             self._populate_event_trees()
             return True
 
@@ -1702,22 +1811,95 @@ class VideoAnnotator(QFrame):
     # Playback controls
 
     def toggle_play_pause(self):
-        self.player.pause = not self.player.pause
-        logger.debug("Play/pause toggled: paused=%s", self.player.pause)
-        self.update_play_pause_icon()
+        paused = not self.player.pause
+        self.player.pause = paused
+        logger.debug("Play/pause toggled: paused=%s", paused)
+        self._set_play_pause_icon(paused)
 
     def update_play_pause_icon(self):
+        paused = getattr(self.player, 'pause', True)
+        self._set_play_pause_icon(paused)
+
+    def _set_play_pause_icon(self, paused):
+        icon = theme.themed_icon("play" if paused else "pause")
         btn = getattr(self, "play_pause_btn", None)
         if btn and btn.isVisible():
             try:
-                btn.setText("\u25B6" if self.player.pause else "\u23F8")
+                btn.setIcon(icon)
             except RuntimeError:
                 self.play_pause_btn = None
+        panel_btn = getattr(self, "_panel_play_pause_btn", None)
+        if panel_btn:
+            try:
+                panel_btn.setIcon(icon)
+            except RuntimeError:
+                self._panel_play_pause_btn = None
+
+    def _restore_volume(self):
+        cfg = get_config()
+        vol = cfg.get_volume()
+        muted = cfg.get_muted()
+        self._volume_slider.blockSignals(True)
+        if muted:
+            self._volume_slider.setValue(0)
+        else:
+            self._volume_slider.setValue(vol)
+        self._volume_slider.blockSignals(False)
+        if self.player:
+            self.player.mute = muted
+            self.player.volume = vol
+        self._mute_btn.setIcon(theme.themed_icon("mute" if muted else "sound"))
+
+    def _toggle_mute(self):
+        if not self.player:
+            return
+        cfg = get_config()
+        if not self.player.mute:
+            # Mute: save current volume, move slider to 0
+            self.player.mute = True
+            cfg.set_muted(True)
+            self._volume_slider.blockSignals(True)
+            self._volume_slider.setValue(0)
+            self._volume_slider.blockSignals(False)
+        else:
+            # Unmute: restore saved volume
+            self.player.mute = False
+            cfg.set_muted(False)
+            vol = cfg.get_volume()
+            self._volume_slider.blockSignals(True)
+            self._volume_slider.setValue(vol)
+            self._volume_slider.blockSignals(False)
+        self._mute_btn.setIcon(theme.themed_icon("mute" if self.player.mute else "sound"))
+
+    def _on_volume_changed(self, value):
+        if not self.player:
+            return
+        cfg = get_config()
+        if value == 0 and not self.player.mute:
+            # Slider dragged to zero: mute
+            self.player.mute = True
+            cfg.set_muted(True)
+            self._mute_btn.setIcon(theme.themed_icon("mute"))
+        elif value > 0 and self.player.mute:
+            # Slider dragged up from zero: unmute
+            self.player.mute = False
+            cfg.set_muted(False)
+            self._mute_btn.setIcon(theme.themed_icon("sound"))
+        if value > 0:
+            cfg.set_volume(value)
+        self.player.volume = value
 
     def seek_relative(self, offset_ms):
         total = self.player.duration or 0
         current = self.player.time_pos or 0
         new_time = current + offset_ms / 1000.0
+
+        # Clamp to coding segment when timeline is limited
+        if (self.limit_timeline_to_coding
+                and self.coding_start is not None
+                and self.coding_end is not None
+                and self.coding_end > self.coding_start):
+            new_time = max(self.coding_start, min(new_time, self.coding_end))
 
         if new_time >= total:
             new_time = max(0, total - 0.5)
@@ -1728,6 +1910,23 @@ class VideoAnnotator(QFrame):
 
         self._reset_coding_end_flag()
         self.update_progress()
+
+    def frame_step(self):
+        """Advance one frame forward."""
+        self.player.command("frame-step")
+        self._reset_coding_end_flag()
+        QTimer.singleShot(100, self.update_progress)
+
+    def frame_back_step(self):
+        """Step one frame backward using precise seek for responsiveness."""
+        self.player.pause = True
+        fps = self.player.container_fps or self.player.estimated_vf_fps
+        if fps and fps > 0:
+            self.player.command("seek", -1.0 / fps, "relative+exact")
+        else:
+            self.player.command("frame-back-step")
+        self._reset_coding_end_flag()
+        QTimer.singleShot(100, self.update_progress)
 
     def change_speed(self, delta):
         steps = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 25]
@@ -1798,17 +1997,22 @@ class VideoAnnotator(QFrame):
         if not item:
             return
 
-        tree.setCurrentItem(item)
-        self.selected_item = item
-        self.selected_index = tree.indexOfTopLevelItem(item)
-
+        selected = tree.selectedItems()
         menu = QMenu(self.parent)
         menu.setStyleSheet(theme.menu_stylesheet())
-        menu.addAction("Edit", self.edit_annotation)
-        menu.addAction("Add Note", lambda: show_note_dialog(self))
-        menu.addAction("View Details", lambda: show_annotation_details(self))
-        menu.addAction("Skip to Annotation", self._skip_to_annotation)
-        menu.addAction("Delete", self.delete_annotation)
+
+        if len(selected) > 1:
+            count = len(selected)
+            menu.addAction(f"Delete Selected ({count})",
+                           self._delete_selected_annotations)
+        else:
+            tree.setCurrentItem(item)
+            self.selected_item = item
+            self.selected_index = tree.indexOfTopLevelItem(item)
+            menu.addAction("View Details", lambda: show_annotation_details(self))
+            menu.addAction("Skip to Annotation", self._skip_to_annotation)
+            menu.addAction("Delete", self.delete_annotation)
+
         menu.exec(tree.viewport().mapToGlobal(point))
 
     def edit_annotation(self):
@@ -1828,6 +2032,44 @@ class VideoAnnotator(QFrame):
             self.player.time_pos = t
             self.update_progress()
             self.player.pause = True
+
+    def _delete_selected_annotations(self):
+        if self.selected_treeview is None:
+            return
+
+        if not self.store.check_file_access():
+            if self.player:
+                self.player.pause = True
+            self.on_write_error()
+            return
+
+        tree = self.selected_treeview
+        selected = tree.selectedItems()
+        if not selected:
+            return
+
+        indices = sorted(
+            [tree.indexOfTopLevelItem(item) for item in selected],
+            reverse=True)
+
+        is_state = (tree == self.state_annotations_tree)
+        lst = self.store.state_events if is_state else self.store.point_events
+        atype = "state" if is_state else "point"
+
+        for idx in indices:
+            if 0 <= idx < len(lst):
+                deleted = dict(lst[idx])
+                self.undo_stack.append((atype, idx, deleted))
+                lst.pop(idx)
+
+        if not self.store.save_sorted_annotations():
+            return
+
+        self._update_annotations()
+        self._populate_event_trees()
+        self.selected_treeview = None
+        self.selected_item = None
+        self.selected_index = None
 
     def delete_annotation(self):
         if self.selected_treeview is None or self.selected_item is None:
@@ -2189,7 +2431,7 @@ class VideoAnnotator(QFrame):
                         self.event_buttons_window = None
                         _create_event_buttons(self)
 
-                    QTimer.singleShot(100, self._scroll_annotations_to_bottom)
+                    self._update_annotations(scroll_to_bottom=True)
                     (self.coding_start, self.coding_duration,
                      self.coding_end, self.coding_end_reached) = saved
                     self.update_coding_info_display()
@@ -2204,6 +2446,8 @@ class VideoAnnotator(QFrame):
 
             def _on_editor_finished(_result):
                 self.dialog_open = False
+                if not editor.start_video_flag:
+                    on_close(self.event_key_file)
                 if self.player and was_playing:
                     self.player.pause = False
 
@@ -2258,9 +2502,45 @@ class VideoAnnotator(QFrame):
 
     # Cleanup
 
+    def _stop_player_safe(self):
+        """Stop mpv and free GL resources in the correct order.
+
+        Must be called with self._shutting_down already True.
+        Sequence: pause → stop (halts decoder) → disconnect signals
+        → drain event queue → free render context → terminate player.
+        """
+        if not hasattr(self, "player") or not self.player:
+            return
+        try:
+            self.player.pause = True
+            self.player.stop()
+        except Exception:
+            pass
+        # Disconnect the frame-ready signal so queued emissions become no-ops
+        if hasattr(self, "gl_widget") and self.gl_widget:
+            try:
+                self.gl_widget._frame_ready.disconnect(
+                    self.gl_widget._on_frame_signal)
+            except (RuntimeError, TypeError):
+                pass
+        # Drain any signals that were queued before stop() took effect
+        QApplication.processEvents(
+            QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+        # NOW safe to free the render context (no concurrent decoder activity)
+        if hasattr(self, "gl_widget") and self.gl_widget:
+            self.gl_widget.cleanup()
+            self.gl_widget.player = None
+        try:
+            self.player.terminate()
+        except Exception:
+            pass
+        self.player = None
+
     def on_closing(self):
         logger.info("on_closing() started")
         self._shutting_down = True
+        if hasattr(self, 'waveform_widget'):
+            self.waveform_widget.cancel_extraction()
         try:
             exit_fullscreen_platform()
 
@@ -2280,8 +2560,9 @@ class VideoAnnotator(QFrame):
                 pass
 
             for attr in ("floating_controls_window", "event_buttons_window",
-                         "event_toggle_window", "controls_window",
-                         "zoom_toggle_window", "edit_dialog"):
+                         "event_toggle_window",
+                         "zoom_toggle_window", "zoom_slider_window",
+                         "edit_dialog"):
                 w = getattr(self, attr, None)
                 if w is not None:
                     w.deleteLater()
@@ -2293,16 +2574,7 @@ class VideoAnnotator(QFrame):
 
             if hasattr(self, "player") and self.player:
                 self.save_session_state()
-                self.player.pause = True
-
-                # Free render context before stopping the player
-                if hasattr(self, "gl_widget") and self.gl_widget:
-                    self.gl_widget.cleanup()
-                    self.gl_widget.player = None
-
-                self.player.stop()
-                self.player.terminate()
-                self.player = None
+                self._stop_player_safe()
 
             self.parent.close()
         except Exception:
@@ -2337,23 +2609,12 @@ class VideoAnnotator(QFrame):
                     self.save_session_state()
                 except Exception:
                     pass
-                try:
-                    self.player.pause = True
-
-                    # Free render context before stopping the player
-                    if hasattr(self, "gl_widget") and self.gl_widget:
-                        self.gl_widget.cleanup()
-                        self.gl_widget.player = None
-
-                    self.player.stop()
-                    self.player.terminate()
-                except Exception:
-                    pass
-                self.player = None
+                self._stop_player_safe()
 
             for attr in ("floating_controls_window", "event_buttons_window",
-                         "event_toggle_window", "controls_window",
-                         "zoom_toggle_window", "edit_dialog"):
+                         "event_toggle_window",
+                         "zoom_toggle_window", "zoom_slider_window",
+                         "edit_dialog"):
                 w = getattr(self, attr, None)
                 if w is not None:
                     try:

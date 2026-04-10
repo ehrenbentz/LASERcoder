@@ -4,9 +4,10 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QLineEdit, QTextEdit, QGroupBox,
     QGridLayout, QDialogButtonBox, QMessageBox, QWidget,
-    QRadioButton, QSlider, QFrame,
+    QRadioButton, QSlider, QFrame, QColorDialog, QApplication,
 )
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor
 
 from annotation_store import format_time_human, parse_time
 from config_manager import get_config
@@ -137,7 +138,7 @@ def show_coding_start_dialog(annotator):
     grid.addWidget(et_dur_value, 4, 1, 1, 2, Qt.AlignmentFlag.AlignLeft)
 
     # Row 5 — clear button
-    clear_btn = QPushButton("Clear Coding Settings")
+    clear_btn = QPushButton("Clear")
 
     def _clear():
         start_input.clear(); hours_in.clear(); mins_in.clear(); secs_in.clear()
@@ -145,12 +146,22 @@ def show_coding_start_dialog(annotator):
         annotator.coding_start = 0
         annotator.coding_duration = None
         annotator.coding_end = None
+        annotator.limit_timeline_to_coding = False
+        limit_cb.setChecked(False)
         annotator.update_coding_info_display()
 
     clear_btn.clicked.connect(_clear)
-    grid.addWidget(clear_btn, 5, 0, 1, 3)
 
     layout.addWidget(coding_group)
+
+    # Timeline limiting checkbox
+    from PySide6.QtWidgets import QCheckBox
+    limit_cb = QCheckBox("Show only coding segment in timeline")
+    limit_cb.setChecked(getattr(annotator, 'limit_timeline_to_coding', False))
+    limit_cb.setToolTip(
+        "When checked, the progress bar and waveform show only the\n"
+        "coding segment instead of the full video.")
+    layout.addWidget(limit_cb)
 
     # Visibility toggle
     def _update_vis():
@@ -228,12 +239,19 @@ def show_coding_start_dialog(annotator):
                     annotator.coding_duration = None
 
             annotator.coding_end_reached = False
+
+            # Set timeline limiting flag
+            if annotator.coding_end is not None and annotator.coding_duration is not None:
+                annotator.limit_timeline_to_coding = limit_cb.isChecked()
+            else:
+                annotator.limit_timeline_to_coding = False
+
             annotator.update_coding_info_display()
 
             if annotator.coding_start > 0:
                 annotator.player.time_pos = annotator.coding_start
-                annotator.update_progress()
 
+            annotator.update_progress()
             annotator.save_session_state()
             dialog.accept()
         except ValueError as exc:
@@ -242,7 +260,12 @@ def show_coding_start_dialog(annotator):
 
     bbox.accepted.connect(_save)
     bbox.rejected.connect(dialog.reject)
-    layout.addWidget(bbox)
+
+    btn_row = QHBoxLayout()
+    btn_row.addWidget(clear_btn)
+    btn_row.addStretch()
+    btn_row.addWidget(bbox)
+    layout.addLayout(btn_row)
 
     def _on_finished(_result):
         annotator.dialog_open = False
@@ -337,7 +360,7 @@ def show_note_dialog(annotator):
 
 
 def show_annotation_details(annotator):
-    """Display a read-only details dialog for the selected annotation"""
+    """Display an editable details dialog for the selected annotation"""
     if not hasattr(annotator, "selected_treeview") or not annotator.selected_item:
         return
 
@@ -352,140 +375,80 @@ def show_annotation_details(annotator):
 
     dlg = QDialog(annotator.parent)
     dlg.setWindowTitle(f"Annotation Details - {annotation['Event']}")
-
     _apply_dialog_theme(dlg)
-    dlg.resize(500, 400)
+    dlg.resize(500, 500)
 
     main_lay = QVBoxLayout(dlg)
     main_lay.setContentsMargins(15, 15, 15, 15)
 
-    details_w = QWidget()
-    grid = QGridLayout(details_w)
+    # Read-only info section
+    info_w = QWidget()
+    grid = QGridLayout(info_w)
     grid.setColumnStretch(1, 1)
-    main_lay.addWidget(details_w)
-
     pairs = [
         ("Event:", annotation["Event"]),
         ("Type:", atype),
         ("Video:", annotator.store.video_name),
     ]
-
     if atype == "State":
-        st = format_time_human(annotation["start_time"])
-        et = format_time_human(annotation["end_time"]) if annotation["end_time"] is not None else "NA"
-        dur = (format_time_human(annotation["end_time"] - annotation["start_time"])
-               if annotation["end_time"] is not None and annotation["start_time"] is not None
-               else "NA")
-        pairs += [
-            ("Start Time:", st), ("End Time:", et), ("Duration:", dur),
-            ("Mutually Exclusive:", annotation.get("Mutually_Exclusive", "False")),
-        ]
-    else:
-        pairs.append(("Time:", annotation["time"]))
-
-    if "Manual_Edit" in annotation:
-        pairs.append(("Manually Edited:", str(annotation["Manual_Edit"])))
-
+        pairs.append(("Mutually Exclusive:",
+                       annotation.get("Mutually_Exclusive", "False")))
     for row, (lbl, val) in enumerate(pairs):
         l = QLabel(lbl); l.setStyleSheet("font-weight: bold;")
         grid.addWidget(l, row, 0)
         grid.addWidget(QLabel(val), row, 1)
+    main_lay.addWidget(info_w)
 
+    # Editable timestamp section
+    form = QFormLayout()
+    entries = {}
+    if atype == "State":
+        start_entry = QLineEdit()
+        start_entry.setText(format_time_human(annotation["start_time"]))
+        form.addRow("Start:", start_entry)
+        entries["H_Start"] = start_entry
+
+        end_entry = QLineEdit()
+        if annotation["end_time"] is not None:
+            end_entry.setText(format_time_human(annotation["end_time"]))
+        form.addRow("End:", end_entry)
+        entries["H_End"] = end_entry
+
+        dur = (format_time_human(annotation["end_time"] - annotation["start_time"])
+               if annotation["end_time"] is not None
+               and annotation["start_time"] is not None
+               else "NA")
+        dur_label = QLabel(dur)
+        form.addRow("Duration:", dur_label)
+    else:
+        time_entry = QLineEdit()
+        time_entry.setText(annotation["time"])
+        form.addRow("Time:", time_entry)
+        entries["H_Start"] = time_entry
+    main_lay.addLayout(form)
+
+    # Separator
     sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
     sep.setFrameShadow(QFrame.Shadow.Sunken)
     main_lay.addWidget(sep)
 
+    # Notes section
     main_lay.addWidget(QLabel("Notes:"))
-    notes_box = QTextEdit()
-    notes_box.setMinimumHeight(100)
-    notes_box.setText(annotation.get("Notes", "").replace(" . ", "\n"))
-    notes_box.setReadOnly(True)
-    main_lay.addWidget(notes_box)
-
-    btn_f = QWidget()
-    btn_l = QHBoxLayout(btn_f)
-    btn_l.setContentsMargins(0, 10, 0, 0)
-    edit_btn = QPushButton("Edit")
-    edit_btn.clicked.connect(lambda: (
-        setattr(dlg, '_open_edit', True), dlg.accept()))
-    close_btn = QPushButton("Close")
-    close_btn.clicked.connect(dlg.reject)
-    btn_l.addWidget(edit_btn); btn_l.addStretch(); btn_l.addWidget(close_btn)
-    main_lay.addWidget(btn_f)
-
-    def _on_finished(_result):
-        open_edit = getattr(dlg, '_open_edit', False)
-        annotator.dialog_open = False
-        dlg.deleteLater()
-        if open_edit:
-            show_comprehensive_edit(annotator, annotation, atype)
-
-    dlg.finished.connect(_on_finished)
-    dlg.open()
-
-
-
-# Comprehensive edit dialog
-
-
-def show_comprehensive_edit(annotator, annotation, annotation_type):
-    """Open a combined timing + notes edit dialog"""
-    if not annotator.store.check_file_access():
-        if hasattr(annotator, "player") and annotator.player:
-            annotator.player.pause = True
-        annotator.on_write_error()
-        return
-
-    annotator.dialog_open = True
-
-    dlg = QDialog(annotator.parent)
-    dlg.setWindowTitle(f"Edit {annotation_type} Annotation")
-
-    _apply_dialog_theme(dlg)
-    dlg.resize(400, 500)
-
-    main_lay = QVBoxLayout(dlg)
-    main_lay.setContentsMargins(15, 15, 15, 15)
-
-    form = QFormLayout()
-    entries = {}
-    fields = ["Event"]
-    if annotation_type == "State":
-        fields += ["H_Start", "H_End"]
-    else:
-        fields.append("H_Start")
-
-    for field in fields:
-        entry = QLineEdit()
-        if field == "Event":
-            entry.setText(annotation["Event"])
-        elif field == "H_Start":
-            if annotation_type == "State":
-                entry.setText(format_time_human(annotation["start_time"]))
-            else:
-                entry.setText(annotation["time"])
-        elif field == "H_End" and annotation["end_time"] is not None:
-            entry.setText(format_time_human(annotation["end_time"]))
-        form.addRow(field.replace("H_", "") + ":", entry)
-        entries[field] = entry
-
-    main_lay.addLayout(form)
-
-    main_lay.addWidget(QLabel("Notes:"))
-    existing = annotation.get("Notes", "").replace(" . ", "\n")
     notes_text = QTextEdit()
-    notes_text.setMinimumHeight(150)
-    notes_text.setText(existing)
+    notes_text.setMinimumHeight(120)
+    notes_text.setText(annotation.get("Notes", "").replace(" . ", "\n"))
     main_lay.addWidget(notes_text)
 
     # Store originals for rollback
-    originals = {"Event": annotation["Event"], "Notes": annotation.get("Notes", "")}
-    if annotation_type == "State":
+    originals = {"Event": annotation["Event"],
+                 "Notes": annotation.get("Notes", "")}
+    if atype == "State":
         originals["start_time"] = annotation["start_time"]
         originals["end_time"] = annotation["end_time"]
     else:
         originals["time"] = annotation["time"]
 
+    # Buttons
     btn_f = QWidget()
     btn_l = QHBoxLayout(btn_f)
 
@@ -494,26 +457,27 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
             annotator.on_write_error()
             return
         vals = {f: e.text().strip() for f, e in entries.items()}
-        new_note = notes_text.toPlainText().strip().replace("\n", " . ")
+        new_note = (notes_text.toPlainText().strip()
+                    .replace("\n", " . ").replace("\r", " . "))
 
-        if annotation_type == "State":
+        if atype == "State":
             try:
                 new_start = parse_time(vals["H_Start"])
                 new_end = parse_time(vals["H_End"])
             except ValueError:
                 show_message(annotator.parent, "Invalid Time Format",
-                                   "Could not parse time values.")
+                             "Could not parse time values.")
                 return
-            if annotation["Event"] != vals["Event"] or annotation["start_time"] != new_start or annotation["end_time"] != new_end:
+            if (annotation["Event"] != vals.get("Event", annotation["Event"])
+                    or annotation["start_time"] != new_start
+                    or annotation["end_time"] != new_end):
                 annotation["Manual_Edit"] = True
-            annotation["Event"] = vals["Event"]
             annotation["start_time"] = new_start
             annotation["end_time"] = new_end
             annotation["Notes"] = new_note
         else:
-            if annotation["Event"] != vals["Event"] or annotation["time"] != vals["H_Start"]:
+            if annotation["time"] != vals["H_Start"]:
                 annotation["Manual_Edit"] = True
-            annotation["Event"] = vals["Event"]
             annotation["time"] = vals["H_Start"]
             annotation["Notes"] = new_note
 
@@ -521,7 +485,7 @@ def show_comprehensive_edit(annotator, annotation, annotation_type):
             annotation.update(originals)
             return
 
-        annotator.update_annotations()
+        annotator._update_annotations()
         annotator.dialog_open = False
         dlg.accept()
 
@@ -604,65 +568,154 @@ def show_edit_point_dialog(annotator):
     dlg.open()
 
 
-def show_video_settings_dialog(annotator):
-    """Show a dialog to adjust MPV video display properties"""
-    PROPS = ("brightness", "contrast", "gamma", "saturation", "hue")
+def show_av_settings_dialog(annotator):
+    """Show a combined audio & video settings dialog"""
+    VIDEO_PROPS = ("brightness", "contrast", "gamma", "saturation", "hue")
 
-    # Snapshot current player values for Cancel rollback
-    originals = {}
-    for prop in PROPS:
+    # Snapshot current values for Cancel rollback
+    vid_originals = {}
+    for prop in VIDEO_PROPS:
         try:
-            originals[prop] = int(getattr(annotator.player, prop, 0) or 0)
+            vid_originals[prop] = int(getattr(annotator.player, prop, 0) or 0)
         except Exception:
-            originals[prop] = 0
+            vid_originals[prop] = 0
+
+    aud_originals = {
+        "volume": int(annotator.player.volume or 100),
+        "audio_delay": float(annotator.player.audio_delay or 0),
+        "audio_pitch_correction": bool(
+            getattr(annotator.player, "audio_pitch_correction", True)),
+        "af": str(annotator.player.af or ""),
+    }
 
     cfg = get_config()
     per_video = annotator.store.load_video_settings()
     global_settings = cfg.get_video_settings()
 
     dlg = QDialog(annotator.parent)
-    dlg.setWindowTitle("Video Settings")
-
+    dlg.setWindowTitle("Audio && Video Settings")
     _apply_dialog_theme(dlg)
-    dlg.resize(480, 380)
+    dlg.resize(500, 520)
 
     layout = QVBoxLayout(dlg)
     layout.setSpacing(8)
 
-    # --- Sliders for each property ---
-    sliders = {}
-    value_labels = {}
+    _slider_style = (
+        "QSlider::groove:horizontal { background: #555; height: 6px;"
+        "  border-radius: 3px; }"
+        "QSlider::handle:horizontal { background: #ccc; width: 12px;"
+        "  margin: -3px 0; border-radius: 6px; }"
+        "QSlider::sub-page:horizontal { background: #888; border-radius: 3px; }"
+    )
 
-    sliders_group = QGroupBox("Display Adjustments")
-    sliders_layout = QGridLayout(sliders_group)
-    sliders_layout.setColumnStretch(1, 1)
+    # --- Video sliders ---
+    vid_sliders = {}
+    vid_labels = {}
 
-    for row, prop in enumerate(PROPS):
+    vid_group = QGroupBox("Video")
+    vid_layout = QGridLayout(vid_group)
+    vid_layout.setColumnStretch(1, 1)
+
+    for row, prop in enumerate(VIDEO_PROPS):
         lbl = QLabel(prop.capitalize() + ":")
-        sliders_layout.addWidget(lbl, row, 0, Qt.AlignmentFlag.AlignLeft)
+        vid_layout.addWidget(lbl, row, 0, Qt.AlignmentFlag.AlignLeft)
 
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setMinimum(-100)
         slider.setMaximum(100)
         slider.setTickInterval(25)
         slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        sliders[prop] = slider
-        sliders_layout.addWidget(slider, row, 1)
+        slider.setStyleSheet(_slider_style)
+        vid_sliders[prop] = slider
+        vid_layout.addWidget(slider, row, 1)
 
         val_lbl = QLabel("0")
         val_lbl.setFixedWidth(30)
-        val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        value_labels[prop] = val_lbl
-        sliders_layout.addWidget(val_lbl, row, 2)
+        val_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        vid_labels[prop] = val_lbl
+        vid_layout.addWidget(val_lbl, row, 2)
 
-        reset_btn = QPushButton("↺")
-        reset_btn.clicked.connect(lambda _, p=prop: sliders[p].setValue(0))
-        sliders_layout.addWidget(reset_btn, row, 3)
+        reset_btn = QPushButton("\u21BA")
+        reset_btn.clicked.connect(
+            lambda _, p=prop: vid_sliders[p].setValue(0))
+        vid_layout.addWidget(reset_btn, row, 3)
 
-    layout.addWidget(sliders_group)
+    layout.addWidget(vid_group)
 
-    # --- Scope selection ---
-    scope_group = QGroupBox("Apply to:")
+    # --- Audio controls ---
+    aud_group = QGroupBox("Audio")
+    aud_layout = QGridLayout(aud_group)
+    aud_layout.setColumnStretch(1, 1)
+
+    # Volume (0-200)
+    aud_layout.addWidget(QLabel("Volume:"), 0, 0)
+    vol_slider = QSlider(Qt.Orientation.Horizontal)
+    vol_slider.setMinimum(0)
+    vol_slider.setMaximum(200)
+    vol_slider.setTickInterval(25)
+    vol_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+    vol_slider.setStyleSheet(_slider_style)
+    vol_slider.setValue(aud_originals["volume"])
+    aud_layout.addWidget(vol_slider, 0, 1)
+    vol_lbl = QLabel(str(aud_originals["volume"]))
+    vol_lbl.setFixedWidth(30)
+    vol_lbl.setAlignment(
+        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    aud_layout.addWidget(vol_lbl, 0, 2)
+    vol_reset = QPushButton("\u21BA")
+    vol_reset.clicked.connect(lambda: vol_slider.setValue(100))
+    aud_layout.addWidget(vol_reset, 0, 3)
+
+    # Audio delay (-2.0 to +2.0 seconds, stored as int ms in slider)
+    aud_layout.addWidget(QLabel("A/V Sync (s):"), 1, 0)
+    delay_slider = QSlider(Qt.Orientation.Horizontal)
+    delay_slider.setMinimum(-2000)
+    delay_slider.setMaximum(2000)
+    delay_slider.setTickInterval(500)
+    delay_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+    delay_slider.setStyleSheet(_slider_style)
+    delay_slider.setValue(int(aud_originals["audio_delay"] * 1000))
+    aud_layout.addWidget(delay_slider, 1, 1)
+    delay_lbl = QLabel(f"{aud_originals['audio_delay']:.2f}")
+    delay_lbl.setFixedWidth(40)
+    delay_lbl.setAlignment(
+        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    aud_layout.addWidget(delay_lbl, 1, 2)
+    delay_reset = QPushButton("\u21BA")
+    delay_reset.clicked.connect(lambda: delay_slider.setValue(0))
+    aud_layout.addWidget(delay_reset, 1, 3)
+
+    # Pitch shift (-12 to +12 semitones)
+    import math
+    aud_layout.addWidget(QLabel("Pitch (semitones):"), 2, 0)
+    pitch_slider = QSlider(Qt.Orientation.Horizontal)
+    pitch_slider.setMinimum(-12)
+    pitch_slider.setMaximum(12)
+    pitch_slider.setTickInterval(1)
+    pitch_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+    pitch_slider.setStyleSheet(_slider_style)
+    pitch_slider.setValue(0)
+    aud_layout.addWidget(pitch_slider, 2, 1)
+    pitch_lbl = QLabel("0")
+    pitch_lbl.setFixedWidth(30)
+    pitch_lbl.setAlignment(
+        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    aud_layout.addWidget(pitch_lbl, 2, 2)
+    pitch_reset = QPushButton("\u21BA")
+    pitch_reset.clicked.connect(lambda: pitch_slider.setValue(0))
+    aud_layout.addWidget(pitch_reset, 2, 3)
+
+    # Pitch correction checkbox
+    from PySide6.QtWidgets import QCheckBox
+    pitch_cb = QCheckBox("Maintain pitch when speed changes")
+    pitch_cb.setChecked(aud_originals["audio_pitch_correction"])
+    aud_layout.addWidget(pitch_cb, 3, 0, 1, 4)
+
+    layout.addWidget(aud_group)
+
+    # --- Video scope selection ---
+    scope_group = QGroupBox("Video settings apply to:")
     scope_layout = QHBoxLayout(scope_group)
     all_radio = QRadioButton("All Videos")
     video_radio = QRadioButton("This Video Only")
@@ -680,14 +733,14 @@ def show_video_settings_dialog(annotator):
     btn_lay.addWidget(cancel_btn)
     layout.addWidget(btn_frame)
 
+    # --- Wiring ---
     def _load_scope_values(settings):
-        """Load settings dict into sliders and update player preview"""
-        for prop in PROPS:
+        for prop in VIDEO_PROPS:
             val = int(settings.get(prop, 0)) if settings else 0
-            sliders[prop].blockSignals(True)
-            sliders[prop].setValue(val)
-            sliders[prop].blockSignals(False)
-            value_labels[prop].setText(str(val))
+            vid_sliders[prop].blockSignals(True)
+            vid_sliders[prop].setValue(val)
+            vid_sliders[prop].blockSignals(False)
+            vid_labels[prop].setText(str(val))
             try:
                 setattr(annotator.player, prop, val)
             except Exception:
@@ -699,33 +752,70 @@ def show_video_settings_dialog(annotator):
         else:
             _load_scope_values(per_video or {})
 
-    def _on_slider_changed(val, prop):
-        value_labels[prop].setText(str(val))
+    def _on_vid_slider_changed(val, prop):
+        vid_labels[prop].setText(str(val))
         try:
             setattr(annotator.player, prop, val)
         except Exception:
             pass
 
-    for prop in PROPS:
-        sliders[prop].valueChanged.connect(
-            lambda val, p=prop: _on_slider_changed(val, p))
+    for prop in VIDEO_PROPS:
+        vid_sliders[prop].valueChanged.connect(
+            lambda val, p=prop: _on_vid_slider_changed(val, p))
 
+    def _on_vol_changed(val):
+        vol_lbl.setText(str(val))
+        annotator.player.volume = val
+
+    def _on_delay_changed(val):
+        secs = val / 1000.0
+        delay_lbl.setText(f"{secs:.2f}")
+        annotator.player.audio_delay = secs
+
+    def _apply_pitch(semitones):
+        pitch_lbl.setText(str(semitones))
+        if semitones == 0:
+            annotator.player.af = ""
+        else:
+            factor = 2 ** (semitones / 12.0)
+            annotator.player.af = f"lavfi=[rubberband=pitch={factor:.4f}]"
+
+    vol_slider.valueChanged.connect(_on_vol_changed)
+    delay_slider.valueChanged.connect(_on_delay_changed)
+    pitch_slider.valueChanged.connect(_apply_pitch)
+    pitch_cb.toggled.connect(
+        lambda checked: setattr(
+            annotator.player, "audio_pitch_correction", checked))
     all_radio.toggled.connect(lambda _: _on_scope_changed())
 
     def _save():
-        current = {prop: sliders[prop].value() for prop in PROPS}
+        # Video
+        current = {prop: vid_sliders[prop].value() for prop in VIDEO_PROPS}
         if all_radio.isChecked():
             cfg.update_video_settings(current)
         else:
             annotator.store.save_video_settings(current)
+        # Audio
+        cfg.set_volume(vol_slider.value())
+        # Update the panel slider to match
+        if hasattr(annotator, '_volume_slider'):
+            annotator._volume_slider.blockSignals(True)
+            annotator._volume_slider.setValue(
+                min(vol_slider.value(), annotator._volume_slider.maximum()))
+            annotator._volume_slider.blockSignals(False)
         dlg.accept()
 
     def _cancel():
-        for prop in PROPS:
+        for prop in VIDEO_PROPS:
             try:
-                setattr(annotator.player, prop, originals[prop])
+                setattr(annotator.player, prop, vid_originals[prop])
             except Exception:
                 pass
+        annotator.player.volume = aud_originals["volume"]
+        annotator.player.audio_delay = aud_originals["audio_delay"]
+        annotator.player.audio_pitch_correction = (
+            aud_originals["audio_pitch_correction"])
+        annotator.player.af = aud_originals.get("af", "")
         dlg.reject()
 
     save_btn.clicked.connect(_save)
@@ -869,3 +959,223 @@ def get_text(parent, title, label, text="", callback=None):
         result = line.text()
         dlg.deleteLater()
         return result, ok
+
+
+def show_colors_theme_dialog(parent, on_accept=None):
+    """Combined Colors & Theme dialog.
+
+    parent: parent widget for the dialog.
+    on_accept: callback(selected_theme, colors_dict) called on OK.
+    """
+    cfg = get_config()
+
+    colors = {
+        "state_highlight": (QColor(h) if (h := cfg.get_state_highlight_color())
+                            else theme.qcolor("active_color")),
+        "point_highlight": (QColor(h) if (h := cfg.get_point_highlight_color())
+                            else theme.qcolor("highlight_color")),
+        "point_button": (QColor(h) if (h := cfg.get_point_button_color())
+                         else theme.qcolor("float_point_bg")),
+        "state_button": (QColor(h) if (h := cfg.get_state_button_color())
+                         else theme.qcolor("float_state_bg")),
+        "progress_fill": (QColor(h) if (h := cfg.get_progress_bar_color())
+                          else theme.qcolor("progress_fill")),
+        "button_hover": (QColor(h) if (h := cfg.get_button_hover_color())
+                         else theme.qcolor("button_hover")),
+        "waveform_fill": (QColor(h) if (h := cfg.get_waveform_color())
+                          else QColor(0, 150, 255)),
+    }
+    selected_theme = [theme.current_theme()]
+
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("Appearance")
+    _apply_dialog_theme(dlg)
+    dlg.resize(380, 560)
+
+    main_lay = QVBoxLayout(dlg)
+    main_lay.setContentsMargins(20, 15, 20, 15)
+    main_lay.setSpacing(10)
+
+    swatches = {}
+
+    def _update_swatch(btn, c):
+        btn.setStyleSheet(
+            f"QPushButton {{ background-color: {c.name()};"
+            f"  border: 1px solid grey; border-radius: 4px; }}"
+            f"QPushButton:hover {{ border: 2px solid white; }}")
+
+    def _pick_color(key, btn):
+        c = QColorDialog.getColor(colors[key], dlg, "Select Color")
+        if c.isValid():
+            colors[key] = c
+            _update_swatch(btn, c)
+
+    def _make_swatch(key):
+        btn = QPushButton()
+        btn.setFixedSize(60, 28)
+        _update_swatch(btn, colors[key])
+        btn.clicked.connect(lambda: _pick_color(key, btn))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        swatches[key] = btn
+        return btn
+
+    def _section(text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet("font-weight: bold; padding-top: 4px;")
+        return lbl
+
+    # Theme section
+    main_lay.addWidget(_section("Theme"))
+    theme_row = QHBoxLayout()
+    theme_row.setSpacing(12)
+    theme_btns = []
+
+    checked_style = (
+        "QPushButton { font-weight: bold; border: 2px solid white;"
+        "  border-radius: 4px; padding: 4px 12px; }"
+    )
+    unchecked_style = (
+        "QPushButton { border: 1px solid grey; border-radius: 4px;"
+        "  padding: 4px 12px; }"
+    )
+
+    def _update_theme_btns():
+        for b in theme_btns:
+            b.setStyleSheet(
+                checked_style if b.text().lower() == selected_theme[0]
+                else unchecked_style)
+
+    for name in ("system", "dark", "light"):
+        btn = QPushButton(name.capitalize())
+        btn.clicked.connect(
+            lambda checked, n=name: _select_theme(n))
+        theme_btns.append(btn)
+        theme_row.addWidget(btn)
+    theme_row.addStretch()
+    main_lay.addLayout(theme_row)
+    _update_theme_btns()
+
+    def _select_theme(name):
+        selected_theme[0] = name
+        _update_theme_btns()
+
+    # Color grid
+    grid = QGridLayout()
+    grid.setSpacing(8)
+
+    row = 0
+    grid.addWidget(_section("Annotation Highlights"), row, 0, 1, 2)
+    row += 1
+    grid.addWidget(QLabel("State Event:"), row, 0)
+    grid.addWidget(_make_swatch("state_highlight"), row, 1)
+    row += 1
+    grid.addWidget(QLabel("Point Event:"), row, 0)
+    grid.addWidget(_make_swatch("point_highlight"), row, 1)
+
+    row += 1
+    grid.addWidget(_section("Event Buttons"), row, 0, 1, 2)
+    row += 1
+    grid.addWidget(QLabel("Point Buttons:"), row, 0)
+    grid.addWidget(_make_swatch("point_button"), row, 1)
+    row += 1
+    grid.addWidget(QLabel("State Buttons:"), row, 0)
+    grid.addWidget(_make_swatch("state_button"), row, 1)
+    row += 1
+    grid.addWidget(QLabel("Button Opacity:"), row, 0)
+    event_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+    event_opacity_slider.setRange(10, 100)
+    event_opacity_slider.setValue(int(cfg.get_event_button_opacity() * 100))
+    event_opacity_slider.setMaximumWidth(120)
+    grid.addWidget(event_opacity_slider, row, 1)
+
+    row += 1
+    grid.addWidget(_section("Interface"), row, 0, 1, 2)
+    row += 1
+    grid.addWidget(QLabel("Progress Bar:"), row, 0)
+    grid.addWidget(_make_swatch("progress_fill"), row, 1)
+    row += 1
+    grid.addWidget(QLabel("Button Hover:"), row, 0)
+    grid.addWidget(_make_swatch("button_hover"), row, 1)
+
+    row += 1
+    grid.addWidget(_section("Waveform"), row, 0, 1, 2)
+    row += 1
+    grid.addWidget(QLabel("Waveform Color:"), row, 0)
+    grid.addWidget(_make_swatch("waveform_fill"), row, 1)
+    row += 1
+    grid.addWidget(QLabel("Waveform Opacity:"), row, 0)
+    waveform_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+    waveform_opacity_slider.setRange(10, 100)
+    waveform_opacity_slider.setValue(int(cfg.get_waveform_opacity() * 100))
+    waveform_opacity_slider.setMaximumWidth(120)
+    grid.addWidget(waveform_opacity_slider, row, 1)
+    row += 1
+    grid.addWidget(QLabel("Waveform Height:"), row, 0)
+    waveform_height_slider = QSlider(Qt.Orientation.Horizontal)
+    waveform_height_slider.setRange(10, 30)
+    waveform_height_slider.setValue(int(cfg.get_waveform_height_multiplier() * 10))
+    waveform_height_slider.setMaximumWidth(120)
+    grid.addWidget(waveform_height_slider, row, 1)
+
+    grid.setColumnStretch(0, 1)
+    main_lay.addLayout(grid)
+
+    # Reset + OK/Cancel
+    def _reset():
+        defaults = {
+            "state_highlight": theme.base_qcolor("active_color"),
+            "point_highlight": theme.base_qcolor("highlight_color"),
+            "point_button": theme.base_qcolor("float_point_bg"),
+            "state_button": theme.base_qcolor("float_state_bg"),
+            "progress_fill": theme.base_qcolor("progress_fill"),
+            "button_hover": theme.base_qcolor("button_hover"),
+            "waveform_fill": QColor(0, 150, 255),
+        }
+        for key, c in defaults.items():
+            colors[key] = c
+            _update_swatch(swatches[key], c)
+        event_opacity_slider.setValue(40)
+        waveform_opacity_slider.setValue(80)
+        waveform_height_slider.setValue(20)
+
+    main_lay.addStretch()
+    btn_row = QHBoxLayout()
+    reset_btn = QPushButton("Reset to Defaults")
+    reset_btn.clicked.connect(_reset)
+    btn_row.addWidget(reset_btn)
+    btn_row.addStretch()
+    ok_btn = QPushButton("OK")
+    ok_btn.clicked.connect(dlg.accept)
+    btn_row.addWidget(ok_btn)
+    cancel_btn = QPushButton("Cancel")
+    cancel_btn.clicked.connect(dlg.reject)
+    btn_row.addWidget(cancel_btn)
+    main_lay.addLayout(btn_row)
+
+    def _on_finished(result):
+        dlg.deleteLater()
+        if result == QDialog.DialogCode.Accepted:
+            # Save all settings
+            cfg.set_state_highlight_color(colors["state_highlight"].name())
+            cfg.set_point_highlight_color(colors["point_highlight"].name())
+            cfg.set_point_button_color(colors["point_button"].name())
+            cfg.set_state_button_color(colors["state_button"].name())
+            cfg.set_progress_bar_color(colors["progress_fill"].name())
+            cfg.set_button_hover_color(colors["button_hover"].name())
+            cfg.set_waveform_color(colors["waveform_fill"].name())
+            cfg.set_event_button_opacity(event_opacity_slider.value() / 100.0)
+            cfg.set_waveform_opacity(waveform_opacity_slider.value() / 100.0)
+            cfg.set_waveform_height_multiplier(waveform_height_slider.value() / 10.0)
+            theme.set_override("button_hover", colors["button_hover"].name())
+
+            # Apply theme (always, so overrides take effect)
+            new_theme = selected_theme[0]
+            theme.load_theme(new_theme)
+            cfg.update_theme(new_theme)
+
+            if on_accept:
+                on_accept(new_theme, colors)
+
+    dlg.finished.connect(_on_finished)
+    dlg.open()
+    return dlg

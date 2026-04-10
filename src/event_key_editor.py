@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
     QLineEdit, QRadioButton, QScrollArea, QFrame, QMessageBox, QComboBox,
     QButtonGroup, QGridLayout, QInputDialog, QApplication, QSizePolicy,
-    QFileDialog,
+    QFileDialog, QCheckBox,
 )
 from PySide6.QtCore import Qt, QTimer
 from display_utils import get_screen_geometry, center_window, is_os_junk
@@ -77,11 +77,13 @@ class EventKeyEditor(QDialog):
 
         main_layout.addWidget(self._create_control_buttons())
 
-        note = QLabel(
-            "Note: 'w', 'a', 's', 'd' are reserved for video navigation. "
-            "Do not assign these keys to a event.")
-        note.setWordWrap(True)
-        main_layout.addWidget(note)
+        wasd_row = QHBoxLayout()
+        self._wasd_checkbox = QCheckBox("Use W,A,S,D Keys for Video Navigation")
+        self._wasd_checkbox.setChecked(self.config_manager.get_wasd_navigation())
+        self._wasd_checkbox.toggled.connect(self._on_wasd_toggled)
+        wasd_row.addWidget(self._wasd_checkbox)
+        wasd_row.addStretch()
+        main_layout.addLayout(wasd_row)
 
         min_w = min(600, int(self._screen["width"] * 0.45))
         min_h = min(400, int(self._screen["height"] * 0.5))
@@ -205,6 +207,10 @@ class EventKeyEditor(QDialog):
         layout.addWidget(start_btn)
 
         return frame
+
+
+    def _on_wasd_toggled(self, checked):
+        self.config_manager.set_wasd_navigation(checked)
 
 
     # Event key file management
@@ -615,7 +621,9 @@ class EventKeyEditor(QDialog):
         if not self._save_events():
             return
 
-        reserved = {"w", "a", "s", "d"}
+        reserved = {",", "."}
+        if self.config_manager.get_wasd_navigation():
+            reserved.update({"w", "a", "s", "d"})
         assigned = set()
         for entry in self._key_entries:
             key = entry.text().strip().lower()
@@ -641,31 +649,7 @@ class EventKeyEditor(QDialog):
         self.done(QDialog.DialogCode.Accepted)
 
     def _on_cancel(self):
-        current = self._current_events()
-        if current != self.events:
-            dlg = QMessageBox(self)
-            theme.apply_dialog_theme(dlg)
-            dlg.setWindowTitle("Unsaved Changes")
-            dlg.setText("You have unsaved changes. Save before going back?")
-            dlg.setIcon(QMessageBox.Icon.Question)
-            dlg.setStandardButtons(
-                QMessageBox.StandardButton.Save
-                | QMessageBox.StandardButton.Discard
-                | QMessageBox.StandardButton.Cancel)
-            dlg.setDefaultButton(QMessageBox.StandardButton.Save)
-            def _on_reply(reply):
-                dlg.deleteLater()
-                if reply == QMessageBox.StandardButton.Save:
-                    if not self._save_events():
-                        return
-                elif reply == QMessageBox.StandardButton.Cancel:
-                    return
-                self._do_cancel()
-
-            dlg.finished.connect(_on_reply)
-            dlg.open()
-            return
-
+        self._save_events()
         self._do_cancel()
 
     def _do_cancel(self):

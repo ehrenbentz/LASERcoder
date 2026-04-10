@@ -14,12 +14,13 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen
 
 from display_utils import get_screen_geometry, center_window, is_os_junk
+from platform_utils import is_network_drive
 from annotation_store import AnnotationStore, parse_time
 from annotations_visualizer import show_visualization_dialog
 from summary_statistics_manager import SummaryStatisticsManager
 from summary_viewer import show_table_viewer, show_boxplot_viewer
 from config_manager import get_config
-from dialogs import show_message, get_text
+from dialogs import show_message, get_text, show_colors_theme_dialog
 import theme
 
 
@@ -76,6 +77,9 @@ class FilesManager(QDialog):
         self.setMinimumSize(int(dialog_w * 0.8), int(dialog_h * 0.8))
         self.resize(dialog_w, dialog_h)
 
+        QTimer.singleShot(500, lambda: self._warn_if_network_drive(
+            self.output_dir, offer_move=True))
+
 
     # UI setup
 
@@ -104,7 +108,9 @@ class FilesManager(QDialog):
         nav = QHBoxLayout(nav_frame)
         nav.setContentsMargins(0, 0, 0, 0)
 
-        up_btn = QPushButton("\u2191")
+        up_btn = QPushButton("")
+        up_btn.setIcon(QIcon(":/icons/black/up.svg"))
+        up_btn.setIconSize(QSize(16, 16))
         up_btn.setFixedWidth(30)
         up_btn.clicked.connect(lambda: self._go_up("output"))
         nav.addWidget(up_btn)
@@ -166,11 +172,13 @@ class FilesManager(QDialog):
         backup_btn = QPushButton("Backup Project")
         backup_btn.clicked.connect(self._backup_project)
         backup_layout.addWidget(backup_btn)
-        for _ in range(2):
-            spacer = QPushButton()
-            spacer.setEnabled(False)
-            spacer.setStyleSheet("border: none; background: transparent;")
-            backup_layout.addWidget(spacer)
+        move_btn = QPushButton("Move Project")
+        move_btn.clicked.connect(self._move_working_directory)
+        backup_layout.addWidget(move_btn)
+        spacer = QPushButton()
+        spacer.setEnabled(False)
+        spacer.setStyleSheet("border: none; background: transparent;")
+        backup_layout.addWidget(spacer)
         layout.addWidget(backup_frame)
 
         self._populate_dir_list(self.initial_output_dir)
@@ -182,10 +190,13 @@ class FilesManager(QDialog):
         top_row.addWidget(QLabel("Select Video File:"))
         top_row.addStretch()
 
-        settings_btn = QPushButton("Settings")
-        settings_btn.setToolTip("Settings")
-        settings_btn.clicked.connect(self._show_settings_menu)
-        top_row.addWidget(settings_btn)
+        self._settings_btn = QPushButton("")
+        self._settings_btn.setIcon(theme.themed_icon("settings"))
+        self._settings_btn.setIconSize(QSize(16, 16))
+        self._settings_btn.setFixedSize(26, 26)
+        self._settings_btn.setToolTip("Settings")
+        self._settings_btn.clicked.connect(self._show_settings_menu)
+        top_row.addWidget(self._settings_btn)
 
         layout.addLayout(top_row)
 
@@ -193,7 +204,9 @@ class FilesManager(QDialog):
         nav = QHBoxLayout(nav_frame)
         nav.setContentsMargins(0, 0, 0, 0)
 
-        up_btn = QPushButton("\u2191")
+        up_btn = QPushButton("")
+        up_btn.setIcon(QIcon(":/icons/black/up.svg"))
+        up_btn.setIconSize(QSize(16, 16))
         up_btn.setFixedWidth(30)
         up_btn.clicked.connect(lambda: self._go_up("video"))
         nav.addWidget(up_btn)
@@ -326,6 +339,7 @@ class FilesManager(QDialog):
             self.output_dir = path
             self.dir_selected_label.setText(
                 f"Selected Output Directory: {self.output_dir}")
+            self._warn_if_network_drive(path)
 
     def _browse_video_dir(self):
         path = QFileDialog.getExistingDirectory(
@@ -352,6 +366,7 @@ class FilesManager(QDialog):
                 self.output_dir = path
                 self.dir_selected_label.setText(
                     f"Selected Output Directory: {self.output_dir}")
+                self._warn_if_network_drive(path)
 
     def _on_video_dir_update(self):
         path = self.video_dir_entry.text().strip()
@@ -375,6 +390,7 @@ class FilesManager(QDialog):
             self.output_dir = new_dir
             self.dir_selected_label.setText(
                 f"Selected Output Directory: {self.output_dir}")
+            self._warn_if_network_drive(new_dir)
 
     def _on_video_dir_double_click(self, item):
         new_dir = os.path.join(self.current_video_dir, item.text())
@@ -581,6 +597,32 @@ class FilesManager(QDialog):
             return True
         return get_config().is_backup_dir(path)
 
+    def _warn_if_network_drive(self, path, offer_move=False):
+        """Show a warning if path is on a network drive. Returns True if network."""
+        if not path or not is_network_drive(path):
+            return False
+        if offer_move:
+            reply = show_message(
+                self, "Network Drive Detected",
+                "The selected directory appears to be on a network drive.\n\n"
+                "LaserTAG uses atomic file writes that may not work "
+                "reliably on network filesystems (SMB, NFS, etc.). "
+                "This can lead to data loss or corrupted annotation files.\n\n"
+                "Would you like to move the project to a local directory?",
+                icon="question")
+            if reply == QMessageBox.StandardButton.Yes:
+                self._move_working_directory()
+        else:
+            show_message(
+                self, "Network Drive Detected",
+                "The selected directory appears to be on a network drive.\n\n"
+                "LaserTAG uses atomic file writes that may not work "
+                "reliably on network filesystems (SMB, NFS, etc.). "
+                "This can lead to data loss or corrupted annotation files.\n\n"
+                "Please use a local directory for your working directory.",
+                icon="warning")
+        return True
+
 
     # Backup project
 
@@ -636,6 +678,89 @@ class FilesManager(QDialog):
         show_message(
             self, "Backup Complete",
             f"Project backed up to:\n{dest}",
+            icon="information")
+
+    def _move_working_directory(self):
+        if not self.output_dir or not os.path.isdir(self.output_dir):
+            show_message(
+                self, "Warning",
+                "Please select a valid output directory first.")
+            return
+
+        dest = QFileDialog.getExistingDirectory(
+            self, "Select New Location for Working Directory",
+            str(Path.home()), QFileDialog.Option.ShowDirsOnly)
+        if not dest:
+            return
+
+        norm_dest = os.path.normpath(dest)
+        norm_src = os.path.normpath(self.output_dir)
+
+        if norm_dest == norm_src:
+            show_message(
+                self, "Same Location",
+                "The destination is the same as the current location.")
+            return
+
+        if norm_dest.startswith(norm_src + os.sep):
+            show_message(
+                self, "Invalid Destination",
+                "Cannot move a directory into a subdirectory of itself.",
+                icon="warning")
+            return
+
+        self._warn_if_network_drive(dest)
+
+        dir_name = os.path.basename(self.output_dir)
+        dest_dir = os.path.join(dest, dir_name)
+
+        if os.path.exists(dest_dir):
+            show_message(
+                self, "Destination Exists",
+                f"A directory named '{dir_name}' already exists at the "
+                "destination.\nPlease choose a different location.")
+            return
+
+        subdirs = ["Annotations", "Event_Keys", "Resume", "Summary", "Debug"]
+
+        try:
+            os.makedirs(dest_dir)
+        except OSError as exc:
+            show_message(
+                self, "Error",
+                f"Could not create destination directory: {exc}")
+            return
+
+        moved = []
+        try:
+            for sub in subdirs:
+                src = os.path.join(self.output_dir, sub)
+                if os.path.isdir(src):
+                    shutil.move(src, os.path.join(dest_dir, sub))
+                    moved.append(sub)
+        except OSError as exc:
+            show_message(
+                self, "Move Error",
+                f"Error moving '{sub}': {exc}\n\n"
+                f"Successfully moved: {', '.join(moved) if moved else 'none'}\n"
+                f"The original directory has been partially moved.\n"
+                f"Old location: {self.output_dir}\n"
+                f"New location: {dest_dir}")
+            return
+
+        self.output_dir = dest_dir
+        self.current_output_dir = dest_dir
+        self.output_dir_entry.setText(dest_dir)
+        self._populate_dir_list(dest_dir)
+        self.dir_selected_label.setText(
+            f"Selected Output Directory: {dest_dir}")
+        get_config().update_output_dir(dest_dir)
+
+        show_message(
+            self, "Move Complete",
+            f"Working directory moved successfully.\n\n"
+            f"New location: {dest_dir}\n"
+            f"Moved: {', '.join(moved) if moved else 'no subdirectories found'}",
             icon="information")
 
 
@@ -724,6 +849,7 @@ class FilesManager(QDialog):
             get_config().update_output_dir(self.output_dir)
         self.dir_selected_label.setText(
             f"Selected Output Directory: {self.output_dir}")
+        self._warn_if_network_drive(self.output_dir)
 
 
     # Video selection
@@ -1286,33 +1412,23 @@ class FilesManager(QDialog):
         menu = QMenu(self)
         menu.setStyleSheet(theme.menu_stylesheet())
 
-        theme_menu = menu.addMenu("Theme")
-        current = theme.current_theme()
-        for name in ("system", "dark", "light"):
-            action = theme_menu.addAction(name.capitalize())
-            action.setCheckable(True)
-            action.setChecked(name == current)
-            action.triggered.connect(
-                lambda checked, n=name: self._apply_theme(n))
+        menu.addAction("Appearance").triggered.connect(
+            self._show_colors_theme_dialog)
 
         btn = self.sender()
         if btn:
             menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
-    def _apply_theme(self, name):
-        from config_manager import get_config
-        theme.load_theme(name)
-        get_config().update_theme(name)
-
-        app = QApplication.instance()
-        app.setStyleSheet(theme.app_stylesheet())
-
-        theme.apply_dialog_theme(self)
-
-        # Update the main window background (not a Qt parent of this dialog)
-        for w in QApplication.instance().topLevelWidgets():
-            if hasattr(w, 'apply_theme'):
-                w.apply_theme()
+    def _show_colors_theme_dialog(self):
+        def _on_accept(_new_theme, _colors):
+            app = QApplication.instance()
+            app.setStyleSheet(theme.app_stylesheet())
+            theme.apply_dialog_theme(self)
+            self._settings_btn.setIcon(theme.themed_icon("settings"))
+            for w in app.topLevelWidgets():
+                if hasattr(w, 'apply_theme'):
+                    w.apply_theme()
+        show_colors_theme_dialog(self, on_accept=_on_accept)
 
 
     # Key handling

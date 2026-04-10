@@ -235,7 +235,8 @@ class AnnotationStore:
             return False
 
     def save_session_state(self, current_time, coding_start, coding_duration,
-                           coding_end, coding_end_reached):
+                           coding_end, coding_end_reached,
+                           limit_timeline_to_coding=False):
         """
         Persist the current session state to JSON
 .
@@ -249,6 +250,7 @@ class AnnotationStore:
             "coding_duration": coding_duration,
             "coding_end": coding_end,
             "coding_end_reached": coding_end_reached,
+            "limit_timeline_to_coding": limit_timeline_to_coding,
         })
 
     def load_session_state(self):
@@ -274,6 +276,7 @@ class AnnotationStore:
             "coding_duration": _safe_float_or_none(data.get("coding_duration")),
             "coding_end": _safe_float_or_none(data.get("coding_end")),
             "coding_end_reached": bool(data.get("coding_end_reached", False)),
+            "limit_timeline_to_coding": bool(data.get("limit_timeline_to_coding", False)),
             "completed": bool(data.get("completed", False)),
         }
 

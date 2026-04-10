@@ -60,6 +60,9 @@ class ConfigManager:
         if 'video_settings' not in self.config:
             self.config['video_settings'] = DEFAULT_VIDEO_SETTINGS.copy()
 
+        if 'wasd_navigation' not in self.config:
+            self.config['wasd_navigation'] = True
+
         self.save_config()
 
     def create_default_config(self):
@@ -132,19 +135,10 @@ class ConfigManager:
         self.save_config()
 
     def get_show_floating_controls(self):
-        """Get whether floating controls should be visible"""
         return self.config.get('show_floating_controls', True)
 
-    def update_show_floating_controls(self, visible):
-        """Update whether floating controls should be visible"""
+    def set_show_floating_controls(self, visible):
         self.config['show_floating_controls'] = bool(visible)
-        self.save_config()
-
-    def get_show_video_controls_toggle(self):
-        return self.config.get('show_video_controls_toggle', True)
-
-    def set_show_video_controls_toggle(self, visible):
-        self.config['show_video_controls_toggle'] = bool(visible)
         self.save_config()
 
     def get_show_events_toggle(self):
@@ -202,6 +196,83 @@ class ConfigManager:
 
     def set_state_button_color(self, hex_color):
         self.config['state_button_color'] = hex_color
+        self.save_config()
+
+    def get_button_hover_color(self):
+        return self.config.get('button_hover_color', None)
+
+    def set_button_hover_color(self, hex_color):
+        self.config['button_hover_color'] = hex_color
+        self.save_config()
+
+    def get_progress_bar_color(self):
+        return self.config.get('progress_bar_color', None)
+
+    def set_progress_bar_color(self, hex_color):
+        self.config['progress_bar_color'] = hex_color
+        self.save_config()
+
+    def get_volume(self):
+        return self.config.get('volume', 100)
+
+    def set_volume(self, value):
+        self.config['volume'] = int(value)
+        self.save_config()
+
+    def get_muted(self):
+        return self.config.get('muted', False)
+
+    def set_muted(self, muted):
+        self.config['muted'] = bool(muted)
+        self.save_config()
+
+    def get_wasd_navigation(self):
+        return self.config.get('wasd_navigation', True)
+
+    def set_wasd_navigation(self, enabled):
+        self.config['wasd_navigation'] = bool(enabled)
+        self.save_config()
+
+    def get_event_button_opacity(self):
+        return self.config.get('event_button_opacity', 0.4)
+
+    def set_event_button_opacity(self, value):
+        self.config['event_button_opacity'] = max(0.1, min(1.0, float(value)))
+        self.save_config()
+
+    def get_waveform_visible(self):
+        return self.config.get('waveform_visible', False)
+
+    def set_waveform_visible(self, visible):
+        self.config['waveform_visible'] = bool(visible)
+        self.save_config()
+
+    def get_waveform_height_multiplier(self):
+        return self.config.get('waveform_height_multiplier', 2.0)
+
+    def set_waveform_height_multiplier(self, value):
+        self.config['waveform_height_multiplier'] = max(1.0, min(3.0, float(value)))
+        self.save_config()
+
+    def get_waveform_color(self):
+        return self.config.get('waveform_color', None)
+
+    def set_waveform_color(self, hex_color):
+        self.config['waveform_color'] = hex_color
+        self.save_config()
+
+    def get_waveform_opacity(self):
+        return self.config.get('waveform_opacity', 0.8)
+
+    def set_waveform_opacity(self, value):
+        self.config['waveform_opacity'] = max(0.1, min(1.0, float(value)))
+        self.save_config()
+
+    def get_splitter_sizes(self):
+        return self.config.get('splitter_sizes', None)
+
+    def set_splitter_sizes(self, sizes):
+        self.config['splitter_sizes'] = sizes
         self.save_config()
 
 

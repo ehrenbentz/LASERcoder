@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
+
+<svg
+   width="800.0509"
+   height="601.93616"
+   viewBox="0 -2 32.002036 24.077446"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="forward_big.svg"
+   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:sketch="http://www.bohemiancoding.com/sketch/ns">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.51625"
+     inkscape:cx="399.67024"
+     inkscape:cy="252.92663"
+     inkscape:window-width="2560"
+     inkscape:window-height="1494"
+     inkscape:window-x="-11"
+     inkscape:window-y="-11"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" />
+  <title
+     id="title1">forward</title>
+  <desc
+     id="desc1">Created with Sketch Beta.</desc>
+  <defs
+     id="defs1" />
+  <g
+     id="Page-1"
+     stroke="none"
+     stroke-width="1"
+     fill="none"
+     fill-rule="evenodd"
+     sketch:type="MSPage"
+     transform="matrix(1,0,0,0.86127963,5.3505723e-4,-1.993552)">
+    <g
+       id="Icon-Set-Filled"
+       sketch:type="MSLayerGroup"
+       transform="translate(-570,-571)"
+       fill="#000000">
+      <path
+         d="m 601.415,583.561 -16.986,-12.189 c -1.126,-0.604 -2.416,-0.747 -2.417,1.579 v 5.305 l -9.595,-6.884 c -1.126,-0.604 -2.448,-0.622 -2.417,1.642 v 23.941 c 0.032,2.045 1.385,2.341 2.417,1.673 l 9.595,-6.884 v 5.242 c 0.001,1.983 1.384,2.31 2.417,1.642 l 16.986,-12.188 c 0.782,-0.795 0.782,-2.085 0,-2.879"
+         id="forward"
+         sketch:type="MSShapeGroup" />
+    </g>
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>forward</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>

@@ -13,6 +13,7 @@ class ProgressBar(QWidget):
         self._center_text = "(1.0x)"
         self._right_text = "Total Time"
         self._annotator = annotator
+        self._custom_fill_color = None
         self.setMouseTracking(True)
 
         # Floating hover-timestamp label
@@ -34,24 +35,32 @@ class ProgressBar(QWidget):
     def set_right_text(self, text):
         self._right_text = text
 
+    def set_fill_color(self, color):
+        self._custom_fill_color = color
+
     # painting
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Background
-        painter.fillRect(event.rect(), theme.qcolor("progress_bg"))
-        painter.fillRect(0, 0, self.width(), self.height(), theme.qcolor("progress_bg"))
+        bar_h = self.height() - 4  # leave 4px black buffer at bottom
+
+        # Black background for full widget (bottom buffer)
+        painter.fillRect(0, 0, self.width(), self.height(), QColor(0, 0, 0))
+
+        # Bar background
+        painter.fillRect(0, 0, self.width(), bar_h, theme.qcolor("progress_bg"))
 
         # Progress fill
         if self._progress > 0:
             progress_width = int(self.width() * self._progress)
-            painter.fillRect(0, 0, progress_width, self.height(), theme.qcolor("progress_fill"))
+            fill = self._custom_fill_color or theme.qcolor("progress_fill")
+            painter.fillRect(0, 0, progress_width, bar_h, fill)
 
-        # Coding-end indicator
+        # Coding-end indicator (skip when timeline is limited to coding segment)
         ann = self._annotator
-        if ann is not None:
+        if ann is not None and not getattr(ann, 'limit_timeline_to_coding', False):
             coding_end = getattr(ann, "coding_end", None)
             duration = getattr(ann, "player", None)
             if coding_end is not None and duration is not None:
@@ -61,7 +70,7 @@ class ProgressBar(QWidget):
                     if 0 <= ratio <= 1:
                         x = int(self.width() * ratio)
                         painter.setPen(QPen(theme.qcolor("progress_text"), 2))
-                        painter.drawLine(x, 0, x, self.height())
+                        painter.drawLine(x, 0, x, bar_h)
 
         # Text
         painter.setPen(theme.qcolor("progress_text"))
@@ -69,7 +78,7 @@ class ProgressBar(QWidget):
         font.setBold(True)
         painter.setFont(font)
 
-        text_y = self.height() // 2 + 5
+        text_y = bar_h // 2 + 5
 
         # Left (current time)
         painter.drawText(10, text_y, self._left_text)
@@ -89,10 +98,8 @@ class ProgressBar(QWidget):
     def _ensure_hover_label(self):
         if self._hover_label is not None:
             return
-        container = getattr(self._annotator, "left_container", None)
-        if container is None:
-            return
-        self._hover_label = QLabel(container)
+        self._hover_label = QLabel()
+        self._hover_label.setWindowFlags(Qt.WindowType.ToolTip)
         self._hover_label.setStyleSheet(
             f"background-color: {theme.color('progress_bg')};"
             f" color: {theme.color('progress_text')};"
@@ -117,22 +124,23 @@ class ProgressBar(QWidget):
 
         hover_x = event.position().x()
         ratio = max(0.0, min(1.0, hover_x / self.width()))
-        secs = ratio * total
+        ann = self._annotator
+        if ann is not None and hasattr(ann, '_ratio_to_time'):
+            secs = ann._ratio_to_time(ratio)
+        else:
+            secs = ratio * total
         self._hover_label.setText(_format_hover_time(secs))
         self._hover_label.adjustSize()
 
-        # Map progress bar position to left_container coordinates
-        container = self._hover_label.parentWidget()
-        bar_top_left = self.mapTo(container, QPoint(0, 0))
+        global_pos = self.mapToGlobal(QPoint(int(hover_x), 0))
+        bar_left = self.mapToGlobal(QPoint(0, 0)).x()
         label_w = self._hover_label.width()
         label_h = self._hover_label.height()
-        lx = bar_top_left.x() + int(hover_x) - label_w // 2
-        lx = max(bar_top_left.x(),
-                 min(lx, bar_top_left.x() + self.width() - label_w))
-        ly = bar_top_left.y() - label_h - 2
+        lx = global_pos.x() - label_w // 2
+        lx = max(bar_left, min(lx, bar_left + self.width() - label_w))
+        ly = global_pos.y() - label_h - 2
         self._hover_label.move(lx, ly)
         self._hover_label.show()
-        self._hover_label.raise_()
 
     def leaveEvent(self, event):
         if self._hover_label is not None:

@@ -180,7 +180,8 @@ echo ""
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-# Copy Python source into output for Nuitka to compile
+# Clean and Copy Python source into output for Nuitka to compile
+find "$SOURCE_DIR" -name '._*' -delete
 cp "$SOURCE_DIR"/*.py "$OUTPUT_DIR/"
 
 # Copy build resources into output (libs/ without arch suffix for the binary)

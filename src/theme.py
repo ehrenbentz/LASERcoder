@@ -3,7 +3,7 @@
 import sys
 import ctypes
 import subprocess
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication
 
 _current_theme = "system"
@@ -155,16 +155,49 @@ def load_theme(name: str):
 def current_theme() -> str:
     return _current_theme
 
-def _resolved() -> dict:
+_overrides: dict = {}
+
+def set_override(role: str, hex_color: str | None):
+    """Set or clear a per-role color override (persists until cleared)."""
+    if hex_color is None:
+        _overrides.pop(role, None)
+    else:
+        _overrides[role] = hex_color
+
+def _base_palette() -> dict:
     if _current_theme == "system":
         return _palettes[_detect_system_theme()]
     return _palettes.get(_current_theme, _DARK)
 
+def _darken(hex_color, factor=0.65):
+    """Darken a hex color by the given factor (0=black, 1=unchanged)."""
+    c = QColor(hex_color)
+    return QColor(
+        int(c.red() * factor),
+        int(c.green() * factor),
+        int(c.blue() * factor)).name()
+
+def _resolved() -> dict:
+    p = _base_palette()
+    if _overrides:
+        p = {**p, **_overrides}
+    # Derive pressed color from hover color
+    p["button_pressed"] = _darken(p["button_hover"])
+    return p
+
 def color(role: str) -> str:
     return _resolved().get(role, "#ff00ff")
 
+def base_color(role: str) -> str:
+    """Return the theme default for *role*, ignoring any overrides."""
+    return _base_palette().get(role, "#ff00ff")
+
 def qcolor(role: str) -> QColor:
     return QColor(color(role))
+
+def base_qcolor(role: str) -> QColor:
+    """Return the theme default QColor for *role*, ignoring any overrides."""
+    return QColor(base_color(role))
 
 # Title-bar theming (OS-level)
 
@@ -320,8 +353,8 @@ def dialog_stylesheet() -> str:
         f"QRadioButton::indicator {{ width: 14px; height: 14px;"
         f"  border: 2px solid {p['border']}; border-radius: 9px;"
         f"  background-color: {p['input_bg']}; }}"
-        f"QRadioButton::indicator:checked {{ border: 2px solid {p['accent']};"
-        f"  background-color: {p['accent']}; }}"
+        f"QRadioButton::indicator:checked {{ border: 2px solid {p['button_hover']};"
+        f"  background-color: {p['button_hover']}; }}"
         f"QComboBox {{ background-color: {p['input_bg']}; color: {p['text']};"
         f"  border: 1px solid {p['border']}; border-radius: 3px; padding: 3px; }}"
         f"QComboBox QAbstractItemView {{ background-color: {p['input_bg']}; color: {p['text']};"
@@ -335,6 +368,7 @@ def dialog_stylesheet() -> str:
         f"QSplitter {{ background-color: {p['dialog_bg']}; }}"
         f"QSplitter::handle {{ background-color: {p['border']}; }}"
         f"QMessageBox {{ background-color: {p['dialog_bg']}; }}"
+        f"QMessageBox QDialogButtonBox {{ qproperty-centerButtons: true; }}"
         f"QDialogButtonBox QPushButton {{ min-width: 70px; }}"
         f"QScrollArea {{ background: {p['dialog_bg']}; border: none; }}"
         f"QScrollBar:vertical {{ border: none; background: {p['scrollbar_bg']}; width: 10px; }}"
@@ -345,6 +379,8 @@ def dialog_stylesheet() -> str:
 
 def menu_stylesheet() -> str:
     p = _resolved()
+    variant = "white" if _base_palette() is _DARK else "black"
+    check_path = f":/icons/{variant}/check.svg"
     return (
         f"QMenu {{ background-color: {p['menu_bg']}; color: {p['text']};"
         f"  border: 1px solid {p['border']}; }}"
@@ -352,12 +388,10 @@ def menu_stylesheet() -> str:
         f"QMenu::item:selected {{ background-color: {p['button_hover']}; color: {p['text_on_accent']}; }}"
         f"QMenu::indicator {{ width: 16px; height: 16px;"
         f"  margin-left: 6px; }}"
-        f"QMenu::indicator:checked {{ image: none;"
-        f"  background-color: {p['accent']};"
-        f"  border: 1px solid {p['accent']}; border-radius: 3px; }}"
+        f"QMenu::indicator:checked {{ image: url({check_path});"
+        f"  background: none; border: none; }}"
         f"QMenu::indicator:unchecked {{ image: none;"
-        f"  background-color: {p['input_bg']};"
-        f"  border: 1px solid {p['border']}; border-radius: 3px; }}"
+        f"  background: none; border: none; }}"
     )
 
 def tree_stylesheet(heading_font="12px") -> str:
@@ -366,13 +400,13 @@ def tree_stylesheet(heading_font="12px") -> str:
         f"QTreeWidget {{"
         f"  background-color: {p['tree_bg']}; border: 1px solid {p['border_light']};"
         f"  border-radius: 4px; color: {p['text']}; font-size: {heading_font}; }}"
-        f"QTreeWidget::item {{ height: 18px; padding: 0px; margin: 0px;"
+        f"QTreeWidget::item {{ height: 18px; padding: 0px; padding-left: 5px; padding-right: 5px; margin: 0px;"
         f"  font-size: {heading_font}; }}"
         f"QTreeWidget::item:selected {{ background-color: {p['tree_selected']}; color: {p['text_on_accent']}; }}"
         f"QTreeWidget::item:hover {{ background-color: {p['tree_hover']}; }}"
         f"QHeaderView::section {{"
         f"  background-color: {p['tree_header_bg']}; color: {p['text']}; font-weight: bold;"
-        f"  font-size: {heading_font}; padding: 2px;"
+        f"  font-size: {heading_font}; padding: 0px; padding-left: 4px; padding-right: 5px;"
         f"  border: none; border-bottom: 1px solid {p['border_light']}; }}"
         f"QScrollBar:vertical {{ border: none; background: {p['scrollbar_bg']}; width: 10px; }}"
         f"QScrollBar::handle:vertical {{ background: {p['scrollbar_handle']}; min-height: 20px;"
@@ -394,7 +428,7 @@ def button_large_stylesheet(heading_font="12px") -> str:
     p = _resolved()
     return (
         f"QPushButton {{ background-color: {p['button_bg']}; color: {p['button_text']};"
-        f"  border: none; border-radius: 4px; padding: 4px;"
+        f"  border: none; border-radius: 4px; padding: 2px;"
         f"  font-size: {heading_font}; }}"
         f"QPushButton:hover {{ background-color: {p['button_hover']}; color: {p['text_on_accent']}; }}"
         f"QPushButton:pressed {{ background-color: {p['button_pressed']}; color: {p['text_on_accent']}; }}"
@@ -402,7 +436,7 @@ def button_large_stylesheet(heading_font="12px") -> str:
 
 def heading_label_style(heading_font="12px") -> str:
     p = _resolved()
-    return f"color: {p['text']}; font-weight: bold; font-size: {heading_font};"
+    return f"color: {p['text']}; font-weight: bold; font-size: {heading_font}; border: none;"
 
 def panel_frame_stylesheet() -> str:
     p = _resolved()
@@ -444,21 +478,22 @@ def toggle_btn_stylesheet() -> str:
 
 def zoom_active_stylesheet() -> str:
     p = _resolved()
+    bg = p['border_light'] if _base_palette() is _DARK else p['text']
     return (
-        f"QPushButton {{ background-color: {p['accent']}; color: {p['text_on_accent']};"
+        f"QPushButton {{ background-color: {bg}; color: {p['window_bg']};"
         f"  border: none; border-radius: 4px; padding: 4px; font-size: 12px; }}"
-        f"QPushButton:hover {{ background-color: {p['accent_hover']}; }}"
-        f"QPushButton:pressed {{ background-color: {p['accent_pressed']}; }}"
+        f"QPushButton:hover {{ background-color: {p['button_hover']}; color: {p['text_on_accent']}; }}"
+        f"QPushButton:pressed {{ background-color: {p['button_pressed']}; color: {p['text_on_accent']}; }}"
     )
 
 def control_btn_stylesheet() -> str:
     p = _resolved()
     return (
-        f"QPushButton {{ background-color: {p['float_control_bg']}; color: {p['float_control_text']};"
+        f"QPushButton {{ background-color: {p['button_bg']}; color: {p['text']};"
         f"  border: 1px solid grey; border-radius: 3px; padding: 0px;"
         f"  text-align: center; font-size: 14px; font-weight: bold; }}"
-        f"QPushButton:hover {{ background-color: darkgrey; color: white; }}"
-        f"QPushButton:pressed {{ background-color: #404040; color: white; }}"
+        f"QPushButton:hover {{ background-color: {p['button_hover']}; color: {p['text_on_accent']}; }}"
+        f"QPushButton:pressed {{ background-color: {p['button_pressed']}; color: {p['text_on_accent']}; }}"
     )
 
 def point_btn_stylesheet() -> str:
@@ -467,8 +502,8 @@ def point_btn_stylesheet() -> str:
         f"QPushButton {{ background-color: {p['float_point_bg']}; color: white;"
         f"  border: 1px solid grey; border-radius: 3px; padding: 5px;"
         f"  text-align: center; }}"
-        f"QPushButton:hover {{ background-color: darkgrey; color: white; }}"
-        f"QPushButton:pressed {{ background-color: #404040; color: white; }}"
+        f"QPushButton:hover {{ background-color: {p['button_hover']}; color: {p['text_on_accent']}; }}"
+        f"QPushButton:pressed {{ background-color: {p['button_pressed']}; color: {p['text_on_accent']}; }}"
     )
 
 def state_btn_stylesheet() -> str:
@@ -477,8 +512,8 @@ def state_btn_stylesheet() -> str:
         f"QPushButton {{ background-color: {p['float_state_bg']}; color: white;"
         f"  border: 1px solid grey; border-radius: 3px; padding: 5px;"
         f"  text-align: center; }}"
-        f"QPushButton:hover {{ background-color: darkgrey; color: white; }}"
-        f"QPushButton:pressed {{ background-color: #404040; color: white; }}"
+        f"QPushButton:hover {{ background-color: {p['button_hover']}; color: {p['text_on_accent']}; }}"
+        f"QPushButton:pressed {{ background-color: {p['button_pressed']}; color: {p['text_on_accent']}; }}"
     )
 
 def coding_info_label_style() -> str:
@@ -487,9 +522,15 @@ def coding_info_label_style() -> str:
 
 def header_widget_stylesheet() -> str:
     p = _resolved()
-    return f"background-color: {p['panel_bg']};"
+    return f"background-color: {p['panel_bg']}; border: none;"
 
 def event_label_stylesheet() -> str:
     return "color: white; background-color: rgba(50,50,50,180); padding: 2px;"
+
+
+def themed_icon(name: str) -> QIcon:
+    base = _base_palette()
+    variant = "white" if base is _DARK else "black"
+    return QIcon(f":/icons/{variant}/{name}.svg")
 
 
