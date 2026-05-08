@@ -33,11 +33,13 @@ def create_toggle_buttons(annotator):
         lambda: toggle_event_buttons(annotator))
     annotator.event_toggle_window.setFixedSize(30, 30)
 
-    # Position
+    # Position — must match _reposition_floating_windows() formula.
     video_pos = annotator.video_frame.mapToGlobal(QPoint(0, 0))
     margin = 2
+    top_offset = 20
+    top_y = video_pos.y() + margin - 10 + top_offset
     annotator.event_toggle_window.move(
-        video_pos.x() + margin + 5, video_pos.y() + margin - 10)
+        video_pos.x() + margin + 5, top_y)
 
     # Zoom toggle (upper-right corner)
     annotator.zoom_toggle_window = QWidget(parent)
@@ -58,9 +60,9 @@ def create_toggle_buttons(annotator):
         lambda: toggle_zoom_mode(annotator))
     annotator.zoom_toggle_window.setFixedSize(30, 30)
 
+    vw = annotator.video_frame.width()
     annotator.zoom_toggle_window.move(
-        video_pos.x() + annotator.video_width - 30 - margin - 5,
-        video_pos.y() + margin - 10)
+        video_pos.x() + vw - 30 - margin - 5, top_y)
 
     # Zoom level slider (hidden until zoom is activated)
     annotator.zoom_slider_window = QWidget(parent)
@@ -124,7 +126,7 @@ def create_toggle_buttons(annotator):
     annotator.subject_toggle_window.setFixedSize(30, 30)
 
     annotator.subject_toggle_window.move(
-        video_pos.x() + margin + 5, video_pos.y() + margin - 10 + 32)
+        video_pos.x() + margin + 5, top_y + 32)
 
     from config_manager import get_config
     cfg = get_config()

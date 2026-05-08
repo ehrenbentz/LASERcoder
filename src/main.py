@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
             self.setCentralWidget(self.video_annotator)
 
             if sys.platform != "darwin":
-                self.showMaximized()
+                self.showFullScreen()
             self.apply_theme()
             QApplication.processEvents(
                 QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)

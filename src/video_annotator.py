@@ -310,17 +310,13 @@ class VideoAnnotator(QFrame):
             self.parent.setWindowTitle(f"LASERcoder  {video_path}")
         self.parent.apply_theme()
 
-        # Enter fullscreen-like default view on macOS; native maximized
-        # with decorations on Windows/Linux.
+        # Use the full screen geometry (not available geometry) so the
+        # layout fills the entire display on all platforms.
+        full = self.parent.screen().geometry()
+        self.display_width = full.width()
+        self.display_height = full.height()
         if sys.platform == "darwin":
-            full = self.parent.screen().geometry()
-            self.display_width = full.width()
-            self.display_height = full.height()
             self._enter_default_view()
-        else:
-            avail = self.parent.screen().availableGeometry()
-            self.display_width = avail.width()
-            self.display_height = avail.height()
 
         # Layout measurements
         cfg = get_config()
@@ -469,69 +465,71 @@ class VideoAnnotator(QFrame):
         self.spectrogram_widget.setVisible(is_visible)
 
     def _enter_default_view(self):
-        """Enter the chromeless fullscreen-like default view (macOS only).
+        """Enter the chromeless fullscreen-like default view.
 
-        Mutates the NSWindow styleMask in place — never calls
-        setWindowFlags after the window is shown — so the OpenGL surface
-        and floating Tool window parenting are preserved across toggles.
+        macOS: mutates the NSWindow styleMask in place so the OpenGL
+        surface and floating Tool window parenting are preserved.
+        Windows/Linux: uses Qt's fullscreen window state which covers
+        the taskbar and removes window decorations.
         """
-        if sys.platform != "darwin":
-            return
         if self._windowed_mode:
             self._windowed_geometry = self.parent.geometry()
         self._windowed_mode = False
         full = self.parent.screen().geometry()
-        set_native_titled(self.parent, False)
-        self.parent.setGeometry(full)
-        QApplication.processEvents(
-            QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-        # Hard-hide both menu and dock (mask 2|8) so the OS does NOT
-        # auto-reveal them on edge approach. The edge-hover monitor
-        # below will switch to auto-hide mode after a 500ms hover.
-        set_presentation_options(2 | 8)
-        disable_native_fullscreen(self.parent)
-        self._start_edge_reveal_monitor()
+        if sys.platform == "darwin":
+            set_native_titled(self.parent, False)
+            self.parent.setGeometry(full)
+            QApplication.processEvents(
+                QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+            set_presentation_options(2 | 8)
+            disable_native_fullscreen(self.parent)
+            self._start_edge_reveal_monitor()
+        else:
+            self.parent.showFullScreen()
         QTimer.singleShot(50, self._reposition_floating_windows)
         QTimer.singleShot(50, self._refresh_after_view_change)
 
     def _enter_windowed_view(self):
-        """Enter a decorated, draggable, resizable windowed view (macOS only).
+        """Enter a decorated, draggable, resizable windowed view.
 
-        Restores the dock and menu bar and adds the native title bar with
-        traffic-light buttons by mutating the NSWindow styleMask in place.
-        The NSWindow is NOT recreated, so video playback and floating
-        controls survive the transition.
+        macOS: restores dock/menu bar and adds the native title bar by
+        mutating the NSWindow styleMask in place — the NSWindow is NOT
+        recreated so video playback and floating controls survive.
+        Windows/Linux: exits fullscreen and shows a normal decorated window.
         """
-        if sys.platform != "darwin":
-            return
         self._windowed_mode = True
-        self._stop_edge_reveal_monitor()
-        exit_fullscreen_platform()
-        # Drop any Maximized / FullScreen state — macOS treats those as
-        # pinned and refuses both vertical drag and edge resize. Must be
-        # cleared BEFORE we add the title bar so AppKit knows the window
-        # is a normal floating window.
-        self.parent.setWindowState(Qt.WindowState.WindowNoState)
-        set_native_titled(self.parent, True)
-        if self._windowed_geometry is not None:
-            target = self._windowed_geometry
+        if sys.platform == "darwin":
+            self._stop_edge_reveal_monitor()
+            exit_fullscreen_platform()
+            self.parent.setWindowState(Qt.WindowState.WindowNoState)
+            set_native_titled(self.parent, True)
+            if self._windowed_geometry is not None:
+                target = self._windowed_geometry
+            else:
+                avail = self.parent.screen().availableGeometry()
+                w = int(avail.width() * 0.6)
+                h = int(avail.height() * 0.8)
+                x = avail.x() + (avail.width() - w) // 2
+                y = avail.y() + (avail.height() - h) // 2
+                from PySide6.QtCore import QRect
+                target = QRect(x, y, w, h)
+            self.parent.setGeometry(
+                target.x(), target.y(), target.width() + 1, target.height())
+            self.parent.setGeometry(target)
+            QApplication.processEvents(
+                QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+            disable_native_fullscreen(self.parent)
         else:
-            avail = self.parent.screen().availableGeometry()
-            w = int(avail.width() * 0.6)
-            h = int(avail.height() * 0.8)
-            x = avail.x() + (avail.width() - w) // 2
-            y = avail.y() + (avail.height() - h) // 2
-            from PySide6.QtCore import QRect
-            target = QRect(x, y, w, h)
-        # Nudge the geometry by 1px then back so AppKit re-lays out the
-        # contentView under the now-titled chrome (otherwise the title bar
-        # exists structurally but the Qt content paints over it).
-        self.parent.setGeometry(
-            target.x(), target.y(), target.width() + 1, target.height())
-        self.parent.setGeometry(target)
-        QApplication.processEvents(
-            QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-        disable_native_fullscreen(self.parent)
+            self.parent.showNormal()
+            if self._windowed_geometry is not None:
+                self.parent.setGeometry(self._windowed_geometry)
+            else:
+                avail = self.parent.screen().availableGeometry()
+                w = int(avail.width() * 0.6)
+                h = int(avail.height() * 0.8)
+                x = avail.x() + (avail.width() - w) // 2
+                y = avail.y() + (avail.height() - h) // 2
+                self.parent.setGeometry(x, y, w, h)
         QTimer.singleShot(50, self._reposition_floating_windows)
         QTimer.singleShot(50, self._refresh_after_view_change)
 
@@ -721,8 +719,6 @@ class VideoAnnotator(QFrame):
 
     def _toggle_window_mode(self):
         """Toggle between chromeless fullscreen-like view and windowed."""
-        if sys.platform != "darwin":
-            return
         if self._windowed_mode:
             self._enter_default_view()
         else:
@@ -1254,9 +1250,9 @@ class VideoAnnotator(QFrame):
         QTimer.singleShot(300, self._apply_audio_settings)
         # Delay floating windows until after video starts
         QTimer.singleShot(500, self._show_floating_controls)
-        # On macOS, reposition after menu bar animation and layout settle
-        if sys.platform == "darwin":
-            QTimer.singleShot(800, self._reposition_floating_windows)
+        # Reposition after layout settles (menu bar animation on macOS,
+        # fullscreen transition on Windows/Linux).
+        QTimer.singleShot(800, self._reposition_floating_windows)
         # Start waveform extraction only if widget is already visible
         if hasattr(self, 'waveform_widget') and self.waveform_widget.isVisible():
             QTimer.singleShot(1000, self._start_waveform_extraction)

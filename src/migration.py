@@ -12,6 +12,19 @@ EVENT_KEY_HEADERS = ["Event", "Key", "Type", "MEgroup"]
 SUBJECT_KEY_HEADERS = ["SubjectID", "Key", "MEgroup", "Color"]
 
 
+def migrate_config_if_needed():
+    """Rename ~/.lasertag.conf to ~/.lasercoder.conf if needed."""
+    home = os.path.expanduser("~")
+    old = os.path.join(home, ".lasertag.conf")
+    new = os.path.join(home, ".lasercoder.conf")
+    if os.path.exists(old) and not os.path.exists(new):
+        try:
+            os.rename(old, new)
+            logger.info("Renamed %s -> %s", old, new)
+        except OSError as exc:
+            logger.warning("Failed to rename %s -> %s: %s", old, new, exc)
+
+
 def migrate_output_dir_if_needed(output_dir):
     """Migrate an old-layout output directory to the new structure.
 

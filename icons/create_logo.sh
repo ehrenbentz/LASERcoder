@@ -20,7 +20,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOURCE="${1:-$SCRIPT_DIR/LASERcoder_256.png}"
+SOURCE="${1:-$SCRIPT_DIR/LASERcoder.png}"
 
 if [ ! -f "$SOURCE" ]; then
     echo "ERROR: Source image not found: $SOURCE"
