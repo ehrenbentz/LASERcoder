@@ -13,7 +13,7 @@ dist*
 
 # mpv libraries
 libs/
-libmpv-2.dll
+#libmpv-2.dll
 
 # Python
 __pycache__/
