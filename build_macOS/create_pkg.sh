@@ -9,9 +9,9 @@
 #   - The postinstall clears quarantine and fixes permissions.
 #   - All postinstall operations are fault-tolerant (never causes install failure).
 #
-# Can be run from build_LaserTAG_MacOS.sh or independently:
+# Can be run from build_LASERcoder_MacOS.sh or independently:
 #   ./create_pkg.sh                                                     # uses defaults
-#   ./create_pkg.sh ./dist_macOS_arm64_v1_3_0/LaserTAG.app ./dist_macOS_arm64_v1_3_0 1.3.0
+#   ./create_pkg.sh ./dist_macOS_arm64_v1_3_0/LASERcoder.app ./dist_macOS_arm64_v1_3_0 1.3.0
 #
 # Arguments:
 #   APP_PATH      Path to the .app bundle
@@ -52,9 +52,9 @@ fi
 # Arguments and configuration
 # ==================================================================
 VER_UNDERSCORED=$(echo "$APP_VERSION" | tr '.' '_')
-APP_PATH="${1:-./dist_macOS_${ARCH_LABEL}_v${VER_UNDERSCORED}/LaserTAG.app}"
+APP_PATH="${1:-./dist_macOS_${ARCH_LABEL}_v${VER_UNDERSCORED}/LASERcoder.app}"
 OUTPUT_DIR="${2:-$(dirname "$APP_PATH")}"
-APP_NAME="LaserTAG"
+APP_NAME="LASERcoder"
 PKG_NAME="${APP_NAME}_v${APP_VERSION}_macOS_${ARCH_LABEL}.pkg"
 INSTALL_LOCATION="/Applications"
 SCRIPTS_DIR="$(mktemp -d)"
@@ -167,7 +167,7 @@ retry_busy pkgbuild \
     --root "$PKG_ROOT" \
     --install-location "${INSTALL_LOCATION}" \
     --scripts "$SCRIPTS_DIR" \
-    --identifier "edu.cornell.ehrenbentz.lasertag" \
+    --identifier "edu.cornell.ehrenbentz.lasercoder" \
     --version "$APP_VERSION" \
     "$OUTPUT_DIR/$PKG_NAME"
 

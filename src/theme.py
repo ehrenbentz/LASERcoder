@@ -31,7 +31,7 @@ _DARK = {
     "button_bg": "#808080",
     "button_hover": "#1084D9",
     "button_pressed": "#006CC1",
-    "button_text": "#000000",
+    "button_text": "#ffffff",
     # Tree widget
     "tree_selected": "#808080",
     "tree_hover": "#404040",
@@ -198,6 +198,27 @@ def qcolor(role: str) -> QColor:
 def base_qcolor(role: str) -> QColor:
     """Return the theme default QColor for *role*, ignoring any overrides."""
     return QColor(base_color(role))
+
+
+def apply_config_overrides(cfg):
+    """Apply all user color overrides from config to the theme system."""
+    pairs = [
+        (cfg.get_state_highlight_color(), "active_color"),
+        (cfg.get_point_highlight_color(), "highlight_color"),
+        (cfg.get_progress_bar_color(), "progress_fill"),
+        (cfg.get_floating_toggle_color(), "float_toggle_bg"),
+        (cfg.get_floating_controls_color(), "float_control_bg"),
+        (cfg.get_stationary_button_color(), "button_bg"),
+        (cfg.get_button_hover_color(), "button_hover"),
+        (cfg.get_tree_background_color(), "tree_bg"),
+    ]
+    for hex_val, role in pairs:
+        set_override(role, hex_val)
+
+    ui_bg = cfg.get_ui_background_color()
+    for role in ("window_bg", "panel_bg", "dialog_bg"):
+        set_override(role, ui_bg)
+
 
 # Title-bar theming (OS-level)
 
@@ -465,8 +486,8 @@ def groupbox_stylesheet() -> str:
         f"QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 3px; }}"
     )
 
-color# Floating-control stylesheets
-color
+# Floating-control stylesheets
+
 def toggle_btn_stylesheet() -> str:
     p = _resolved()
     return (
@@ -524,8 +545,27 @@ def header_widget_stylesheet() -> str:
     p = _resolved()
     return f"background-color: {p['panel_bg']}; border: none;"
 
-def event_label_stylesheet() -> str:
-    return "color: white; background-color: rgba(50,50,50,180); padding: 2px;"
+def event_label_stylesheet(hex_color: str = None,
+                           opacity: float = 0.7) -> str:
+    """Stylesheet for floating-panel section headers ("State Events",
+    "Point Events", "Subjects").
+
+    hex_color: background color (defaults to dark gray if None).
+    opacity: 0.0–1.0 alpha for the background.
+    """
+    from PySide6.QtGui import QColor
+    if hex_color:
+        c = QColor(hex_color)
+        r, g, b = c.red(), c.green(), c.blue()
+    else:
+        r, g, b = 50, 50, 50
+    a = int(max(0.0, min(1.0, opacity)) * 255)
+    return (
+        f"color: white;"
+        f" background-color: rgba({r},{g},{b},{a});"
+        f" border-radius: 3px;"
+        f" padding: 3px 6px;"
+    )
 
 
 def themed_icon(name: str) -> QIcon:

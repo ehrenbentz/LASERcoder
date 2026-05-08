@@ -14,6 +14,7 @@ class ProgressBar(QWidget):
         self._right_text = "Total Time"
         self._annotator = annotator
         self._custom_fill_color = None
+        self._fill_opacity = 1.0
         self.setMouseTracking(True)
 
         # Floating hover-timestamp label
@@ -38,6 +39,10 @@ class ProgressBar(QWidget):
     def set_fill_color(self, color):
         self._custom_fill_color = color
 
+    def set_fill_opacity(self, value):
+        self._fill_opacity = max(0.0, min(1.0, value))
+        self.update()
+
     # painting
 
     def paintEvent(self, event):
@@ -56,7 +61,9 @@ class ProgressBar(QWidget):
         if self._progress > 0:
             progress_width = int(self.width() * self._progress)
             fill = self._custom_fill_color or theme.qcolor("progress_fill")
+            painter.setOpacity(self._fill_opacity)
             painter.fillRect(0, 0, progress_width, bar_h, fill)
+            painter.setOpacity(max(0.1, self._fill_opacity))
 
         # Coding-end indicator (skip when timeline is limited to coding segment)
         ann = self._annotator
@@ -73,6 +80,7 @@ class ProgressBar(QWidget):
                         painter.drawLine(x, 0, x, bar_h)
 
         # Text
+        painter.setOpacity(max(0.1, self._fill_opacity))
         painter.setPen(theme.qcolor("progress_text"))
         font = painter.font()
         font.setBold(True)
@@ -91,6 +99,7 @@ class ProgressBar(QWidget):
         rx = self.width() - painter.fontMetrics().horizontalAdvance(self._right_text) - 10
         painter.drawText(rx, text_y, self._right_text)
 
+        painter.setOpacity(1.0)
         painter.end()
 
     # Mouse

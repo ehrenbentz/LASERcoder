@@ -4,17 +4,24 @@ import csv
 import json
 
 
-def compute_summary_rows(annotations_file, use_whole_video=False):
-    """Compute per-event summary rows from an annotation CSV
+def compute_summary_rows(annotations_path, use_whole_video=False):
+    """Compute per-event summary rows from annotation data.
 
+    annotations_path may be a per-video chunked directory or a legacy CSV file.
     When use_whole_video is True the coding-start / coding-duration
-    session parameters are ignored and the full data span is used instead
+    session parameters are ignored and the full data span is used instead.
     """
-    base_name = os.path.basename(annotations_file)
-    video_name = base_name.replace("_Annotations.csv", "")
+    from annotation_store import read_all_annotation_rows
 
-    with open(annotations_file, "r", newline="", encoding="utf-8-sig") as fh:
-        rows = list(csv.DictReader(fh))
+    if os.path.isdir(annotations_path):
+        basename = os.path.basename(annotations_path)
+        video_name = (os.path.basename(os.path.dirname(annotations_path))
+                      if basename == "Chunks" else basename)
+    else:
+        base_name = os.path.basename(annotations_path)
+        video_name = base_name.removesuffix("_Annotations.csv")
+
+    rows = read_all_annotation_rows(annotations_path)
 
     if not rows:
         return None
@@ -24,10 +31,18 @@ def compute_summary_rows(annotations_file, use_whole_video=False):
     coding_duration = None
 
     if not use_whole_video:
-        annotations_dir = os.path.dirname(annotations_file)
-        base_dir = os.path.dirname(annotations_dir)
-        session_state_file = os.path.join(
-            base_dir, "Resume", f"{video_name}_session_state.json")
+        if os.path.isdir(annotations_path):
+            # Chunked: path is Session/VideoName/Chunks/
+            # Session state is in Session/VideoName/
+            session_state_file = os.path.join(
+                os.path.dirname(annotations_path),
+                f"{video_name}_session_state.json")
+        else:
+            # Full CSV: path is Annotations/VideoName_Annotations.csv
+            base_dir = os.path.dirname(os.path.dirname(annotations_path))
+            session_state_file = os.path.join(
+                base_dir, "Session", video_name,
+                f"{video_name}_session_state.json")
 
         if os.path.exists(session_state_file):
             try:
@@ -59,17 +74,21 @@ def compute_summary_rows(annotations_file, use_whole_video=False):
                          else total_duration_seconds)
     analysis_minutes = analysis_duration / 60 if analysis_duration else 0
 
-    # group rows by event name 
-    rows_by_name = {}
+    # group rows by (event name, subject)
+    rows_by_key = {}
     for row in rows:
         name = row.get("Event", "").strip()
+        subject = row.get("Subject", "NA").strip()
+        if not subject:
+            subject = "NA"
         if name:
-            rows_by_name.setdefault(name, []).append(row)
+            key = (name, subject)
+            rows_by_key.setdefault(key, []).append(row)
 
-    # per-event stats
+    # per-event-per-subject stats
     summary_rows = []
 
-    for name, brows in rows_by_name.items():
+    for (name, subject), brows in rows_by_key.items():
         btype = _infer_type(brows)
         count = len(brows)
         frequency = count / analysis_minutes if analysis_minutes > 0 else 0
@@ -82,6 +101,7 @@ def compute_summary_rows(annotations_file, use_whole_video=False):
             summary_rows.append({
                 "Video": video_name,
                 "Event": name,
+                "Subject": subject,
                 "Type": "State",
                 "Count": count,
                 "Observations_per_minute": round(frequency, 3),
@@ -92,6 +112,7 @@ def compute_summary_rows(annotations_file, use_whole_video=False):
             summary_rows.append({
                 "Video": video_name,
                 "Event": name,
+                "Subject": subject,
                 "Type": "Point",
                 "Count": count,
                 "Observations_per_minute": round(frequency, 3),
@@ -99,33 +120,45 @@ def compute_summary_rows(annotations_file, use_whole_video=False):
                 "Percent_Time": "",
             })
 
-    summary_rows.sort(key=lambda r: (r["Type"], r["Event"]))
+    summary_rows.sort(key=lambda r: (r["Type"], r["Event"], r.get("Subject", "")))
     return summary_rows
 
 
-def generate_summary_statistics(annotations_file, custom_output_file=None):
+def generate_summary_statistics(annotations_path, custom_output_file=None):
     """
-    Generate summary statistics from an annotation CSV file
+    Generate summary statistics from annotation data.
 
+    annotations_path may be a per-video chunked directory or a legacy CSV file.
     """
-    summary_rows = compute_summary_rows(annotations_file)
+    summary_rows = compute_summary_rows(annotations_path)
     if summary_rows is None:
         return None
 
-    base_name = os.path.basename(annotations_file)
-    video_name = base_name.replace("_Annotations.csv", "")
-    annotations_dir = os.path.dirname(annotations_file)
-    base_dir = os.path.dirname(annotations_dir)
+    if os.path.isdir(annotations_path):
+        basename = os.path.basename(annotations_path)
+        video_name = (os.path.basename(os.path.dirname(annotations_path))
+                      if basename == "Chunks" else basename)
+        # Chunks dir: Session/VideoName/Chunks → output root 3 up
+        if basename == "Chunks":
+            base_dir = os.path.dirname(
+                os.path.dirname(os.path.dirname(annotations_path)))
+        else:
+            base_dir = os.path.dirname(os.path.dirname(annotations_path))
+    else:
+        base_name = os.path.basename(annotations_path)
+        video_name = base_name.removesuffix("_Annotations.csv")
+        base_dir = os.path.dirname(os.path.dirname(annotations_path))
 
     if custom_output_file is None:
-        summary_dir = os.path.join(base_dir, "Summary")
+        summary_dir = os.path.join(
+            base_dir, "Annotations", "Summaries")
         os.makedirs(summary_dir, exist_ok=True)
         output_file = os.path.join(summary_dir, f"{video_name}_Summary.csv")
     else:
         output_file = custom_output_file
 
     fieldnames = [
-        "Video", "Event", "Type", "Count",
+        "Video", "Event", "Subject", "Type", "Count",
         "Observations_per_minute", "Total_Duration_seconds", "Percent_Time",
     ]
 
@@ -133,6 +166,19 @@ def generate_summary_statistics(annotations_file, custom_output_file=None):
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(summary_rows)
+
+    # Generate complete (non-chunked) annotations file alongside the summary
+    if custom_output_file is None:
+        from annotation_store import read_all_annotation_rows, AnnotationStore
+        all_rows = read_all_annotation_rows(annotations_path)
+        if all_rows:
+            complete_file = os.path.join(
+                summary_dir, f"{video_name}_Annotations.csv")
+            with open(complete_file, "w", newline="") as fh:
+                writer = csv.DictWriter(
+                    fh, fieldnames=AnnotationStore.CSV_HEADERS)
+                writer.writeheader()
+                writer.writerows(all_rows)
 
     return output_file
 
@@ -153,20 +199,23 @@ def combine_summaries(summary_files, output_file):
     if not all_rows:
         return None
 
-    # Group by (Event, Type)
+    # Group by (Event, Subject, Type)
     groups = {}
     for row in all_rows:
-        key = (row.get("Event", ""), row.get("Type", ""))
+        key = (row.get("Event", ""),
+               row.get("Subject", "NA"),
+               row.get("Type", ""))
         groups.setdefault(key, []).append(row)
 
     summary_rows = []
-    for (event, btype), group in sorted(groups.items()):
+    for (event, subject, btype), group in sorted(groups.items()):
         counts = [int(r["Count"]) for r in group]
         obs_rates = [float(r["Observations_per_minute"]) for r in group
                      if r.get("Observations_per_minute")]
 
         entry = {
             "Event": event,
+            "Subject": subject,
             "Type": btype,
             "Count": sum(counts),
             "Mean_Count_per_video": round(_mean(counts), 3),
@@ -190,8 +239,8 @@ def combine_summaries(summary_files, output_file):
         summary_rows.append(entry)
 
     fieldnames = [
-        "Event", "Type", "Count", "Mean_Count_per_video", "Total_videos",
-        "Total_Duration_seconds", "Mean_Duration_per_video",
+        "Event", "Subject", "Type", "Count", "Mean_Count_per_video",
+        "Total_videos", "Total_Duration_seconds", "Mean_Duration_per_video",
         "Mean_Percent_Time", "Mean_Observations_per_minute",
     ]
 

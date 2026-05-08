@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
-title: "LaserTAG: Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder"
+title: "LASERcoder: Lightweight Annotation Software for Ethology Research"
 authors:
   - family-names: "Bentz"
     given-names: "Ehren J."
@@ -14,7 +14,7 @@ authors:
 version: "1.2.0"
 date-released: "2026-01-01"
 license: "GPL-3.0"
-repository-code: "https://github.com/ehrenbentz/LaserTAG"
+repository-code: "https://github.com/ehrenbentz/LASERcoder"
 keywords:
   - behavioral annotation
   - ethology
@@ -33,5 +33,5 @@ preferred-citation:
     - family-names: "Ophir"
       given-names: "Alexander G."
   year: 2026
-  title: "LaserTAG: Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder"
+  title: "LASERcoder: Lightweight Annotation Software for Ethology Research"
   note: "In preparation"

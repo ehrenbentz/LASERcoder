@@ -1,5 +1,4 @@
 import os
-import csv
 import json
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from config_manager import get_config
 from files_manager import FilesManager
 from event_key_editor import EventKeyEditor
 from dialogs import show_message
+from annotation_store import init_annotations_dir
 
 
 class SetupManager(QObject):
@@ -29,13 +29,13 @@ class SetupManager(QObject):
         self.event_key_file = None
         self.saved_state = None
         self.start_frame = 0
+        self.multi_part_files = None
+        self.multi_part_video_name = None
 
         self.output_dir = self.config_manager.get_output_dir()
         self.event_key_dir = None
         self.annotations_dir = None
-        self.resume_dir = None
 
-        self.annotations_file = ""
         self.session_state_file = ""
 
         self._event_editor = None
@@ -68,11 +68,21 @@ class SetupManager(QObject):
                     fm = self._files_manager
                     if fm.output_dir and fm.selected_video_file:
                         self.config_manager.update_output_dir(fm.output_dir)
-                        self.config_manager.update_video_dir(
-                            fm.selected_video_file)
+                        if fm.multi_part_files:
+                            self.config_manager.config['video_dir'] = (
+                                fm.current_video_dir)
+                            self.config_manager.save_config()
+                        else:
+                            self.config_manager.update_video_dir(
+                                fm.selected_video_file)
                         self.output_dir = fm.output_dir
                         self.video_path = fm.selected_video_file
-                        self.video_name = Path(self.video_path).stem
+                        self.multi_part_files = fm.multi_part_files
+                        self.multi_part_video_name = fm.multi_part_video_name
+                        if self.multi_part_files:
+                            self.video_name = self.multi_part_video_name
+                        else:
+                            self.video_name = Path(self.video_path).stem
                         self._files_manager = None
 
                         self._init_output_dirs()
@@ -99,12 +109,15 @@ class SetupManager(QObject):
     def _init_output_dirs(self):
         try:
             self.event_key_dir = os.path.join(
-                self.output_dir, "Event_Keys")
+                self.output_dir, "Keys", "Event_Keys")
             self.annotations_dir = os.path.join(
                 self.output_dir, "Annotations")
-            self.resume_dir = os.path.join(self.output_dir, "Resume")
+            self.subjects_dir = os.path.join(
+                self.output_dir, "Keys", "Subject_Keys")
+            self.session_dir = os.path.join(self.output_dir, "Session")
             for d in (self.output_dir, self.event_key_dir,
-                      self.annotations_dir, self.resume_dir):
+                      self.annotations_dir, self.subjects_dir,
+                      self.session_dir):
                 os.makedirs(d, exist_ok=True)
 
             from debug_logger import get_logger
@@ -119,28 +132,56 @@ class SetupManager(QObject):
             self._finish(QDialog.DialogCode.Rejected)
 
     def _init_file_paths(self):
-        self.annotations_file = os.path.join(
-            self.annotations_dir, f"{self.video_name}_Annotations.csv")
+        self.video_session_dir = os.path.join(
+            self.session_dir, self.video_name)
+        self.video_chunks_dir = os.path.join(
+            self.video_session_dir, "Chunks")
         self.session_state_file = os.path.join(
-            self.resume_dir, f"{self.video_name}_session_state.json")
+            self.video_session_dir,
+            f"{self.video_name}_session_state.json")
+        self.full_annotations_file = os.path.join(
+            self.annotations_dir,
+            f"{self.video_name}_Annotations.csv")
+        os.makedirs(self.video_chunks_dir, exist_ok=True)
+
+        if self.multi_part_files:
+            edl_path = self._write_edl_file()
+            if edl_path:
+                self.video_path = edl_path
+            else:
+                self._show_files_manager()
+                return
+
+    def _write_edl_file(self):
+        missing = [p for p in self.multi_part_files
+                   if not os.path.isfile(p)]
+        if missing:
+            show_message(
+                self.parent(), "Missing Files",
+                "The following video parts could not be found:\n\n"
+                + "\n".join(os.path.basename(p) for p in missing)
+                + "\n\nThe multi-part video cannot be loaded.")
+            return None
+        edl_path = os.path.join(
+            self.video_session_dir, f"{self.video_name}.edl")
+        with open(edl_path, "w", newline="\n", encoding="utf-8") as f:
+            f.write("# mpv EDL v0\n")
+            for path in self.multi_part_files:
+                escaped = (path.replace("%", "%25")
+                           .replace(",", "%2C")
+                           .replace(";", "%3B"))
+                f.write(f"{escaped}\n")
+        return edl_path
 
     def _create_empty_files(self):
-        # Annotations CSV
-        temp_ann = self.annotations_file + ".tmp"
+        # Annotations directory (chunked)
         try:
-            with open(temp_ann, "w", newline="") as fh:
-                csv.writer(fh).writerow([
-                    "Video", "Event", "Type", "Mutually_Exclusive",
-                    "H_Start", "H_End", "Start", "End", "Duration",
-                    "Manual_Edit", "Notes",
-                ])
-            os.replace(temp_ann, self.annotations_file)
+            init_annotations_dir(self.video_chunks_dir, self.video_name)
         except (PermissionError, OSError):
-            _remove_temp(temp_ann)
             show_message(
                 self.parent(), "Error",
-                "Cannot create annotations file.\n"
-                "Is it open in another application?")
+                "Cannot create annotations directory.\n"
+                "Check folder permissions.")
             self._show_files_manager()
             return False
 
@@ -155,6 +196,8 @@ class SetupManager(QObject):
                 "coding_end": None,
                 "coding_end_reached": False,
             }
+            if self.multi_part_files:
+                state["multi_part_files"] = self.multi_part_files
             with open(temp_state, "w") as fh:
                 json.dump(state, fh)
             os.replace(temp_state, self.session_state_file)
@@ -182,15 +225,34 @@ class SetupManager(QObject):
                         self.saved_state["timestamp_sec"] = (
                             self.saved_state["timestamp_ms"] / 1000.0)
 
-                    if os.path.exists(self.annotations_file):
+                    if self.saved_state.get("multi_part_files"):
+                        self.multi_part_files = (
+                            self.saved_state["multi_part_files"])
+                        edl_path = self._write_edl_file()
+                        if not edl_path:
+                            self._show_files_manager()
+                            return
+                        self.video_path = edl_path
+
+                    ann_exists = (
+                        os.path.isdir(self.video_chunks_dir)
+                        or os.path.exists(self.full_annotations_file))
+                    if ann_exists:
                         try:
-                            with open(self.annotations_file, "r") as fh:
-                                fh.read(1)
+                            test_dir = self.video_chunks_dir
+                            if os.path.isdir(test_dir):
+                                probe = os.path.join(test_dir, ".access_test")
+                                with open(probe, "w") as fh:
+                                    fh.write("t")
+                                os.remove(probe)
+                            else:
+                                with open(self.full_annotations_file, "r") as fh:
+                                    fh.read(1)
                         except (PermissionError, OSError):
                             show_message(
                                 self.parent(), "Error",
-                                "Cannot access annotations file.\n"
-                                "Is it open in another application?")
+                                "Cannot access annotations.\n"
+                                "Is the folder or file open in another application?")
                             self._show_files_manager()
                             return
 

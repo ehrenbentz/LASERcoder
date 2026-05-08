@@ -85,8 +85,8 @@ def create_toggle_buttons(annotator):
     )
 
     annotator._zoom_slider = QSlider(Qt.Orientation.Horizontal)
-    annotator._zoom_slider.setRange(0, 5)
-    annotator._zoom_slider.setValue(2)  # Default 2x
+    annotator._zoom_slider.setRange(0, 6)
+    annotator._zoom_slider.setValue(3)  # Default 2x
     annotator._zoom_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
     annotator._zoom_slider.setTickInterval(1)
     annotator._zoom_slider.setFixedWidth(100)
@@ -95,7 +95,7 @@ def create_toggle_buttons(annotator):
         lambda val: _on_zoom_level_changed(annotator, val))
     zoom_slider_layout.addWidget(annotator._zoom_slider)
 
-    annotator._zoom_level_label = QLabel("2.0x")
+    annotator._zoom_level_label = QLabel(f"{_ZOOM_LEVELS[3]:.1f}x")
     annotator._zoom_level_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     annotator._zoom_level_label.setStyleSheet(
         "color: white; font-size: 11px; background: transparent;")
@@ -104,19 +104,54 @@ def create_toggle_buttons(annotator):
     annotator.zoom_slider_window.setFixedSize(140, 30)
     annotator.zoom_slider_window.hide()
 
-    annotator.event_toggle_window.show()
-    annotator.zoom_toggle_window.show()
+    # Subject toggle (just below event toggle)
+    annotator.subject_toggle_window = QWidget(parent)
+    annotator.subject_toggle_window.setWindowFlags(
+        Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.Tool)
+    annotator.subject_toggle_window.setAttribute(
+        Qt.WidgetAttribute.WA_TranslucentBackground)
+    annotator.subject_toggle_window.setStyleSheet("background-color: transparent;")
+
+    annotator.subject_toggle_button = QPushButton(
+        "", annotator.subject_toggle_window)
+    annotator.subject_toggle_button.setIcon(theme.themed_icon("subject_list"))
+    annotator.subject_toggle_button.setIconSize(QSize(20, 20))
+    annotator.subject_toggle_button.setFixedSize(30, 30)
+    annotator.subject_toggle_button.setStyleSheet(theme.toggle_btn_stylesheet())
+    annotator.subject_toggle_button.clicked.connect(
+        lambda: toggle_subject_buttons(annotator))
+    annotator.subject_toggle_window.setFixedSize(30, 30)
+
+    annotator.subject_toggle_window.move(
+        video_pos.x() + margin + 5, video_pos.y() + margin - 10 + 32)
+
+    from config_manager import get_config
+    cfg = get_config()
+    toggle_opacity = cfg.get_floating_toggle_opacity()
+    annotator.event_toggle_window.setWindowOpacity(toggle_opacity)
+    annotator.subject_toggle_window.setWindowOpacity(toggle_opacity)
+    annotator.zoom_toggle_window.setWindowOpacity(toggle_opacity)
+    annotator.zoom_slider_window.setWindowOpacity(toggle_opacity)
+
+    if not annotator.event_toggle_window.isVisible():
+        annotator.event_toggle_window.show()
+    if not annotator.zoom_toggle_window.isVisible():
+        annotator.zoom_toggle_window.show()
+    if not annotator.subject_toggle_window.isVisible():
+        annotator.subject_toggle_window.show()
 
     annotator.floating_windows.extend([
         annotator.event_toggle_window,
         annotator.zoom_toggle_window,
         annotator.zoom_slider_window,
+        annotator.subject_toggle_window,
     ])
 
 
 
 
-_ZOOM_LEVELS = {0: 1.25, 1: 1.5, 2: 2.0, 3: 2.5, 4: 3.0, 5: 4.0}
+_ZOOM_LEVELS = {0: 1.0, 1: 1.25, 2: 1.5, 3: 2.0, 4: 2.5, 5: 3.0, 6: 5.0}
 
 def _zoom_level_to_mpv(level):
     """Convert a linear zoom multiplier to MPV's log2 video_zoom value."""
@@ -128,8 +163,7 @@ def _on_zoom_level_changed(annotator, slider_val):
     annotator._zoom_multiplier = level
     annotator._zoom_level_label.setText(f"{level:.1f}x")
     if (annotator.zoom_active
-            and hasattr(annotator, "player") and annotator.player
-            and (annotator.player.video_zoom or 0) > 0):
+            and hasattr(annotator, "player") and annotator.player):
         annotator.player.video_zoom = _zoom_level_to_mpv(level)
 
 def toggle_zoom_mode(annotator):
@@ -158,6 +192,8 @@ def toggle_zoom_mode(annotator):
 def toggle_floating_controls(annotator):
     """Toggle the playback controls floating panel"""
     logger.debug("toggle_floating_controls")
+    from config_manager import get_config
+    cfg = get_config()
     if (hasattr(annotator, "floating_controls_window")
             and annotator.floating_controls_window):
         try:
@@ -167,8 +203,10 @@ def toggle_floating_controls(annotator):
         annotator.floating_controls_window.deleteLater()
         annotator.floating_controls_window = None
         annotator.play_pause_btn = None
+        cfg.set_show_floating_controls(False)
     else:
         _create_floating_controls(annotator)
+        cfg.set_show_floating_controls(True)
 
 
 def _create_floating_controls(annotator):
@@ -216,13 +254,24 @@ def _create_floating_controls(annotator):
     y = (video_pos.y() + annotator.video_height
          - annotator.floating_controls_window.height() - 50)
     annotator.floating_controls_window.move(x, y)
+    from config_manager import get_config as _get_config
+    _cfg = _get_config()
+    annotator.floating_controls_window.setWindowOpacity(
+        max(0.1, _cfg.get_floating_controls_opacity()))
     annotator.floating_controls_window.show()
     annotator.floating_windows.append(annotator.floating_controls_window)
+    # Canonical positioner runs the up-to-date Y math (the local move()
+    # above uses the stale -50 offset). Without this the controls land
+    # in the wrong spot until any other floating-button toggle fires
+    # _reposition_floating_windows.
+    annotator._reposition_floating_windows()
 
 
 def toggle_event_buttons(annotator):
     """Toggle the floating event-buttons panel"""
     logger.debug("toggle_event_buttons")
+    from config_manager import get_config
+    cfg = get_config()
     if (hasattr(annotator, "event_buttons_window")
             and annotator.event_buttons_window):
         try:
@@ -231,24 +280,60 @@ def toggle_event_buttons(annotator):
             pass
         annotator.event_buttons_window.deleteLater()
         annotator.event_buttons_window = None
+        cfg.set_events_list_expanded(False)
     else:
         _create_event_buttons(annotator)
+        cfg.set_events_list_expanded(True)
+    _reposition_subject_buttons(annotator)
 
 
-def _custom_btn_stylesheet(hex_color, opacity=0.4):
-    """Generate a semi-transparent button stylesheet from a hex color"""
+def _reposition_subject_buttons(annotator):
+    """Reposition subject buttons relative to event buttons if both are visible."""
+    sbw = getattr(annotator, "subject_buttons_window", None)
+    if sbw is None or not sbw.isVisible():
+        return
+    video_pos = annotator.video_frame.mapToGlobal(QPoint(0, 0))
+    margin = 2
+    event_win = getattr(annotator, "event_buttons_window", None)
+    if event_win is not None and event_win.isVisible():
+        x = event_win.x()
+        y = event_win.y() + event_win.height() + 5
+    else:
+        toggle_win = getattr(annotator, "subject_toggle_window", None)
+        if toggle_win is not None:
+            x = toggle_win.x() + toggle_win.width() + 10
+            y = toggle_win.y()
+        else:
+            x = video_pos.x() + margin + 5 + 40
+            y = video_pos.y() + margin - 10 + 32
+    sbw.move(x, y)
+
+
+def _custom_btn_stylesheet(hex_color, opacity=0.4, size_mult=1.0):
+    """Generate a semi-transparent button stylesheet from a hex color.
+
+    size_mult: 0.5..2.0 multiplier applied to padding and font size so
+    the floating event/subject buttons can be scaled from the
+    Appearance settings dialog.
+    """
     from PySide6.QtGui import QColor
     c = QColor(hex_color)
     r, g, b = c.red(), c.green(), c.blue()
-    a = int(opacity * 255)
-    a_hover = min(255, a + 60)
-    a_pressed = min(255, a + 100)
+    bg_alpha = int(opacity * 255)
+    text_alpha = int(max(0.1, opacity) * 255)
+    pad_v = max(2, int(round(5 * size_mult)))
+    pad_h = max(4, int(round(8 * size_mult)))
+    font_px = max(9, int(round(13 * size_mult)))
     return (
-        f"QPushButton {{ background-color: rgba({r},{g},{b},{a}); color: white;"
-        f"  border: 1px solid grey; border-radius: 3px; padding: 5px;"
+        f"QPushButton {{ background-color: rgba({r},{g},{b},{bg_alpha});"
+        f"  color: rgba(255,255,255,{text_alpha});"
+        f"  border: 1px solid rgba(255,255,255,{text_alpha});"
+        f"  border-radius: 3px;"
+        f"  padding: {pad_v}px {pad_h}px;"
+        f"  font-size: {font_px}px;"
         f"  text-align: center; }}"
-        f"QPushButton:hover {{ background-color: rgba({r},{g},{b},{a_hover}); color: white; }}"
-        f"QPushButton:pressed {{ background-color: rgba({r},{g},{b},{a_pressed}); color: white; }}"
+        f"QPushButton:hover {{ background-color: rgba({r},{g},{b},{min(255, bg_alpha + 40)}); }}"
+        f"QPushButton:pressed {{ background-color: rgba({r},{g},{b},255); }}"
     )
 
 
@@ -265,8 +350,10 @@ def _create_event_buttons(annotator):
     annotator.event_buttons_window.setStyleSheet("background-color: transparent;")
     
     main_layout = QVBoxLayout(annotator.event_buttons_window)
-    main_layout.setSpacing(10)
-    main_layout.setContentsMargins(10, 10, 10, 10)
+    main_layout.setSpacing(8)
+    # Shared 5px margins so the events panel and subject panel align
+    # on the left when both are visible.
+    main_layout.setContentsMargins(5, 5, 5, 5)
 
     # Separate events by type
     point_events = []
@@ -279,9 +366,17 @@ def _create_event_buttons(annotator):
 
     max_per_row = 4
 
+    from config_manager import get_config
+    cfg = get_config()
+    header_style = theme.event_label_stylesheet(
+        cfg.get_floating_header_color(),
+        cfg.get_floating_header_opacity())
+
     def _add_section(label_text, items, style):
         lbl = QLabel(label_text)
-        lbl.setStyleSheet(theme.event_label_stylesheet())
+        lbl.setStyleSheet(header_style)
+        if not cfg.get_show_floating_headers():
+            lbl.hide()
         main_layout.addWidget(lbl)
 
         container = QWidget()
@@ -316,14 +411,12 @@ def _create_event_buttons(annotator):
 
         main_layout.addWidget(container)
 
-    from config_manager import get_config
-    cfg = get_config()
-
-    point_hex = cfg.get_point_button_color()
-    state_hex = cfg.get_state_button_color()
-    btn_opacity = cfg.get_event_button_opacity()
-    point_style = _custom_btn_stylesheet(point_hex, btn_opacity) if point_hex else theme.point_btn_stylesheet()
-    state_style = _custom_btn_stylesheet(state_hex, btn_opacity) if state_hex else theme.state_btn_stylesheet()
+    point_hex = cfg.get_point_button_color() or theme.color('float_point_bg')
+    state_hex = cfg.get_state_button_color() or theme.color('float_state_bg')
+    btn_opacity = cfg.get_floating_buttons_opacity()
+    size_mult = cfg.get_floating_button_size()
+    point_style = _custom_btn_stylesheet(point_hex, btn_opacity, size_mult)
+    state_style = _custom_btn_stylesheet(state_hex, btn_opacity, size_mult)
 
     _add_section("State Events", state_events, state_style)
     _add_section("Point Events", point_events, point_style)
@@ -341,6 +434,188 @@ def _create_event_buttons(annotator):
     annotator.event_buttons_window.show()
     annotator.event_buttons_window.move(x, y)
     annotator.floating_windows.append(annotator.event_buttons_window)
+    # Use the canonical positioner so the buttons land at the correct
+    # Y baseline and any dependent windows (subject buttons) re-align.
+    annotator._reposition_floating_windows()
+
+
+def toggle_subject_buttons(annotator):
+    """Toggle the floating subject-buttons panel"""
+    logger.debug("toggle_subject_buttons")
+    from config_manager import get_config
+    cfg = get_config()
+    if (hasattr(annotator, "subject_buttons_window")
+            and annotator.subject_buttons_window):
+        try:
+            annotator.floating_windows.remove(annotator.subject_buttons_window)
+        except ValueError:
+            pass
+        annotator.subject_buttons_window.deleteLater()
+        annotator.subject_buttons_window = None
+        annotator._subject_btn_map = {}
+        cfg.set_subject_list_expanded(False)
+    else:
+        _create_subject_buttons(annotator)
+        cfg.set_subject_list_expanded(True)
+
+
+def _create_subject_buttons(annotator):
+    parent = annotator.parent
+
+    annotator.subject_buttons_window = QWidget(parent)
+    annotator.subject_buttons_window.setWindowFlags(
+        Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.Tool)
+    annotator.subject_buttons_window.setAttribute(
+        Qt.WidgetAttribute.WA_TranslucentBackground)
+    annotator.subject_buttons_window.setStyleSheet("background-color: transparent;")
+
+    layout = QVBoxLayout(annotator.subject_buttons_window)
+    layout.setSpacing(3)
+    # Shared 5px margins to match the events panel for left-edge alignment.
+    layout.setContentsMargins(5, 5, 5, 5)
+
+    from config_manager import get_config
+    cfg = get_config()
+
+    lbl = QLabel("Subjects")
+    lbl.setStyleSheet(theme.event_label_stylesheet(
+        cfg.get_floating_header_color(),
+        cfg.get_floating_header_opacity()))
+    if not cfg.get_show_floating_headers():
+        lbl.hide()
+    layout.addWidget(lbl)
+    subject_hex = cfg.get_subject_button_color()
+    btn_opacity = cfg.get_floating_buttons_opacity()
+    size_mult = cfg.get_floating_button_size()
+    default_hex = "#008080"
+    from PySide6.QtGui import QColor
+
+    annotator._subject_btn_map = {}
+
+    pad_v = max(2, int(round(5 * size_mult)))
+    pad_h = max(4, int(round(8 * size_mult)))
+    font_px = max(9, int(round(13 * size_mult)))
+
+    for name in annotator.subject_names:
+        per_color = getattr(annotator, 'subject_colors', {}).get(name, "")
+        hex_color = per_color or subject_hex or default_hex
+        normal_style = _custom_btn_stylesheet(hex_color, btn_opacity, size_mult)
+
+        c = QColor(hex_color)
+        r, g, b = c.red(), c.green(), c.blue()
+        active_style = (
+            f"QPushButton {{ background-color: rgba({r},{g},{b},{int(0.8*255)}); color: white;"
+            f"  border: 2px solid white; border-radius: 3px;"
+            f"  padding: {pad_v}px {pad_h}px;"
+            f"  font-size: {font_px}px;"
+            f"  text-align: center; font-weight: bold; }}"
+            f"QPushButton:hover {{ background-color: rgba({r},{g},{b},{int(0.9*255)}); }}"
+            f"QPushButton:pressed {{ background-color: rgba({r},{g},{b},255); }}"
+        )
+
+        btn = QPushButton(name)
+        btn.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        if name in annotator.active_subjects:
+            btn.setStyleSheet(active_style)
+        else:
+            btn.setStyleSheet(normal_style)
+        btn.clicked.connect(
+            lambda checked, n=name: _on_subject_button_clicked(annotator, n))
+        layout.addWidget(btn)
+        annotator._subject_btn_map[name] = btn
+
+    video_pos = annotator.video_frame.mapToGlobal(QPoint(0, 0))
+    margin = 2
+
+    annotator.subject_buttons_window.adjustSize()
+    annotator.subject_buttons_window.setFixedSize(
+        annotator.subject_buttons_window.size())
+
+    # Align with event buttons row — same x, below the event buttons panel
+    event_win = getattr(annotator, "event_buttons_window", None)
+    if event_win is not None and event_win.isVisible():
+        x = event_win.x()
+        y = event_win.y() + event_win.height() + 5
+    else:
+        # Fall back: position to the right of the subject toggle
+        toggle_win = getattr(annotator, "subject_toggle_window", None)
+        if toggle_win is not None:
+            x = toggle_win.x() + toggle_win.width() + 10
+            y = toggle_win.y()
+        else:
+            x = video_pos.x() + margin + 5 + 40
+            y = video_pos.y() + margin - 10 + 32
+
+    annotator.subject_buttons_window.move(x, y)
+    annotator.subject_buttons_window.show()
+    annotator.floating_windows.append(annotator.subject_buttons_window)
+    # Canonical positioner runs the up-to-date Y baseline math and
+    # handles the event-buttons-visible / not-visible branches uniformly.
+    annotator._reposition_floating_windows()
+
+
+def _on_subject_button_clicked(annotator, subject_name):
+    """Toggle a subject on/off when its floating button is clicked"""
+    if subject_name in annotator.active_subjects:
+        annotator.active_subjects.discard(subject_name)
+    else:
+        annotator._deactivate_me_subjects(subject_name)
+        annotator.active_subjects.add(subject_name)
+
+    annotator._update_subject_overlay()
+    annotator.store.save_active_subjects(list(annotator.active_subjects))
+    _refresh_subject_button_styles(annotator)
+
+
+def _refresh_subject_button_styles(annotator):
+    """Update subject button styles to reflect active state.
+
+    Must use the same size_mult-aware padding/font as _create_subject_buttons,
+    otherwise clicking a subject reverts that button to default size while
+    leaving the (correctly-sized) header large — making the buttons look
+    like they shrank."""
+    if not hasattr(annotator, '_subject_btn_map'):
+        return
+
+    from config_manager import get_config
+    cfg = get_config()
+    subject_hex = cfg.get_subject_button_color()
+    btn_opacity = cfg.get_floating_buttons_opacity()
+    size_mult = cfg.get_floating_button_size()
+    default_hex = "#008080"
+    from PySide6.QtGui import QColor
+
+    pad_v = max(2, int(round(5 * size_mult)))
+    pad_h = max(4, int(round(8 * size_mult)))
+    font_px = max(9, int(round(13 * size_mult)))
+
+    for name, btn in annotator._subject_btn_map.items():
+        try:
+            per_color = getattr(annotator, 'subject_colors', {}).get(name, "")
+            hex_color = per_color or subject_hex or default_hex
+            normal_style = _custom_btn_stylesheet(
+                hex_color, btn_opacity, size_mult)
+
+            c = QColor(hex_color)
+            r, g, b = c.red(), c.green(), c.blue()
+            active_style = (
+                f"QPushButton {{ background-color: rgba({r},{g},{b},{int(0.8*255)}); color: white;"
+                f"  border: 2px solid white; border-radius: 3px;"
+                f"  padding: {pad_v}px {pad_h}px;"
+                f"  font-size: {font_px}px;"
+                f"  text-align: center; font-weight: bold; }}"
+                f"QPushButton:hover {{ background-color: rgba({r},{g},{b},{int(0.9*255)}); }}"
+                f"QPushButton:pressed {{ background-color: rgba({r},{g},{b},255); }}"
+            )
+
+            if name in annotator.active_subjects:
+                btn.setStyleSheet(active_style)
+            else:
+                btn.setStyleSheet(normal_style)
+        except RuntimeError:
+            pass
 
 
 def _hidden_by_settings(annotator):
@@ -363,6 +638,13 @@ def _hidden_by_settings(annotator):
             hidden.add(w)
     if not cfg.get_show_zoom_button() or not annotator.zoom_active:
         w2 = getattr(annotator, "zoom_slider_window", None)
+        if w2:
+            hidden.add(w2)
+    if not cfg.get_show_subject_list():
+        w = getattr(annotator, "subject_buttons_window", None)
+        if w:
+            hidden.add(w)
+        w2 = getattr(annotator, "subject_toggle_window", None)
         if w2:
             hidden.add(w2)
     return hidden

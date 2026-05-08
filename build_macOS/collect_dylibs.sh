@@ -9,7 +9,7 @@
 #   - Codesigns all collected dylibs
 #
 # Auto-detects architecture and Homebrew prefix.
-# Creates an architecture-labeled output directory (libs_x86_64/ or libs_arm64/).
+# Outputs to libs/mpv/macOS/<arch>/ (or a custom directory).
 #
 # Usage:
 #   ./collect_dylibs.sh              # auto-detect everything
@@ -45,8 +45,8 @@ if [ ! -f "$SEED" ]; then
     exit 1
 fi
 
-# Output directory: use argument if provided, otherwise libs_<arch>
-DEST="${1:-./libs_${ARCH_LABEL}}"
+# Output directory: use argument if provided, otherwise ../libs/mpv/macOS/<arch>
+DEST="${1:-../libs/mpv/macOS/${ARCH_LABEL}}"
 
 echo "Architecture:    $ARCH_LABEL"
 echo "Homebrew prefix: $BREW_PREFIX"
@@ -157,7 +157,7 @@ echo "Cleaning up..."
 rm -f "$DEST/Python"
 rm -f "$DEST/Python3"
 
-# Replace vapoursynth with a stub (mpv links against it but LaserTAG does not use it)
+# Replace vapoursynth with a stub (mpv links against it but LASERcoder does not use it)
 rm -f "$DEST/libvapoursynth-script.0.dylib"
 echo 'void* getVSScriptAPI(int version) { return 0; }' \
     | cc -shared -o "$DEST/libvapoursynth-script.0.dylib" -x c - $ARCH_FLAG

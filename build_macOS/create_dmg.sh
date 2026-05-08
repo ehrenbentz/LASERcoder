@@ -43,11 +43,11 @@ else
 fi
 
 VER_UNDERSCORED=$(echo "$APP_VERSION" | tr '.' '_')
-APP_PATH="${1:-./dist_macOS_${ARCH_LABEL}_v${VER_UNDERSCORED}/LaserTAG.app}"
+APP_PATH="${1:-./dist_macOS_${ARCH_LABEL}_v${VER_UNDERSCORED}/LASERcoder.app}"
 OUTPUT_DIR="${2:-$(dirname "$APP_PATH")}"
 
-DMG_VOLUME_NAME="LaserTAG"
-DMG_NAME="LaserTAG_v${APP_VERSION}_macOS_${ARCH_LABEL}.dmg"
+DMG_VOLUME_NAME="LASERcoder"
+DMG_NAME="LASERcoder_v${APP_VERSION}_macOS_${ARCH_LABEL}.dmg"
 STAGING_DIR="$(mktemp -d)"
 
 export COPYFILE_DISABLE=1

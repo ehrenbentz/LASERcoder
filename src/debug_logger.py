@@ -57,7 +57,7 @@ class DebugLogger:
 
     def __init__(self, debug_mode):
         self._debug_mode = debug_mode
-        self._logger = logging.getLogger("LaserTAG")
+        self._logger = logging.getLogger("LASERcoder")
         self._logger.setLevel(logging.DEBUG if debug_mode else logging.WARNING)
         self._logger.propagate = False
         self._handler = None
@@ -72,7 +72,7 @@ class DebugLogger:
         # Phase 1: log to temp dir
         ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self._log_filename = f"debug_{ts}.log"
-        temp_dir = os.path.join(tempfile.gettempdir(), "LaserTAG_Debug")
+        temp_dir = os.path.join(tempfile.gettempdir(), "LASERcoder_Debug")
         os.makedirs(temp_dir, exist_ok=True)
         self._temp_log_path = os.path.join(temp_dir, self._log_filename)
 
@@ -94,7 +94,7 @@ class DebugLogger:
         self._orig_excepthook = sys.excepthook
         sys.excepthook = self._excepthook
 
-        self._logger.info("=== LaserTAG debug logging started ===")
+        self._logger.info("=== LASERcoder debug logging started ===")
 
     def _excepthook(self, exc_type, exc_value, exc_tb):
         import traceback

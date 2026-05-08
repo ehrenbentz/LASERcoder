@@ -14,6 +14,9 @@ from display_utils import get_screen_geometry, center_window, is_os_junk
 from dialogs import show_message, get_text
 import theme
 
+EVENT_KEY_HEADERS = ["Event", "Key", "Type", "MEgroup"]
+
+
 class EventKeyEditor(QDialog):
     """Dialog for editing event key definitions"""
 
@@ -38,6 +41,8 @@ class EventKeyEditor(QDialog):
         self._type_groups = []
         self._me_group_entries = []
         self._combo = None
+        self._deleted_rows = []
+        self._undo_delete_btn = None
 
         self.setWindowTitle("Event Key Editor")
         theme.apply_dialog_theme(self)
@@ -129,6 +134,7 @@ class EventKeyEditor(QDialog):
 
         for col, (text, width) in enumerate([
             ("Event", 300), ("Key", 75), ("Type", None), ("ME Group", 120),
+            ("", 30),
         ]):
             lbl = QLabel(text)
             lbl.setStyleSheet("font-weight: bold;")
@@ -184,6 +190,16 @@ class EventKeyEditor(QDialog):
             layout.addWidget(me_entry, row, 3)
             self._me_group_entries.append(me_entry)
 
+            delete_btn = QPushButton("x")
+            delete_btn.setFixedSize(25, 25)
+            delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            delete_btn.setStyleSheet(
+                "QPushButton { padding: 0px; font-size: 9px;"
+                " font-weight: normal; }")
+            delete_btn.clicked.connect(
+                lambda checked, r=row: self._delete_event_row(r))
+            layout.addWidget(delete_btn, row, 4)
+
         layout.setColumnStretch(2, 1)
 
     def _create_control_buttons(self):
@@ -194,11 +210,15 @@ class EventKeyEditor(QDialog):
             ("Save", self._save_events),
             ("Rename", self._rename_event_key),
             ("Delete", self._delete_event_key),
-            ("Back", self._on_cancel),
         ]:
             btn = QPushButton(text)
             btn.clicked.connect(slot)
             layout.addWidget(btn)
+
+        self._undo_delete_btn = QPushButton("Undo Delete")
+        self._undo_delete_btn.clicked.connect(self._undo_delete_row)
+        self._undo_delete_btn.setEnabled(False)
+        layout.addWidget(self._undo_delete_btn)
 
         layout.addStretch()
         start_btn = QPushButton("Start Video")
@@ -226,7 +246,7 @@ class EventKeyEditor(QDialog):
                 self.event_key_dir, last_key)
             self._refresh_combo()
             self._combo.setCurrentText(
-                last_key.replace("_events.csv", ""))
+                last_key.removesuffix("_events.csv"))
             self._load_events()
             self._update_entries()
         elif files:
@@ -234,7 +254,7 @@ class EventKeyEditor(QDialog):
                 self.event_key_dir, files[0])
             self._refresh_combo()
             self._combo.setCurrentText(
-                files[0].replace("_events.csv", ""))
+                files[0].removesuffix("_events.csv"))
             self._load_events()
             self._update_entries()
         else:
@@ -309,7 +329,7 @@ class EventKeyEditor(QDialog):
         self.event_key_file = dest
         self._refresh_combo()
         self._combo.setCurrentText(
-            basename.replace("_events.csv", ""))
+            basename.removesuffix("_events.csv"))
         self._load_events()
         self._update_entries()
         self.config_manager.update_last_event_key(basename)
@@ -331,11 +351,13 @@ class EventKeyEditor(QDialog):
         files = self._get_event_files()
         if files:
             self._combo.addItems(
-                [f.replace("_events.csv", "") for f in files])
+                [f.removesuffix("_events.csv") for f in files])
         else:
             self._combo.addItem("No file found")
 
     def _load_events(self):
+        self._deleted_rows.clear()
+        self._update_undo_button()
         if not os.path.exists(self.event_key_file):
             self.events = [["", "", "point", ""] for _ in range(30)]
             return True
@@ -349,9 +371,16 @@ class EventKeyEditor(QDialog):
             return False
 
         try:
-            with open(self.event_key_file, "r") as fh:
+            with open(self.event_key_file, "r", newline="",
+                      encoding="utf-8-sig") as fh:
+                reader = csv.reader(fh)
                 self.events = []
-                for row in csv.reader(fh):
+                first = True
+                for row in reader:
+                    if first:
+                        first = False
+                        if row[:len(EVENT_KEY_HEADERS)] == EVENT_KEY_HEADERS:
+                            continue
                     while len(row) < 4:
                         row.append("")
                     self.events.append(row)
@@ -377,6 +406,63 @@ class EventKeyEditor(QDialog):
             else:
                 radios[0].setChecked(True)
             self._me_group_entries[i].setText(me_group)
+
+    def _delete_event_row(self, row):
+        """Remove an event row, shifting rows below it up by one."""
+        if row < 0 or row >= len(self._name_entries):
+            return
+        self._deleted_rows.append({
+            "row": row,
+            "name": self._name_entries[row].text(),
+            "key": self._key_entries[row].text(),
+            "state": self._type_groups[row].buttons()[1].isChecked(),
+            "me": self._me_group_entries[row].text(),
+        })
+        self._update_undo_button()
+        last = len(self._name_entries) - 1
+        for i in range(row, last):
+            self._name_entries[i].setText(self._name_entries[i + 1].text())
+            self._key_entries[i].setText(self._key_entries[i + 1].text())
+            src_state = self._type_groups[i + 1].buttons()[1].isChecked()
+            self._type_groups[i].buttons()[1 if src_state else 0].setChecked(
+                True)
+            self._me_group_entries[i].setText(
+                self._me_group_entries[i + 1].text())
+        self._name_entries[last].clear()
+        self._key_entries[last].clear()
+        self._type_groups[last].buttons()[0].setChecked(True)
+        self._me_group_entries[last].clear()
+
+    def _undo_delete_row(self):
+        """Restore the most recently deleted event row."""
+        if not self._deleted_rows:
+            return
+        rec = self._deleted_rows.pop()
+        row = rec["row"]
+        last = len(self._name_entries) - 1
+        if row > last:
+            self._update_undo_button()
+            return
+        for i in range(last, row, -1):
+            self._name_entries[i].setText(
+                self._name_entries[i - 1].text())
+            self._key_entries[i].setText(
+                self._key_entries[i - 1].text())
+            src_state = self._type_groups[i - 1].buttons()[1].isChecked()
+            self._type_groups[i].buttons()[1 if src_state else 0].setChecked(
+                True)
+            self._me_group_entries[i].setText(
+                self._me_group_entries[i - 1].text())
+        self._name_entries[row].setText(rec["name"])
+        self._key_entries[row].setText(rec["key"])
+        self._type_groups[row].buttons()[1 if rec["state"] else 0].setChecked(
+            True)
+        self._me_group_entries[row].setText(rec["me"])
+        self._update_undo_button()
+
+    def _update_undo_button(self):
+        if self._undo_delete_btn is not None:
+            self._undo_delete_btn.setEnabled(bool(self._deleted_rows))
 
     def _on_combo_changed(self, text):
         if text and text != "No file found":
@@ -435,6 +521,7 @@ class EventKeyEditor(QDialog):
             try:
                 with open(temp, "w", newline="") as fh:
                     writer = csv.writer(fh)
+                    writer.writerow(EVENT_KEY_HEADERS)
                     for _ in range(30):
                         writer.writerow(["", "", "point", ""])
                 os.replace(temp, path)
@@ -556,7 +643,7 @@ class EventKeyEditor(QDialog):
             files = self._get_event_files()
             if files:
                 self._refresh_combo()
-                display = files[0].replace("_events.csv", "")
+                display = files[0].removesuffix("_events.csv")
                 self._combo.setCurrentText(display)
                 self.event_key_file = os.path.join(
                     self.event_key_dir, files[0])
@@ -588,6 +675,7 @@ class EventKeyEditor(QDialog):
         try:
             with open(temp, "w", newline="") as fh:
                 writer = csv.writer(fh)
+                writer.writerow(EVENT_KEY_HEADERS)
                 for i in range(30):
                     writer.writerow([
                         self._name_entries[i].text(),

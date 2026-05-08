@@ -597,6 +597,24 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             color_btn.setToolTip(f"Change color for {name}")
             color_buttons[name] = color_btn
 
+        # Subject checkboxes
+        all_subjects = set()
+        for e in state_events:
+            s = e.get("Subject", "NA")
+            if s:
+                all_subjects.add(s)
+        for e in point_events:
+            s = e.get("Subject", "NA")
+            if s:
+                all_subjects.add(s)
+        subject_order = sorted(all_subjects)
+
+        subject_checkboxes = {}
+        for subj in subject_order:
+            cb = QCheckBox(subj)
+            cb.setChecked(True)
+            subject_checkboxes[subj] = cb
+
         # Container widget that gets rebuilt on reorder
         cb_container = [None]
 
@@ -637,6 +655,18 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                 for i, name in enumerate(point_order):
                     layout.addWidget(
                         _make_row(name, i, point_order, "point"))
+
+            # Subject section
+            if subject_order and len(subject_order) > 1:
+                layout.addSpacing(8)
+                lbl = QLabel("Subjects")
+                lbl.setStyleSheet(
+                    f"color: {theme.color('text_secondary')};"
+                    " font-size: 9px; font-weight: bold;"
+                    " background: transparent; padding-left: 2px;")
+                layout.addWidget(lbl)
+                for subj in subject_order:
+                    layout.addWidget(subject_checkboxes[subj])
 
             layout.addStretch(1)
             scroll.setWidget(container)
@@ -757,10 +787,14 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             if not dialog_alive[0]:
                 return
             checked = {n for n, cb in checkboxes.items() if cb.isChecked()}
+            checked_subjects = {s for s, cb in subject_checkboxes.items()
+                                if cb.isChecked()}
             filt_state = [e for e in timeline_widget._raw_state_events
-                          if e.get('Event') in checked]
+                          if e.get('Event') in checked
+                          and e.get('Subject', 'NA') in checked_subjects]
             filt_point = [e for e in timeline_widget._raw_point_events
-                          if e.get('Event') in checked]
+                          if e.get('Event') in checked
+                          and e.get('Subject', 'NA') in checked_subjects]
             timeline_widget.update_data(filt_state, filt_point)
             if store is not None:
                 unchecked = [n for n, cb in checkboxes.items()
@@ -849,6 +883,8 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
             return pick_color
 
         for cb in checkboxes.values():
+            cb.stateChanged.connect(on_checkbox_changed)
+        for cb in subject_checkboxes.values():
             cb.stateChanged.connect(on_checkbox_changed)
         toggle_btn.clicked.connect(toggle_all)
         if segment_cb is not None:

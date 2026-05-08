@@ -1,0 +1,45 @@
+<!-- icons.qrc -->
+<RCC>
+  <qresource prefix="/icons/black">
+    <file alias="back.svg">icons_black/back.svg</file>
+    <file alias="back_big.svg">icons_black/back_big.svg</file>
+    <file alias="check.svg">icons_black/check.svg</file>
+    <file alias="event_toggle.svg">icons_black/event_toggle.svg</file>
+    <file alias="forward.svg">icons_black/forward.svg</file>
+    <file alias="forward_big.svg">icons_black/forward_big.svg</file>
+    <file alias="forward_small.svg">icons_black/forward_small.svg</file>
+    <file alias="left.svg">icons_black/left.svg</file>
+    <file alias="minus.svg">icons_black/minus.svg</file>
+    <file alias="mute.svg">icons_black/mute.svg</file>
+    <file alias="pause.svg">icons_black/pause.svg</file>
+    <file alias="play.svg">icons_black/play.svg</file>
+    <file alias="plus.svg">icons_black/plus.svg</file>
+    <file alias="right.svg">icons_black/right.svg</file>
+    <file alias="settings.svg">icons_black/settings.svg</file>
+    <file alias="sound.svg">icons_black/sound.svg</file>
+    <file alias="subject_list.svg">icons_black/subject_list.svg</file>
+    <file alias="up.svg">icons_black/up.svg</file>
+    <file alias="zoom.svg">icons_black/zoom.svg</file>
+  </qresource>
+  <qresource prefix="/icons/white">
+    <file alias="back.svg">icons_white/back.svg</file>
+    <file alias="back_big.svg">icons_white/back_big.svg</file>
+    <file alias="check.svg">icons_white/check.svg</file>
+    <file alias="down.svg">icons_white/down.svg</file>
+    <file alias="event_toggle.svg">icons_white/event_toggle.svg</file>
+    <file alias="forward.svg">icons_white/forward.svg</file>
+    <file alias="forward_big.svg">icons_white/forward_big.svg</file>
+    <file alias="left.svg">icons_white/left.svg</file>
+    <file alias="minus.svg">icons_white/minus.svg</file>
+    <file alias="mute.svg">icons_white/mute.svg</file>
+    <file alias="pause.svg">icons_white/pause.svg</file>
+    <file alias="play.svg">icons_white/play.svg</file>
+    <file alias="plus.svg">icons_white/plus.svg</file>
+    <file alias="right.svg">icons_white/right.svg</file>
+    <file alias="settings.svg">icons_white/settings.svg</file>
+    <file alias="sound.svg">icons_white/sound.svg</file>
+    <file alias="subject_list.svg">icons_white/subject_list.svg</file>
+    <file alias="up.svg">icons_white/up.svg</file>
+    <file alias="zoom.svg">icons_white/zoom.svg</file>
+  </qresource>
+</RCC>

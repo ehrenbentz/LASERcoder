@@ -3,9 +3,9 @@
 # Creates a .deb package from the Nuitka standalone output.
 # Auto-detects architecture for the package metadata.
 #
-# Can be run from build_LaserTAG_Linux.sh or independently:
+# Can be run from build_LASERcoder_Linux.sh or independently:
 #   ./create_deb.sh                                                     # uses defaults
-#   ./create_deb.sh ./dist_Linux_amd64_v1_3_1/LaserTAG.dist ./dist_Linux_amd64_v1_3_1 1.3.1
+#   ./create_deb.sh ./dist_Linux_amd64_v1_3_1/LASERcoder.dist ./dist_Linux_amd64_v1_3_1 1.3.1
 #
 # Arguments:
 #   APP_DIR       Path to the Nuitka .dist directory
@@ -50,9 +50,9 @@ fi
 # Arguments and configuration
 # ==================================================================
 VER_UNDERSCORED=$(echo "$APP_VERSION" | tr '.' '_')
-APP_DIR="${1:-./dist_Linux_${DEB_ARCH}_v${VER_UNDERSCORED}/LaserTAG.dist}"
+APP_DIR="${1:-./dist_Linux_${DEB_ARCH}_v${VER_UNDERSCORED}/LASERcoder.dist}"
 OUTPUT_DIR="${2:-$(dirname "$APP_DIR")}"
-APP_NAME="LaserTAG"
+APP_NAME="LASERcoder"
 DEB_NAME="${APP_NAME}_v${APP_VERSION}_linux_${DEB_ARCH}.deb"
 INSTALL_DIR="/opt/${APP_NAME}"
 
@@ -63,7 +63,7 @@ if [ ! -d "$APP_DIR" ]; then
     echo "ERROR: Application directory not found at $APP_DIR"
     echo ""
     echo "Usage: $0 [APP_DIR] [OUTPUT_DIR] [APP_VERSION]"
-    echo "  APP_DIR defaults to ./dist_Linux_v${VER_UNDERSCORED}/LaserTAG.dist"
+    echo "  APP_DIR defaults to ./dist_Linux_v${VER_UNDERSCORED}/LASERcoder.dist"
     exit 1
 fi
 
@@ -88,18 +88,21 @@ chmod 755 "${STAGING}${INSTALL_DIR}/${APP_NAME}"
 
 # Symlink in /usr/local/bin
 mkdir -p "${STAGING}/usr/local/bin"
-ln -s "${INSTALL_DIR}/${APP_NAME}" "${STAGING}/usr/local/bin/lasertag"
+ln -s "${INSTALL_DIR}/${APP_NAME}" "${STAGING}/usr/local/bin/lasercoder"
 
 # Desktop entry
 mkdir -p "${STAGING}/usr/share/applications"
-if [ -f "lasertag.desktop" ]; then
-    cp "lasertag.desktop" "${STAGING}/usr/share/applications/"
+if [ -f "lasercoder.desktop" ]; then
+    cp "lasercoder.desktop" "${STAGING}/usr/share/applications/"
 fi
 
 # Icon
 mkdir -p "${STAGING}/usr/share/icons/hicolor/256x256/apps"
-if [ -f "laser.png" ]; then
-    cp "laser.png" "${STAGING}/usr/share/icons/hicolor/256x256/apps/lasertag.png"
+ICON_SRC="../icons/LASERcoder_256.png"
+if [ -f "$ICON_SRC" ]; then
+    cp "$ICON_SRC" "${STAGING}/usr/share/icons/hicolor/256x256/apps/lasercoder.png"
+elif [ -f "laser.png" ]; then
+    cp "laser.png" "${STAGING}/usr/share/icons/hicolor/256x256/apps/lasercoder.png"
 fi
 
 # ==================================================================
@@ -108,16 +111,16 @@ fi
 mkdir -p "${STAGING}/DEBIAN"
 
 cat > "${STAGING}/DEBIAN/control" << EOF
-Package: lasertag
+Package: lasercoder
 Version: ${APP_VERSION}
 Section: science
 Priority: optional
 Architecture: ${DEB_ARCH}
 Depends: libgl1, libegl1
 Maintainer: Ehren Bentz <ehren.bentz@cornell.edu>
-Homepage: https://github.com/ehrenbentz/LaserTAG
-Description: Lightweight annotation software for ethology research and Tracking Animals Gooder
- LaserTAG is a free, open-source desktop application for behavioral
+Homepage: https://github.com/ehrenbentz/LASERcoder
+Description: Lightweight Annotation Software for Ethology Research
+ LASERcoder is a free, open-source desktop application for behavioral
  annotation of video recordings. Designed for researchers in ethology,
  animal behavior, ecology, and psychology.
 EOF
@@ -138,7 +141,7 @@ chmod 755 "${STAGING}/DEBIAN/postinst"
 # ==================================================================
 cat > "${STAGING}/DEBIAN/prerm" << 'EOF'
 #!/bin/bash
-rm -f /usr/local/bin/lasertag
+rm -f /usr/local/bin/lasercoder
 exit 0
 EOF
 chmod 755 "${STAGING}/DEBIAN/prerm"

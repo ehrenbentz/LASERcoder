@@ -9,13 +9,17 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QListWidget, QListWidgetItem, QFrame, QMessageBox, QSplitter, QWidget,
     QInputDialog, QApplication, QFileDialog, QMenu, QComboBox, QGroupBox,
+    QRadioButton,
 )
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen
 
 from display_utils import get_screen_geometry, center_window, is_os_junk
 from platform_utils import is_network_drive
-from annotation_store import AnnotationStore, parse_time
+from annotation_store import (AnnotationStore, parse_time,
+                              read_all_annotation_rows,
+                              is_chunked_annotations_dir,
+                              validate_import_csv)
 from annotations_visualizer import show_visualization_dialog
 from summary_statistics_manager import SummaryStatisticsManager
 from summary_viewer import show_table_viewer, show_boxplot_viewer
@@ -55,6 +59,8 @@ class FilesManager(QDialog):
 
         self.file_types = file_types
         self.selected_video_file = None
+        self.multi_part_files = None
+        self.multi_part_video_name = None
 
         self.initial_output_dir = os.path.abspath(initial_output_dir)
         self.initial_video_dir = os.path.abspath(initial_video_dir)
@@ -64,7 +70,7 @@ class FilesManager(QDialog):
 
         self._screen = get_screen_geometry()
 
-        self.setWindowTitle("LaserTAG - Select Output Directory and Video File")
+        self.setWindowTitle("LASERcoder - Select Output Directory and Video File")
         theme.apply_dialog_theme(self)
 
         if self.parent():
@@ -161,9 +167,9 @@ class FilesManager(QDialog):
         del_ann_btn = QPushButton("Delete Annotations")
         del_ann_btn.clicked.connect(self._show_delete_annotations)
         summary_layout.addWidget(del_ann_btn)
-        summary_btn = QPushButton("Summary Statistics")
-        summary_btn.clicked.connect(self._show_summary_menu)
-        summary_layout.addWidget(summary_btn)
+        import_btn = QPushButton("Import Annotations")
+        import_btn.clicked.connect(self._show_import_annotations)
+        summary_layout.addWidget(import_btn)
         layout.addWidget(summary_frame)
 
         backup_frame = QFrame()
@@ -175,10 +181,9 @@ class FilesManager(QDialog):
         move_btn = QPushButton("Move Project")
         move_btn.clicked.connect(self._move_working_directory)
         backup_layout.addWidget(move_btn)
-        spacer = QPushButton()
-        spacer.setEnabled(False)
-        spacer.setStyleSheet("border: none; background: transparent;")
-        backup_layout.addWidget(spacer)
+        summary_btn = QPushButton("Summary Statistics")
+        summary_btn.clicked.connect(self._show_summary_menu)
+        backup_layout.addWidget(summary_btn)
         layout.addWidget(backup_frame)
 
         self._populate_dir_list(self.initial_output_dir)
@@ -330,7 +335,7 @@ class FilesManager(QDialog):
             if self._is_backup_dir(path):
                 show_message(
                     self, "Backup Directory",
-                    "This directory is a LaserTAG backup and "
+                    "This directory is a LASERcoder backup and "
                     "cannot be used as a project directory.")
                 return
             self.current_output_dir = path
@@ -357,7 +362,7 @@ class FilesManager(QDialog):
             if self._is_backup_dir(path):
                 show_message(
                     self, "Backup Directory",
-                    "This directory is a LaserTAG backup and "
+                    "This directory is a LASERcoder backup and "
                     "cannot be used as a project directory.")
                 return
             self.current_output_dir = path
@@ -381,7 +386,7 @@ class FilesManager(QDialog):
             if self._is_backup_dir(new_dir):
                 show_message(
                     self, "Backup Directory",
-                    "This directory is a LaserTAG backup and "
+                    "This directory is a LASERcoder backup and "
                     "cannot be used as a project directory.")
                 return
             self.current_output_dir = new_dir
@@ -428,6 +433,11 @@ class FilesManager(QDialog):
 
     def _populate_file_list(self, directory):
         self.video_file_listbox.clear()
+        # Migrate old output layout before reading statuses
+        if self.output_dir:
+            from migration import migrate_output_dir_if_needed
+            if migrate_output_dir_if_needed(self.output_dir):
+                self._populate_dir_list(self.current_output_dir)
         try:
             extensions = tuple(ext.lower() for ext in self.file_types)
             files = sorted(
@@ -435,7 +445,28 @@ class FilesManager(QDialog):
                 if os.path.isfile(os.path.join(directory, f))
                 and f.lower().endswith(extensions)
                 and not is_os_junk(f))
-            statuses = self._get_all_video_statuses(files)
+
+            # Detect multi-part subfolders (folders with 2+ video files)
+            multi_part_names = []
+            for d in sorted(os.listdir(directory)):
+                subdir = os.path.join(directory, d)
+                if (not os.path.isdir(subdir)
+                        or d.startswith(".") or is_os_junk(d)):
+                    continue
+                try:
+                    parts = sorted(
+                        f for f in os.listdir(subdir)
+                        if os.path.isfile(os.path.join(subdir, f))
+                        and f.lower().endswith(extensions)
+                        and not is_os_junk(f))
+                except OSError:
+                    continue
+                if len(parts) >= 2:
+                    multi_part_names.append(d)
+
+            statuses = self._get_all_video_statuses(
+                files + multi_part_names)
+
             for fname in files:
                 item = QListWidgetItem(fname)
                 status = statuses.get(fname, "not_started")
@@ -443,6 +474,33 @@ class FilesManager(QDialog):
                     item.setIcon(self._status_icon("complete"))
                 elif status == "in_progress":
                     item.setIcon(self._status_icon("in_progress"))
+                self.video_file_listbox.addItem(item)
+
+            # Add multi-part subfolder entries
+            for d in multi_part_names:
+                subdir = os.path.join(directory, d)
+                try:
+                    parts = sorted(
+                        f for f in os.listdir(subdir)
+                        if os.path.isfile(os.path.join(subdir, f))
+                        and f.lower().endswith(extensions)
+                        and not is_os_junk(f))
+                except OSError:
+                    continue
+                item = QListWidgetItem(
+                    f"{d}  (\u29C9 {len(parts)} parts)")
+                item.setData(Qt.ItemDataRole.UserRole, {
+                    "type": "multi_part",
+                    "folder": subdir,
+                    "parts": [os.path.join(subdir, f) for f in parts],
+                })
+                status = statuses.get(d, "not_started")
+                if status == "complete":
+                    item.setIcon(self._status_icon("complete"))
+                elif status == "in_progress":
+                    item.setIcon(self._status_icon("in_progress"))
+                else:
+                    item.setIcon(self._status_icon("multi_part"))
                 self.video_file_listbox.addItem(item)
         except OSError:
             pass
@@ -452,23 +510,26 @@ class FilesManager(QDialog):
         result = {}
         if not self.output_dir:
             return result
-        resume_dir = os.path.join(self.output_dir, "Resume")
-        if not os.path.isdir(resume_dir):
+        session_dir = os.path.join(self.output_dir, "Session")
+        if not os.path.isdir(session_dir):
             return result
         # Read all session state files in one pass
-        existing = set()
         try:
-            existing = {f for f in os.listdir(resume_dir)
-                        if not is_os_junk(f)}
+            video_dirs = {d for d in os.listdir(session_dir)
+                          if not is_os_junk(d)}
         except OSError:
             return result
         for fname in filenames:
             video_name = os.path.splitext(fname)[0]
-            state_file = f"{video_name}_session_state.json"
-            if state_file not in existing:
+            if video_name not in video_dirs:
+                continue
+            state_file = os.path.join(
+                session_dir, video_name,
+                f"{video_name}_session_state.json")
+            if not os.path.isfile(state_file):
                 continue
             try:
-                with open(os.path.join(resume_dir, state_file), "r") as f:
+                with open(state_file, "r") as f:
                     data = json.load(f)
                 if data.get("completed"):
                     result[fname] = "complete"
@@ -499,6 +560,11 @@ class FilesManager(QDialog):
             painter.setBrush(QColor("#FFC107"))
             painter.setPen(QPen(QColor("#FFA000"), 1))
             painter.drawEllipse(1, 1, size - 2, size - 2)
+        elif status == "multi_part":
+            painter.setBrush(QColor("#2196F3"))
+            painter.setPen(QPen(QColor("#1976D2"), 1))
+            painter.drawRoundedRect(1, 4, 9, 7, 1, 1)
+            painter.drawRoundedRect(4, 1, 9, 7, 1, 1)
         painter.end()
         return QIcon(pixmap)
 
@@ -523,7 +589,11 @@ class FilesManager(QDialog):
         if action is None:
             return
 
-        fname = item.text()
+        item_data = item.data(Qt.ItemDataRole.UserRole)
+        if item_data and item_data.get("type") == "multi_part":
+            fname = os.path.basename(item_data["folder"])
+        else:
+            fname = item.text()
         if action == mark_complete:
             self._set_video_status(fname, "complete")
         elif action == mark_progress:
@@ -539,10 +609,11 @@ class FilesManager(QDialog):
             return
 
         video_name = os.path.splitext(filename)[0]
-        resume_dir = os.path.join(self.output_dir, "Resume")
-        os.makedirs(resume_dir, exist_ok=True)
+        video_session_dir = os.path.join(
+            self.output_dir, "Session", video_name)
+        os.makedirs(video_session_dir, exist_ok=True)
         state_file = os.path.join(
-            resume_dir, f"{video_name}_session_state.json")
+            video_session_dir, f"{video_name}_session_state.json")
 
         if status == "clear":
             if os.path.exists(state_file):
@@ -605,7 +676,7 @@ class FilesManager(QDialog):
             reply = show_message(
                 self, "Network Drive Detected",
                 "The selected directory appears to be on a network drive.\n\n"
-                "LaserTAG uses atomic file writes that may not work "
+                "LASERcoder uses atomic file writes that may not work "
                 "reliably on network filesystems (SMB, NFS, etc.). "
                 "This can lead to data loss or corrupted annotation files.\n\n"
                 "Would you like to move the project to a local directory?",
@@ -616,7 +687,7 @@ class FilesManager(QDialog):
             show_message(
                 self, "Network Drive Detected",
                 "The selected directory appears to be on a network drive.\n\n"
-                "LaserTAG uses atomic file writes that may not work "
+                "LASERcoder uses atomic file writes that may not work "
                 "reliably on network filesystems (SMB, NFS, etc.). "
                 "This can lead to data loss or corrupted annotation files.\n\n"
                 "Please use a local directory for your working directory.",
@@ -668,7 +739,7 @@ class FilesManager(QDialog):
         try:
             marker = os.path.join(dest, ".no_project")
             with open(marker, "w") as fh:
-                fh.write("This directory is a LaserTAG backup and "
+                fh.write("This directory is a LASERcoder backup and "
                          "cannot be used as a project directory.\n")
         except OSError:
             pass
@@ -721,7 +792,7 @@ class FilesManager(QDialog):
                 "destination.\nPlease choose a different location.")
             return
 
-        subdirs = ["Annotations", "Event_Keys", "Resume", "Summary", "Debug"]
+        subdirs = ["Annotations", "Keys", "Session", "Debug"]
 
         try:
             os.makedirs(dest_dir)
@@ -830,7 +901,7 @@ class FilesManager(QDialog):
                 if self._is_backup_dir(new_dir):
                     show_message(
                         self, "Backup Directory",
-                        "This directory is a LaserTAG backup and "
+                        "This directory is a LASERcoder backup and "
                         "cannot be used as a project directory.")
                     return
                 self.current_output_dir = new_dir
@@ -841,7 +912,7 @@ class FilesManager(QDialog):
             if self._is_backup_dir(self.current_output_dir):
                 show_message(
                     self, "Backup Directory",
-                    "This directory is a LaserTAG backup and "
+                    "This directory is a LASERcoder backup and "
                     "cannot be used as a project directory.")
                 return
             self.output_dir = self.current_output_dir
@@ -867,12 +938,21 @@ class FilesManager(QDialog):
             if self._is_backup_dir(self.output_dir):
                 show_message(
                     self, "Backup Directory",
-                    "The selected output directory is a LaserTAG backup "
+                    "The selected output directory is a LASERcoder backup "
                     "and cannot be used as a project directory.\n\n"
                     "Please select a different output directory.")
                 return
-            self.selected_video_file = os.path.join(
-                self.current_video_dir, current_item.text())
+            item_data = current_item.data(Qt.ItemDataRole.UserRole)
+            if item_data and item_data.get("type") == "multi_part":
+                self.multi_part_files = item_data["parts"]
+                self.multi_part_video_name = os.path.basename(
+                    item_data["folder"])
+                self.selected_video_file = item_data["parts"][0]
+            else:
+                self.selected_video_file = os.path.join(
+                    self.current_video_dir, current_item.text())
+                self.multi_part_files = None
+                self.multi_part_video_name = None
             self.done(QDialog.DialogCode.Accepted)
         else:
             show_message(
@@ -884,16 +964,7 @@ class FilesManager(QDialog):
 
 
     def _show_view_annotations(self):
-        ann_dir = ""
-        if self.output_dir:
-            ann_dir = os.path.join(self.output_dir, "Annotations")
-
-        ann_files = []
-        if ann_dir and os.path.isdir(ann_dir):
-            ann_files = sorted(
-                f for f in os.listdir(ann_dir)
-                if f.endswith("_Annotations.csv")
-                and not is_os_junk(f))
+        ann_entries = _discover_annotations(self.output_dir)
 
         dlg = QDialog(self)
         dlg.setWindowTitle("View Annotations")
@@ -909,10 +980,10 @@ class FilesManager(QDialog):
         grp_lay = QVBoxLayout(grp)
         grp_lay.setSpacing(6)
 
-        if ann_files:
+        if ann_entries:
             desc = QLabel(
-                f"{len(ann_files)} annotation file"
-                f"{'s' if len(ann_files) != 1 else ''} found. "
+                f"{len(ann_entries)} annotation file"
+                f"{'s' if len(ann_entries) != 1 else ''} found. "
                 "Select a file to view.")
             desc.setWordWrap(True)
             desc.setStyleSheet(
@@ -921,10 +992,8 @@ class FilesManager(QDialog):
             grp_lay.addWidget(desc)
 
             combo = QComboBox()
-            for fname in ann_files:
-                title = (fname.replace("_Annotations.csv", "")
-                              .replace("_", " "))
-                combo.addItem(title, os.path.join(ann_dir, fname))
+            for display_name, data_path in ann_entries:
+                combo.addItem(display_name, data_path)
             grp_lay.addWidget(combo)
 
             btn_row_ann = QHBoxLayout()
@@ -960,48 +1029,64 @@ class FilesManager(QDialog):
         dlg.open()
 
     def _view_annotation_file(self, parent_dlg, path, title):
-        show_table_viewer(parent_dlg, path, title + " Annotations")
+        rows = read_all_annotation_rows(path)
+        if not rows:
+            show_message(parent_dlg, "Empty",
+                         "No annotation data found.")
+            return
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, newline="")
+        try:
+            writer = csv.DictWriter(
+                tmp, fieldnames=AnnotationStore.CSV_HEADERS)
+            writer.writeheader()
+            writer.writerows(rows)
+            tmp.close()
+            show_table_viewer(parent_dlg, tmp.name,
+                              title + " Annotations")
+        finally:
+            tmp.close()
 
     def _visualize_annotation_file(self, parent_dlg, path, title):
         state_ann, point_ann = [], []
         try:
-            with open(path, "r", newline="", encoding="utf-8-sig") as fh:
-                for row in csv.DictReader(fh):
-                    atype = row.get("Type", "").strip().lower()
-                    if atype == "state":
-                        start, end = 0, None
-                        try:
-                            s = row.get("Start", "").strip()
-                            if s and s != "NA":
-                                start = float(s)
-                            e = row.get("End", "").strip()
-                            if e and e != "NA":
-                                end = float(e)
-                        except ValueError:
-                            hs = row.get("H_Start", "").strip()
-                            he = row.get("H_End", "").strip()
-                            if hs and hs != "NA":
-                                start = parse_time(hs)
-                            if he and he != "NA":
-                                end = parse_time(he)
-                        state_ann.append({
-                            "Event": row.get("Event", "").strip(),
-                            "start_time": start, "end_time": end,
-                            "Type": "State",
-                            "Mutually_Exclusive": row.get(
-                                "Mutually_Exclusive", "False"),
-                            "Notes": row.get("Notes", ""),
-                        })
-                    elif atype == "point":
-                        raw = row.get("Start", "0").strip()
-                        point_ann.append({
-                            "Event": row.get("Event", "").strip(),
-                            "time": row.get("H_Start", "").strip(),
-                            "raw_time": (float(raw)
-                                         if raw and raw != "NA" else 0),
-                            "Manual_Edit": row.get("Manual_Edit", "False"),
-                            "Notes": row.get("Notes", ""),
-                        })
+            for row in read_all_annotation_rows(path):
+                atype = row.get("Type", "").strip().lower()
+                if atype == "state":
+                    start, end = 0, None
+                    try:
+                        s = row.get("Start", "").strip()
+                        if s and s != "NA":
+                            start = float(s)
+                        e = row.get("End", "").strip()
+                        if e and e != "NA":
+                            end = float(e)
+                    except ValueError:
+                        hs = row.get("H_Start", "").strip()
+                        he = row.get("H_End", "").strip()
+                        if hs and hs != "NA":
+                            start = parse_time(hs)
+                        if he and he != "NA":
+                            end = parse_time(he)
+                    state_ann.append({
+                        "Event": row.get("Event", "").strip(),
+                        "start_time": start, "end_time": end,
+                        "Type": "State",
+                        "Mutually_Exclusive": row.get(
+                            "Mutually_Exclusive", "False"),
+                        "Notes": row.get("Notes", ""),
+                    })
+                elif atype == "point":
+                    raw = row.get("Start", "0").strip()
+                    point_ann.append({
+                        "Event": row.get("Event", "").strip(),
+                        "time": row.get("H_Start", "").strip(),
+                        "raw_time": (float(raw)
+                                     if raw and raw != "NA" else 0),
+                        "Manual_Edit": row.get("Manual_Edit", "False"),
+                        "Notes": row.get("Notes", ""),
+                    })
         except Exception as exc:
             show_message(
                 parent_dlg, "Error",
@@ -1026,12 +1111,22 @@ class FilesManager(QDialog):
         video_duration = max_time * 1.05 if max_time > 0 else 60
 
         # Build a lightweight store for viz settings persistence
-        video_name = os.path.splitext(os.path.basename(path))[0]
-        video_name = video_name.replace("_Annotations", "")
+        if os.path.isdir(path):
+            basename = os.path.basename(path)
+            video_name = (os.path.basename(os.path.dirname(path))
+                          if basename == "Chunks" else basename)
+        else:
+            video_name = (os.path.basename(path)
+                          .removesuffix("_Annotations.csv")
+                          .removesuffix("_Annotations"))
+        # annotations_dir must be Session/VideoName/Chunks/ so
+        # _session_state_path() resolves to Session/VideoName/
+        chunks_dir = os.path.join(
+            self.output_dir or "", "Session", video_name, "Chunks")
         store = AnnotationStore(
             video_name=video_name,
-            annotations_file=path,
-            session_state_file="",
+            annotations_dir=chunks_dir,
+            full_annotations_file="",
             event_key_file="",
             output_dir=self.output_dir or "",
         )
@@ -1076,18 +1171,9 @@ class FilesManager(QDialog):
 
 
     def _show_delete_annotations(self):
-        ann_dir = ""
-        if self.output_dir:
-            ann_dir = os.path.join(self.output_dir, "Annotations")
+        ann_entries = _discover_annotations(self.output_dir)
 
-        ann_files = []
-        if ann_dir and os.path.isdir(ann_dir):
-            ann_files = sorted(
-                f for f in os.listdir(ann_dir)
-                if f.endswith("_Annotations.csv")
-                and not is_os_junk(f))
-
-        if not ann_files:
+        if not ann_entries:
             show_message(
                 self, "No Annotations",
                 "No annotation files found in the selected "
@@ -1109,10 +1195,8 @@ class FilesManager(QDialog):
         layout.addWidget(label)
 
         combo = QComboBox()
-        for fname in ann_files:
-            title = (fname.replace("_Annotations.csv", "")
-                          .replace("_", " "))
-            combo.addItem(title, fname)
+        for display_name, data_path in ann_entries:
+            combo.addItem(display_name, data_path)
         layout.addWidget(combo)
 
         btn_row = QHBoxLayout()
@@ -1120,7 +1204,7 @@ class FilesManager(QDialog):
         delete_btn = QPushButton("Delete")
         delete_btn.clicked.connect(
             lambda: self._confirm_delete_annotations(
-                dlg, ann_dir, combo.currentData(), combo.currentText()))
+                dlg, combo.currentData(), combo.currentText()))
         btn_row.addWidget(delete_btn)
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(dlg.reject)
@@ -1130,8 +1214,8 @@ class FilesManager(QDialog):
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.open()
 
-    def _confirm_delete_annotations(self, parent_dlg, ann_dir,
-                                    filename, display_name):
+    def _confirm_delete_annotations(self, parent_dlg,
+                                    data_path, display_name):
         reply = show_message(
             parent_dlg, "Confirm Deletion",
             f"This will delete the annotations for "
@@ -1140,28 +1224,55 @@ class FilesManager(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        ann_path = os.path.join(ann_dir, filename)
-        video_name = filename.replace("_Annotations.csv", "")
+        # Derive video name from the path
+        if os.path.isdir(data_path):
+            basename = os.path.basename(data_path)
+            video_name = (os.path.basename(os.path.dirname(data_path))
+                          if basename == "Chunks" else basename)
+        else:
+            video_name = os.path.basename(data_path).removesuffix(
+                "_Annotations.csv")
 
-        # Remove annotation file
-        try:
-            os.remove(ann_path)
-        except OSError as exc:
-            show_message(
-                parent_dlg, "Error",
-                f"Failed to delete annotations: {exc}")
-            return
-
-        # Remove associated session state file
+        # Remove annotation chunks (Session/{video}/Chunks/)
         if self.output_dir:
-            resume_dir = os.path.join(self.output_dir, "Resume")
+            chunks_dir = os.path.join(
+                self.output_dir, "Session", video_name, "Chunks")
+            if os.path.isdir(chunks_dir):
+                try:
+                    shutil.rmtree(chunks_dir)
+                except OSError:
+                    pass
+
+        # Remove full annotations CSV
+        if self.output_dir:
+            full_csv = os.path.join(
+                self.output_dir, "Annotations",
+                f"{video_name}_Annotations.csv")
+            if os.path.exists(full_csv):
+                try:
+                    os.remove(full_csv)
+                except OSError:
+                    pass
+
+        # Remove session state and clean up session dir
+        if self.output_dir:
+            video_session_dir = os.path.join(
+                self.output_dir, "Session", video_name)
             state_file = os.path.join(
-                resume_dir, f"{video_name}_session_state.json")
+                video_session_dir,
+                f"{video_name}_session_state.json")
             if os.path.exists(state_file):
                 try:
                     os.remove(state_file)
                 except OSError:
                     pass
+            # Remove video session dir if empty
+            try:
+                if (os.path.isdir(video_session_dir)
+                        and not os.listdir(video_session_dir)):
+                    os.rmdir(video_session_dir)
+            except OSError:
+                pass
 
         show_message(
             parent_dlg, "Deleted",
@@ -1172,6 +1283,157 @@ class FilesManager(QDialog):
         self._populate_file_list(self.current_video_dir)
 
         parent_dlg.accept()
+
+
+    # Import annotations
+
+
+    def _show_import_annotations(self):
+        if not self.output_dir:
+            show_message(
+                self, "No Output Directory",
+                "Please select an output directory first.",
+                icon="information")
+            return
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Annotation CSV to Import",
+            self.output_dir,
+            "CSV Files (*.csv);;All Files (*)")
+        if not file_path:
+            return
+
+        rows, video_names, error = validate_import_csv(file_path)
+        if error:
+            show_message(self, "Invalid File", error)
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Import Annotations")
+        theme.apply_dialog_theme(dlg)
+        dlg.setMinimumWidth(450)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        file_label = QLabel(f"File: {os.path.basename(file_path)}")
+        file_label.setWordWrap(True)
+        layout.addWidget(file_label)
+
+        video_list = sorted(video_names)
+        count_label = QLabel(
+            f"Found {len(rows)} annotation(s) for: "
+            f"{', '.join(video_list)}")
+        count_label.setWordWrap(True)
+        count_label.setStyleSheet(
+            f"color: {theme.color('text_secondary')};"
+            " background: transparent;")
+        layout.addWidget(count_label)
+
+        target_grp = QGroupBox("Target Video")
+        target_lay = QVBoxLayout(target_grp)
+
+        combo = None
+        if len(video_list) == 1:
+            target_label = QLabel(video_list[0])
+            target_lay.addWidget(target_label)
+        else:
+            combo = QComboBox()
+            for name in video_list:
+                combo.addItem(name)
+            target_lay.addWidget(combo)
+        layout.addWidget(target_grp)
+
+        mode_grp = QGroupBox("Import Mode")
+        mode_lay = QVBoxLayout(mode_grp)
+        merge_radio = QRadioButton(
+            "Merge — Combine with existing annotations (duplicates skipped)")
+        merge_radio.setChecked(True)
+        mode_lay.addWidget(merge_radio)
+        replace_radio = QRadioButton(
+            "Replace — Overwrite all existing annotations for this video")
+        mode_lay.addWidget(replace_radio)
+        layout.addWidget(mode_grp)
+
+        layout.addStretch()
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        import_btn = QPushButton("Import")
+        import_btn.clicked.connect(lambda: self._execute_import(
+            dlg, rows,
+            combo.currentText() if combo else video_list[0],
+            "replace" if replace_radio.isChecked() else "merge"))
+        btn_row.addWidget(import_btn)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row)
+
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.open()
+
+    def _execute_import(self, parent_dlg, all_rows, target_video, mode):
+        filtered = [r for r in all_rows
+                    if r.get("Video", "").strip() == target_video]
+        if not filtered:
+            show_message(
+                parent_dlg, "No Matching Annotations",
+                f"No annotations found for '{target_video}' "
+                "in the selected file.")
+            return
+
+        chunks_dir = os.path.join(
+            self.output_dir, "Session", target_video, "Chunks")
+        has_existing = os.path.isdir(chunks_dir) and any(
+            f.endswith(".csv") and "_chunk_" in f
+            for f in os.listdir(chunks_dir))
+
+        if mode == "replace" and has_existing:
+            reply = show_message(
+                parent_dlg, "Confirm Replace",
+                f"This will replace all existing annotations for "
+                f"'{target_video}'.\n\nThis cannot be undone. Continue?",
+                icon="question")
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        full_csv = os.path.join(
+            self.output_dir, "Annotations",
+            f"{target_video}_Annotations.csv")
+
+        os.makedirs(chunks_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(full_csv), exist_ok=True)
+
+        store = AnnotationStore(
+            video_name=target_video,
+            annotations_dir=chunks_dir,
+            full_annotations_file=full_csv,
+            event_key_file="",
+            output_dir=self.output_dir)
+
+        if mode == "merge":
+            store.load_annotations()
+
+        success, imported, skipped = store.import_annotations(
+            filtered, mode)
+
+        if success:
+            msg = (f"Import complete.\n\n"
+                   f"Imported {imported} annotation(s) "
+                   f"for '{target_video}'.")
+            if skipped > 0:
+                msg += (f"\n{skipped} duplicate annotation(s) "
+                        "were skipped.")
+            show_message(parent_dlg, "Import Successful", msg,
+                         icon="information")
+            self._populate_file_list(self.current_video_dir)
+            parent_dlg.accept()
+        else:
+            show_message(
+                parent_dlg, "Import Failed",
+                "Could not write annotations. "
+                "Check folder permissions and try again.")
 
 
     # Summary statistics
@@ -1216,10 +1478,11 @@ class FilesManager(QDialog):
         layout.addWidget(box_btn)
 
         # Show view options if summaries already exist
-        summary_base = (os.path.join(self.output_dir, "Summary")
-                        if self.output_dir else "")
-        ind_dir = os.path.join(summary_base, "Individual_summaries")
-        comb_dir = os.path.join(summary_base, "Combined_summaries")
+        summary_base = (os.path.join(
+            self.output_dir, "Annotations", "Summaries")
+            if self.output_dir else "")
+        ind_dir = os.path.join(summary_base, "Individual_Summaries")
+        comb_dir = os.path.join(summary_base, "Combined_Summaries")
         has_ind = os.path.isdir(ind_dir) and any(
             f.endswith(".csv") for f in os.listdir(ind_dir)
             if not is_os_junk(f))
@@ -1274,55 +1537,100 @@ class FilesManager(QDialog):
                 "Please select an output directory first.")
             return
 
-        ann_dir = os.path.join(self.output_dir, "Annotations")
-        if not os.path.isdir(ann_dir):
-            show_message(
-                self, "No Annotations",
-                "No Annotations folder found in the output directory.")
-            return
-
-        ann_files = sorted(
-            os.path.join(ann_dir, f) for f in os.listdir(ann_dir)
-            if f.endswith("_Annotations.csv") and not is_os_junk(f))
-        if not ann_files:
+        ann_entries = _discover_annotations(self.output_dir)
+        if not ann_entries:
             show_message(
                 self, "No Annotations",
                 "No annotation files found.")
             return
+        ann_files = [path for _, path in ann_entries]
 
         from summary_statistics import generate_summary_statistics, combine_summaries
 
-        experiment_name, ok = get_text(
-            self, "Experiment Name",
-            "Enter a name for this experiment/analysis:")
-        if not ok or not experiment_name:
-            return
-        experiment_name = "".join(
-            c for c in experiment_name if c.isalnum() or c in " _-")
-
-        summary_dir = os.path.join(self.output_dir, "Summary")
-        ind_dir = os.path.join(summary_dir, "Individual_summaries")
-        comb_dir = os.path.join(summary_dir, "Combined_summaries")
+        summary_dir = os.path.join(
+            self.output_dir, "Annotations", "Summaries")
+        ind_dir = os.path.join(summary_dir, "Individual_Summaries")
+        comb_dir = os.path.join(summary_dir, "Combined_Summaries")
         for d in (ind_dir, comb_dir):
             os.makedirs(d, exist_ok=True)
 
-        # Check if combined summary already exists
-        combined_path = os.path.join(
-            comb_dir, f"{experiment_name}_Combined_Summary.csv")
-        if os.path.exists(combined_path):
-            reply = show_message(
-                self, "Summary Exists",
-                f"A combined summary named '{experiment_name}' "
-                "already exists.\n\nOverwrite it?",
-                icon="question")
-            if reply != QMessageBox.StandardButton.Yes:
+        # Check for existing experiments
+        existing = sorted(
+            f.removesuffix("_Combined_Summary.csv")
+            for f in os.listdir(comb_dir)
+            if f.endswith("_Combined_Summary.csv") and not is_os_junk(f)
+        ) if os.path.isdir(comb_dir) else []
+
+        experiment_name = None
+
+        if existing:
+            # Let user choose to update an existing experiment or create new
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Experiment")
+            theme.apply_dialog_theme(dlg)
+            dlg.setMinimumWidth(350)
+
+            layout = QVBoxLayout(dlg)
+            layout.setSpacing(12)
+            layout.setContentsMargins(20, 20, 20, 20)
+
+            layout.addWidget(QLabel(
+                "Select an experiment to update, or create a new one."))
+
+            combo = QComboBox()
+            for name in existing:
+                combo.addItem(name.replace("_", " "), name)
+            layout.addWidget(combo)
+
+            btn_row = QHBoxLayout()
+            update_btn = QPushButton("Update Selected")
+            update_btn.clicked.connect(lambda: dlg.done(1))
+            btn_row.addWidget(update_btn)
+            create_btn = QPushButton("Create New")
+            create_btn.clicked.connect(lambda: dlg.done(2))
+            btn_row.addWidget(create_btn)
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.clicked.connect(dlg.reject)
+            btn_row.addWidget(cancel_btn)
+            layout.addLayout(btn_row)
+
+            result = dlg.exec()
+            if result == 1:
+                experiment_name = combo.currentData()
+            elif result != 2:
                 return
+
+        if experiment_name is None:
+            experiment_name, ok = get_text(
+                self, "Experiment Name",
+                "Enter a name for this experiment/analysis:")
+            if not ok or not experiment_name:
+                return
+            experiment_name = "".join(
+                c for c in experiment_name if c.isalnum() or c in " _-")
+
+            # Check if combined summary already exists (new names only)
+            combined_path = os.path.join(
+                comb_dir, f"{experiment_name}_Combined_Summary.csv")
+            if os.path.exists(combined_path):
+                reply = show_message(
+                    self, "Summary Exists",
+                    f"A combined summary named '{experiment_name}' "
+                    "already exists.\n\nOverwrite it?",
+                    icon="question")
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
 
         # Generate individual summaries
         ind_paths = []
         for path in ann_files:
-            video_name = os.path.basename(path).replace(
-                "_Annotations.csv", "")
+            if os.path.isdir(path):
+                basename = os.path.basename(path)
+                video_name = (os.path.basename(os.path.dirname(path))
+                              if basename == "Chunks" else basename)
+            else:
+                video_name = os.path.basename(path).removesuffix(
+                    "_Annotations.csv")
             out = os.path.join(ind_dir, f"{video_name}_Summary.csv")
             if os.path.exists(out):
                 ind_paths.append(out)
@@ -1352,7 +1660,7 @@ class FilesManager(QDialog):
             return
 
         # Show box plots
-        show_boxplot_viewer(self, comb_dir)
+        show_boxplot_viewer(self, comb_dir, select_file=combined_path)
 
     def _view_existing_summaries(self, directory, kind):
         """Show a picker for existing summary CSVs"""
@@ -1378,8 +1686,8 @@ class FilesManager(QDialog):
 
         combo = QComboBox()
         for fname in files:
-            title = (fname.replace("_Combined_Summary.csv", "")
-                          .replace("_Summary.csv", "")
+            title = (fname.removesuffix("_Combined_Summary.csv")
+                          .removesuffix("_Summary.csv")
                           .replace("_", " "))
             combo.addItem(title, os.path.join(directory, fname))
         layout.addWidget(combo)
@@ -1401,7 +1709,8 @@ class FilesManager(QDialog):
         comb_dir = ""
         if self.output_dir:
             comb_dir = os.path.join(
-                self.output_dir, "Summary", "Combined_summaries")
+                self.output_dir, "Annotations", "Summaries",
+                "Combined_Summaries")
         show_boxplot_viewer(self, comb_dir)
 
 
@@ -1409,6 +1718,11 @@ class FilesManager(QDialog):
 
 
     def _show_settings_menu(self):
+        import time
+        now_ms = int(time.monotonic() * 1000)
+        if hasattr(self, '_settings_menu_closed_at') and now_ms - self._settings_menu_closed_at < 300:
+            return
+
         menu = QMenu(self)
         menu.setStyleSheet(theme.menu_stylesheet())
 
@@ -1418,6 +1732,7 @@ class FilesManager(QDialog):
         btn = self.sender()
         if btn:
             menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+            self._settings_menu_closed_at = int(time.monotonic() * 1000)
 
     def _show_colors_theme_dialog(self):
         def _on_accept(_new_theme, _colors):
@@ -1443,3 +1758,45 @@ class FilesManager(QDialog):
                 QTimer.singleShot(0, QApplication.quit)
         else:
             super().keyPressEvent(event)
+
+
+def _discover_annotations(output_dir):
+    """Find annotation entries in the output directory.
+
+    Searches two locations:
+      1. Session/*/Chunks/ for chunked annotation directories
+      2. Annotations/*_Annotations.csv for full CSV files
+
+    Returns a sorted list of (display_name, data_path) tuples.
+    """
+    if not output_dir or not os.path.isdir(output_dir):
+        return []
+
+    entries = []
+    seen_names = set()
+
+    # Chunked annotations under Session/*/Chunks/
+    session_dir = os.path.join(output_dir, "Session")
+    if os.path.isdir(session_dir):
+        for name in os.listdir(session_dir):
+            if is_os_junk(name):
+                continue
+            chunks_dir = os.path.join(session_dir, name, "Chunks")
+            if is_chunked_annotations_dir(chunks_dir):
+                display = name.replace("_", " ")
+                entries.append((display, chunks_dir))
+                seen_names.add(name)
+
+    # Full CSV annotations under Annotations/
+    ann_dir = os.path.join(output_dir, "Annotations")
+    if os.path.isdir(ann_dir):
+        for name in os.listdir(ann_dir):
+            if (name.endswith("_Annotations.csv") and not is_os_junk(name)
+                    and os.path.isfile(os.path.join(ann_dir, name))):
+                video_name = name.removesuffix("_Annotations.csv")
+                if video_name not in seen_names:
+                    display = video_name.replace("_", " ")
+                    entries.append((display, os.path.join(ann_dir, name)))
+
+    entries.sort(key=lambda e: e[0].lower())
+    return entries

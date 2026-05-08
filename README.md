@@ -1,13 +1,13 @@
-# LaserTAG
+# LASERcoder
 
-**Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder**
+**Lightweight Annotation Software for Ethology Research**
 
-LaserTAG is a free, open-source desktop application for behavioral annotation of video recordings. Built for researchers and students in ethology, animal behavior, ecology, psychology, and related fields who need to score behaviors from video quickly and reliably.
+LASERcoder is a free, open-source desktop application for behavioral annotation of video recordings. Built for researchers and students in ethology, animal behavior, ecology, psychology, and related fields who need to score behaviors from video quickly and reliably.
 
 Runs natively on **Windows**, **macOS**, and **Linux**.
 
 <!-- TODO: Add screenshot of main annotation window here -->
-<!-- ![LaserTAG Main Window](docs/images/screenshot.png) -->
+<!-- ![LASERcoder Main Window](docs/images/screenshot.png) -->
 
 
 ## Features
@@ -31,22 +31,22 @@ Download the latest release for your platform from the [Releases](../../releases
 
 | Platform | Download | Notes |
 |----------|----------|-------|
-| **Windows** | `LaserTAG_v*_windows_x64_setup.exe` | Installer with Start Menu shortcuts |
-| **Windows** | `LaserTAG_v*_windows_x64_portable.zip` | Portable version, no installation needed |
-| **macOS (Apple Silicon)** | `LaserTAG_v*_macOS_arm64.dmg` | Drag to Applications (see [Gatekeeper note](#macos-gatekeeper)) |
-| **macOS (Apple Silicon)** | `LaserTAG_v*_macOS_arm64.pkg` | Installer, clears Gatekeeper automatically |
-| **macOS (Intel)** | `LaserTAG_v*_macOS_x86_64.dmg` | Drag to Applications (see [Gatekeeper note](#macos-gatekeeper)) |
-| **macOS (Intel)** | `LaserTAG_v*_macOS_x86_64.pkg` | Installer, clears Gatekeeper automatically |
-| **Linux** | `LaserTAG_v*_linux_amd64.deb` | Debian/Ubuntu package, installs to `/opt/LaserTAG` |
-| **Linux** | `LaserTAG_v*_linux_amd64_portable.tar.gz` | Portable tarball, extract and run |
+| **Windows** | `LASERcoder_v*_windows_x64_setup.exe` | Installer with Start Menu shortcuts |
+| **Windows** | `LASERcoder_v*_windows_x64_portable.zip` | Portable version, no installation needed |
+| **macOS (Apple Silicon)** | `LASERcoder_v*_macOS_arm64.dmg` | Drag to Applications (see [Gatekeeper note](#macos-gatekeeper)) |
+| **macOS (Apple Silicon)** | `LASERcoder_v*_macOS_arm64.pkg` | Installer, clears Gatekeeper automatically |
+| **macOS (Intel)** | `LASERcoder_v*_macOS_x86_64.dmg` | Drag to Applications (see [Gatekeeper note](#macos-gatekeeper)) |
+| **macOS (Intel)** | `LASERcoder_v*_macOS_x86_64.pkg` | Installer, clears Gatekeeper automatically |
+| **Linux** | `LASERcoder_v*_linux_amd64.deb` | Debian/Ubuntu package, installs to `/opt/LASERcoder` |
+| **Linux** | `LASERcoder_v*_linux_amd64_portable.tar.gz` | Portable tarball, extract and run |
 
 
 ### Note about macOS Gatekeeper
 
-LaserTAG is not signed with an Apple Developer ID, so macOS will block it on first launch. To get around this:
+LASERcoder is not signed with an Apple Developer ID, so macOS will block it on first launch. To get around this:
 
-1. Right-click `LaserTAG.app`, choose **Open**, then click **Open** in the dialog, **or**
-2. Run `xattr -cr /Applications/LaserTAG.app` in Terminal, **or**
+1. Right-click `LASERcoder.app`, choose **Open**, then click **Open** in the dialog, **or**
+2. Run `xattr -cr /Applications/LASERcoder.app` in Terminal, **or**
 3. Go to **System Settings > Privacy & Security** and click **Open Anyway**
 
 Only required once. The `.pkg` installer handles this automatically.
@@ -57,8 +57,8 @@ Only required once. The `.pkg` installer handles this automatically.
 Requires Python 3.11+ and [MPV](https://mpv.io/) (or prebuilt libraries).
 ```bash
 pip install PySide6 python-mpv
-cd CodeBase
-python LaserTAG.py
+cd src
+python main.py
 ```
 
 ### Building from Source
@@ -75,7 +75,7 @@ sudo apt install patchelf
 
 ## Quick Start
 
-1. **Launch LaserTAG** and pick an output directory. Subdirectories for annotations, behaviors, resume files, and summaries are created automatically.
+1. **Launch LASERcoder** and pick an output directory. Subdirectories for annotations, behaviors, resume files, and summaries are created automatically.
 2. **Select a video directory** and choose a video to annotate.
 3. **Create or load a behavior key.** Define behaviors with names, keyboard shortcuts, and types (Point or State). Set up mutually exclusive groups as needed.
 4. **Annotate.** Use keyboard shortcuts or floating buttons to record behaviors as the video plays.
@@ -124,8 +124,8 @@ Annotation files are saved as `VideoName_Annotations.csv` with 11 columns, forma
 
 ## Project Structure
 ```
-LaserTAG/
-├── CodeBase/                          Source code
+LASERcoder/
+├── src/                               Source code
 ├── build_Windows/                     Windows build scripts and resources
 ├── build_macOS/                       macOS build scripts and resources
 ├── build_Linux/                       Linux build scripts and resources
@@ -142,33 +142,33 @@ Contributions are welcome. Please open an [issue](../../issues) to report bugs o
 
 ### Development Setup
 ```bash
-git clone https://github.com/ehrenbentz/LaserTAG.git
-cd LaserTAG
+git clone https://github.com/ehrenbentz/LASERcoder.git
+cd LASERcoder
 pip install PySide6 python-mpv
 pip install nuitka # if compiling from source
-cd CodeBase
-python LaserTAG.py
+cd src
+python main.py
 ```
 
 
 ## License
 
-LaserTAG is licensed under the [GNU General Public License v3.0](LICENSE).
+LASERcoder is licensed under the [GNU General Public License v3.0](LICENSE).
 
 
 ## Acknowledgments
 
-LaserTAG was developed in the [Ophir Lab of Integrative Neuroethology](https://www.ophirlab.com/), Department of Psychology, Cornell University.
+LASERcoder was developed in the [Ophir Lab of Integrative Neuroethology](https://www.ophirlab.com/), Department of Psychology, Cornell University.
 
 <!-- TODO: Add specific acknowledgments (funding, contributors) -->
 
 
 ## Citation
 
-If you use LaserTAG in published research, please cite:
+If you use LASERcoder in published research, please cite:
 
 <!-- TODO: Update with DOI once published -->
 
-> Bentz, E.J., Laser, R.S., ...[Other Authors]... Ophir, A.G. (2026). LaserTAG: Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder. (in preparation)
+> Bentz, E.J., Laser, R.S., ...[Other Authors]... Ophir, A.G. (2026). LASERcoder: Lightweight Annotation Software for Ethology Research. (in preparation)
 
 See [CITATION.cff](CITATION.cff) for machine-readable citation information.

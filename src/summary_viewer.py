@@ -20,6 +20,7 @@ from dialogs import show_message
 from display_utils import (get_screen_geometry,
                            generate_default_colors, make_color_icon,
                            is_os_junk)
+from annotation_store import is_chunked_annotations_dir
 
 
 # CSV helper
@@ -56,7 +57,7 @@ def show_table_viewer(parent, csv_path, title=None):
             icon="information")
         return
 
-    clean = title or os.path.basename(csv_path).replace(".csv", "").replace("_", " ")
+    clean = title or os.path.splitext(os.path.basename(csv_path))[0].replace("_", " ")
     dlg = _TableViewer(parent, rows, clean)
     dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     dlg.open()
@@ -123,9 +124,9 @@ _BOXPLOT_COLS = [
 ]
 
 
-def show_boxplot_viewer(parent, combined_dir):
+def show_boxplot_viewer(parent, combined_dir, select_file=None):
     """Open the combined-summary box plot viewer"""
-    dlg = _BoxplotViewer(parent, combined_dir)
+    dlg = _BoxplotViewer(parent, combined_dir, select_file=select_file)
     dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     dlg.open()
 
@@ -145,7 +146,7 @@ class _BoxplotViewer(QDialog):
         "QPushButton:hover { background-color: rgba(128,128,128,80); }"
     )
 
-    def __init__(self, parent, combined_dir):
+    def __init__(self, parent, combined_dir, select_file=None):
         super().__init__(parent)
         self._combined_dir = combined_dir
         self._ind_rows     = []       # rows from individual summaries (coded)
@@ -169,14 +170,18 @@ class _BoxplotViewer(QDialog):
                 for f in os.listdir(combined_dir)
                 if f.endswith(".csv") and not is_os_junk(f))
 
-        # Individual summaries directory (sibling of Combined_summaries)
+        # Individual summaries directory (sibling of Combined_Summaries)
         self._ind_dir = ""
+        self._session_dir = ""
         self._ann_dir = ""
         if combined_dir:
             summary_base = os.path.dirname(combined_dir)
-            self._ind_dir = os.path.join(summary_base, "Individual_summaries")
-            self._ann_dir = os.path.join(
-                os.path.dirname(summary_base), "Annotations")
+            self._ind_dir = os.path.join(summary_base, "Individual_Summaries")
+            # combined_dir is Annotations/Summaries/Combined_Summaries
+            # output root is three levels up
+            output_root = os.path.dirname(os.path.dirname(summary_base))
+            self._session_dir = os.path.join(output_root, "Session")
+            self._ann_dir = os.path.join(output_root, "Annotations")
 
         # Default all columns visible
         for col, _ in _BOXPLOT_COLS:
@@ -191,7 +196,16 @@ class _BoxplotViewer(QDialog):
         self._build_ui()
 
         if self._available:
-            self._load_file(0)
+            # Select the requested file, or fall back to index 0
+            start_idx = 0
+            if select_file:
+                normed = os.path.normpath(select_file)
+                for i, p in enumerate(self._available):
+                    if os.path.normpath(p) == normed:
+                        start_idx = i
+                        break
+            self._file_combo.setCurrentIndex(start_idx)
+            self._load_file(start_idx)
 
     # UI construction
 
@@ -222,7 +236,7 @@ class _BoxplotViewer(QDialog):
         else:
             for path in self._available:
                 label = (os.path.basename(path)
-                         .replace("_Combined_Summary.csv", "")
+                         .removesuffix("_Combined_Summary.csv")
                          .replace("_", " "))
                 self._file_combo.addItem(label, path)
         self._file_combo.currentIndexChanged.connect(
@@ -366,17 +380,35 @@ class _BoxplotViewer(QDialog):
         self._whole_computed = True
         self._whole_rows = []
 
-        if not self._ann_dir or not os.path.isdir(self._ann_dir):
-            return
-
         from summary_statistics import compute_summary_rows
 
-        for fname in sorted(os.listdir(self._ann_dir)):
-            if fname.endswith("_Annotations.csv") and not is_os_junk(fname):
-                path = os.path.join(self._ann_dir, fname)
-                rows = compute_summary_rows(path, use_whole_video=True)
-                if rows:
-                    self._whole_rows.extend(rows)
+        seen_names = set()
+
+        # Chunked annotations under Session/*/Chunks/
+        if self._session_dir and os.path.isdir(self._session_dir):
+            for name in sorted(os.listdir(self._session_dir)):
+                if is_os_junk(name):
+                    continue
+                chunks_dir = os.path.join(self._session_dir, name, "Chunks")
+                if is_chunked_annotations_dir(chunks_dir):
+                    rows = compute_summary_rows(
+                        chunks_dir, use_whole_video=True)
+                    if rows:
+                        self._whole_rows.extend(rows)
+                    seen_names.add(name)
+
+        # Full CSV annotations under Annotations/
+        if self._ann_dir and os.path.isdir(self._ann_dir):
+            for fname in sorted(os.listdir(self._ann_dir)):
+                if (fname.endswith("_Annotations.csv")
+                        and not is_os_junk(fname)):
+                    video_name = fname.removesuffix("_Annotations.csv")
+                    if video_name not in seen_names:
+                        full = os.path.join(self._ann_dir, fname)
+                        rows = compute_summary_rows(
+                            full, use_whole_video=True)
+                        if rows:
+                            self._whole_rows.extend(rows)
 
     # Calculate-per toggle
 

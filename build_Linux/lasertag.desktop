@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=LaserTAG
-Comment=Lightweight Application for Scoring Ethology Recordings and Tracking Animals Gooder
-Exec=/opt/LaserTAG/LaserTAG
-Icon=lasertag
-Terminal=false
-Categories=Science;Education;AudioVideo;
-Keywords=behavior;annotation;ethology;video;coding;

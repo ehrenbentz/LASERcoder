@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleDisplayName</key>
-  <string>LaserTAG</string>
+  <string>LASERcoder</string>
   <key>CFBundleExecutable</key>
-  <string>LaserTAG</string>
+  <string>LASERcoder</string>
   <key>CFBundleIconFile</key>
   <string>Icons.icns</string>
   <key>CFBundleIdentifier</key>
-  <string>edu.cornell.ehrenbentz.lasertag</string>
+  <string>edu.cornell.ehrenbentz.lasercoder</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>LaserTAG</string>
+  <string>LASERcoder</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleVersion</key>
@@ -27,6 +27,6 @@
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSHumanReadableCopyright</key>
-  <string>Copyright 2026 Ehren Bentz. Licensed under GNU GPL v3. See https://github.com/ehrenbentz/LaserTAG</string>
+  <string>Copyright 2026 Ehren Bentz. Licensed under GNU GPL v3. See https://github.com/ehrenbentz/LASERcoder</string>
 </dict>
 </plist>

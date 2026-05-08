@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LASERcoder
+Comment=Lightweight Annotation Software for Ethology Research
+Exec=/opt/LASERcoder/LASERcoder
+Icon=lasercoder
+Terminal=false
+Categories=Science;Education;AudioVideo;
+Keywords=behavior;annotation;ethology;video;coding;

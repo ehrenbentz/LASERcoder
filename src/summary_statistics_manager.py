@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from display_utils import get_screen_geometry, is_os_junk
+from annotation_store import is_chunked_annotations_dir
 from summary_statistics import generate_summary_statistics, combine_summaries
 from summary_viewer import show_table_viewer
 from dialogs import show_message, get_text
@@ -27,7 +28,7 @@ class SummaryStatisticsManager(QDialog):
         self.initial_dir = os.path.abspath(initial_dir)
         self.current_dir = self.initial_dir
 
-        self.setWindowTitle("LaserTAG - Generate Summary Statistics")
+        self.setWindowTitle("LASERcoder - Generate Summary Statistics")
         theme.apply_dialog_theme(self)
 
         screen = get_screen_geometry()
@@ -176,19 +177,30 @@ class SummaryStatisticsManager(QDialog):
     def _populate_file_list(self, directory):
         self.file_listbox.clear()
         try:
-            files = sorted(
-                f for f in os.listdir(directory)
-                if os.path.isfile(os.path.join(directory, f))
-                and f.endswith("_Annotations.csv")
-                and not is_os_junk(f))
+            entries = []
+            # Chunked per-video subdirectories
+            for name in sorted(os.listdir(directory)):
+                full = os.path.join(directory, name)
+                if (os.path.isdir(full) and not is_os_junk(name)
+                        and is_chunked_annotations_dir(full)):
+                    entries.append(name)
+            # Legacy single-file annotations
+            seen = set(entries)
+            for name in sorted(os.listdir(directory)):
+                if (name.endswith("_Annotations.csv")
+                        and not is_os_junk(name)
+                        and os.path.isfile(os.path.join(directory, name))):
+                    video_name = name.removesuffix("_Annotations.csv")
+                    if video_name not in seen:
+                        entries.append(name)
 
-            for name in files:
+            for name in entries:
                 item = QListWidgetItem(name)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(Qt.CheckState.Checked)
                 self.file_listbox.addItem(item)
 
-            if files:
+            if entries:
                 self.select_all_checkbox.setChecked(True)
         except OSError as exc:
             show_message(
@@ -223,13 +235,13 @@ class SummaryStatisticsManager(QDialog):
         if not summary_dir:
             return
 
-        individual_dir = os.path.join(summary_dir, "Individual_summaries")
+        individual_dir = os.path.join(summary_dir, "Individual_Summaries")
         try:
             os.makedirs(individual_dir, exist_ok=True)
         except OSError as exc:
             show_message(
                 self, "Error",
-                f"Could not create Individual_summaries directory: {exc}")
+                f"Could not create Individual_Summaries directory: {exc}")
             return
 
         success_count = 0
@@ -237,8 +249,11 @@ class SummaryStatisticsManager(QDialog):
 
         for path in selected:
             try:
-                video_name = os.path.basename(path).replace(
-                    "_Annotations.csv", "")
+                if os.path.isdir(path):
+                    video_name = os.path.basename(path)
+                else:
+                    video_name = os.path.basename(path).removesuffix(
+                        "_Annotations.csv")
                 out = os.path.join(individual_dir, f"{video_name}_Summary.csv")
                 if generate_summary_statistics(path, out):
                     success_count += 1
@@ -255,7 +270,7 @@ class SummaryStatisticsManager(QDialog):
         if failed:
             msg += "\n\nThe following files could not be processed:"
             for name, err in failed:
-                msg += f"\n\u2022 {name.replace('_Annotations.csv', '')}: {err}"
+                msg += f"\n\u2022 {name.removesuffix('_Annotations.csv')}: {err}"
             show_message(self, "Processing Completed with Errors", msg)
         else:
             show_message(self, "Processing Complete", msg,
@@ -276,9 +291,10 @@ class SummaryStatisticsManager(QDialog):
         if not summary_dir:
             return
 
-        combined_summaries_dir = os.path.join(summary_dir, "Combined_summaries")
-        combined_annotations_dir = os.path.join(summary_dir, "Combined_Annotations")
-        individual_dir = os.path.join(summary_dir, "Individual_summaries")
+        combined_summaries_dir = os.path.join(summary_dir, "Combined_Summaries")
+        combined_annotations_dir = os.path.join(
+            os.path.dirname(summary_dir), "Combined_Annotations")
+        individual_dir = os.path.join(summary_dir, "Individual_Summaries")
 
         for d in (combined_summaries_dir, combined_annotations_dir, individual_dir):
             try:
@@ -313,8 +329,11 @@ class SummaryStatisticsManager(QDialog):
         # Locate existing individual summaries
         missing, existing = [], []
         for path in selected:
-            video_name = os.path.basename(path).replace(
-                "_Annotations.csv", "")
+            if os.path.isdir(path):
+                video_name = os.path.basename(path)
+            else:
+                video_name = os.path.basename(path).removesuffix(
+                    "_Annotations.csv")
             individual_path = os.path.join(
                 individual_dir, f"{video_name}_Summary.csv")
             old_path = os.path.join(summary_dir, f"{video_name}_Summary.csv")
@@ -391,11 +410,14 @@ class SummaryStatisticsManager(QDialog):
         # Back up an existing file
         if os.path.exists(out_path):
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup = out_path.replace(".csv", f"_backup_{ts}.csv")
+            base, ext = os.path.splitext(out_path)
+            backup = f"{base}_backup_{ts}{ext}"
             try:
                 os.rename(out_path, backup)
             except OSError:
                 pass
+
+        from annotation_store import read_all_annotation_rows
 
         all_rows = []
         fieldnames = None
@@ -403,27 +425,29 @@ class SummaryStatisticsManager(QDialog):
 
         for path in file_paths:
             try:
-                with open(path, "r", newline="", encoding="utf-8-sig") as fh:
-                    reader = csv.DictReader(fh)
-                    rows = list(reader)
-                    if not rows:
-                        failed.append((os.path.basename(path), "File is empty"))
-                        continue
+                rows = read_all_annotation_rows(path)
+                if not rows:
+                    failed.append((os.path.basename(path), "No data"))
+                    continue
 
-                    if fieldnames is None:
-                        fieldnames = list(reader.fieldnames)
-                    else:
-                        for f in reader.fieldnames:
-                            if f not in fieldnames:
-                                fieldnames.append(f)
+                if fieldnames is None:
+                    fieldnames = list(rows[0].keys())
+                else:
+                    for f in rows[0].keys():
+                        if f not in fieldnames:
+                            fieldnames.append(f)
 
-                    # Ensure Video column exists
-                    for row in rows:
-                        if not row.get("Video"):
-                            row["Video"] = os.path.basename(path).replace(
-                                "_Annotations.csv", "")
+                # Derive video name for entries missing it
+                if os.path.isdir(path):
+                    default_video = os.path.basename(path)
+                else:
+                    default_video = os.path.basename(path).removesuffix(
+                        "_Annotations.csv")
+                for row in rows:
+                    if not row.get("Video"):
+                        row["Video"] = default_video
 
-                    all_rows.extend(rows)
+                all_rows.extend(rows)
             except OSError as exc:
                 failed.append((os.path.basename(path), str(exc)))
 
@@ -492,8 +516,9 @@ class SummaryStatisticsManager(QDialog):
         def _on_finished(_result):
             result_dlg.deleteLater()
             if action[0] == "view":
-                title = (os.path.basename(combined_sum_path)
-                         .replace(".csv", "").replace("_", " "))
+                title = (os.path.splitext(
+                    os.path.basename(combined_sum_path))[0]
+                    .replace("_", " "))
                 show_table_viewer(self, combined_sum_path, title)
             elif action[0] == "boxplots":
                 comb_dir = os.path.dirname(combined_sum_path)
@@ -503,12 +528,12 @@ class SummaryStatisticsManager(QDialog):
         result_dlg.open()
 
     def _ensure_summary_dir(self, base_dir):
-        summary_dir = os.path.join(base_dir, "Summary")
+        summary_dir = os.path.join(base_dir, "Annotations", "Summaries")
         try:
             os.makedirs(summary_dir, exist_ok=True)
             return summary_dir
         except OSError as exc:
             show_message(
                 self, "Error",
-                f"Could not create Summary directory: {exc}")
+                f"Could not create Summaries directory: {exc}")
             return None

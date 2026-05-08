@@ -1,10 +1,11 @@
 import os
 import hashlib
+import sys
 import tempfile
 import locale
 
 import numpy as np
-from PySide6.QtCore import Qt, QThread, Signal, QPoint
+from PySide6.QtCore import Qt, QThread, Signal, QPoint, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QWidget, QLabel
 
@@ -22,11 +23,14 @@ class WaveformExtractor(QThread):
     finished = Signal(np.ndarray)
     error = Signal(str)
 
-    def __init__(self, video_path, resume_dir, bin_count):
+    def __init__(self, video_path, cache_dir, bin_count, video_duration=0):
         super().__init__()
         self._video_path = video_path
-        self._resume_dir = resume_dir
+        self._cache_dir = cache_dir
         self._bin_count = max(1, bin_count)
+        self._video_duration = video_duration
+
+        self._preloaded_pcm = None
 
     def _cache_path(self):
         try:
@@ -34,14 +38,14 @@ class WaveformExtractor(QThread):
         except OSError:
             mtime = 0
         digest = hashlib.sha1(
-            f"{self._video_path}|{mtime}".encode()).hexdigest()[:16]
-        return os.path.join(self._resume_dir, f"waveform_{digest}.npy")
+            f"{self._video_path}|{mtime}|{self._video_duration:.2f}".encode()
+        ).hexdigest()[:16]
+        return os.path.join(self._cache_dir, f"waveform_{digest}.npy")
 
     def run(self):
         try:
             cache = self._cache_path()
 
-            # Try cached data first
             if os.path.isfile(cache) and os.path.getsize(cache) > 0:
                 try:
                     data = np.load(cache)
@@ -51,8 +55,15 @@ class WaveformExtractor(QThread):
                 except Exception:
                     pass
 
-            # Extract audio via headless mpv instance
-            raw = self._extract_pcm()
+            # On macOS, MPV must be created on the main thread (Cocoa
+            # requirement).  The raw PCM is pre-extracted before the
+            # thread starts and passed via _preloaded_pcm.
+            if sys.platform == "darwin" and self._preloaded_pcm is not None:
+                raw = self._preloaded_pcm
+                self._preloaded_pcm = None
+            else:
+                raw = self._extract_pcm()
+
             if not raw:
                 self.finished.emit(np.zeros(self._bin_count, dtype=np.float32))
                 return
@@ -71,7 +82,8 @@ class WaveformExtractor(QThread):
 
             # Save to cache
             try:
-                os.makedirs(self._resume_dir, exist_ok=True)
+                os.makedirs(self._cache_dir, exist_ok=True)
+                cache = self._cache_path()
                 np.save(cache, rms)
             except Exception as exc:
                 logger.debug("Failed to save waveform cache: %s", exc)
@@ -93,21 +105,29 @@ class WaveformExtractor(QThread):
 
         try:
             locale.setlocale(locale.LC_NUMERIC, "C")
-            player = mpv.MPV(
+            mpv_opts = dict(
                 vid="no",
                 untimed=True,
                 ao="pcm",
                 ao_pcm_waveheader="no",
                 ao_pcm_file=tmp_path,
-                af="lavfi=[aresample=2000,pan=mono|c0=c0,aformat=sample_fmts=s16]",
-                log_handler=lambda *a: None,
+                af="aresample=2000,aformat=sample_fmts=s16:channel_layouts=mono",
+                log_handler=lambda level, component, message: logger.debug(
+                    "mpv [%s] %s: %s", level, component, message),
             )
+            if self._video_duration > 0:
+                mpv_opts["start"] = "0"
+                mpv_opts["end"] = str(self._video_duration)
+            player = mpv.MPV(**mpv_opts)
             player.play(self._video_path)
+            logger.debug("mpv ao=%s, audio-codec=%s, path=%s",
+                         player.audio_out_params, player.audio_codec, self._video_path)
             player.wait_for_playback()
             player.terminate()
 
             with open(tmp_path, "rb") as f:
                 raw = f.read()
+            logger.debug("PCM temp file size: %d bytes", len(raw) if raw else 0)
             return raw
         except Exception as exc:
             logger.warning("MPV audio extraction failed: %s", exc)
@@ -142,6 +162,7 @@ class WaveformWidget(QWidget):
         self._placeholder_text = None
         self._extractor = None
         self._extracted = False
+        self._dynamic_range = 1.0
 
         self.setMouseTracking(True)
         self.setAutoFillBackground(True)
@@ -162,29 +183,133 @@ class WaveformWidget(QWidget):
         self._opacity = max(0.0, min(1.0, value))
         self.update()
 
+    def set_dynamic_range(self, exponent):
+        self._dynamic_range = max(0.1, min(1.0, float(exponent)))
+        self.update()
+
     def set_rms_data(self, data):
         self._rms_data = data
         self._rebinned = None
         self._placeholder_text = None
         self.update()
 
-    def start_extraction(self, video_path, resume_dir):
+    def start_extraction(self, video_path, cache_dir, duration=0):
         if self._extracted:
             return
         if self._extractor is not None and self._extractor.isRunning():
             return
-        self._placeholder_text = "Generating waveform..."
+        self._placeholder_text = "Generating Audio Track..."
         self._rms_data = None
         self._rebinned = None
         self.update()
 
         self._extractor = WaveformExtractor(
-            video_path, resume_dir, max(1, self.width()))
+            video_path, cache_dir, max(1, self.width()),
+            video_duration=duration)
         self._extractor.finished.connect(self._on_extraction_done)
         self._extractor.error.connect(self._on_extraction_error)
-        self._extractor.start()
+
+        if sys.platform == "darwin":
+            cache = self._extractor._cache_path()
+            if os.path.isfile(cache) and os.path.getsize(cache) > 0:
+                self._extractor.start()
+                return
+            self._start_mpv_extraction(video_path, duration)
+        else:
+            self._extractor.start()
+
+    def _start_mpv_extraction(self, video_path, duration):
+        """Start non-blocking MPV audio extraction on the main thread (macOS)."""
+        import mpv
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".pcm", delete=False)
+        self._extract_tmp_path = tmp.name
+        tmp.close()
+
+        try:
+            locale.setlocale(locale.LC_NUMERIC, "C")
+            mpv_opts = dict(
+                vid="no",
+                untimed=True,
+                ao="pcm",
+                ao_pcm_waveheader="no",
+                ao_pcm_file=self._extract_tmp_path,
+                af="aresample=2000,aformat=sample_fmts=s16:channel_layouts=mono",
+                log_handler=lambda level, component, message: logger.debug(
+                    "mpv [%s] %s: %s", level, component, message),
+            )
+            if duration > 0:
+                mpv_opts["start"] = "0"
+                mpv_opts["end"] = str(duration)
+
+            self._extract_player = mpv.MPV(**mpv_opts)
+            self._extract_player.play(video_path)
+            logger.debug("mpv ao=%s, audio-codec=%s, path=%s",
+                         self._extract_player.audio_out_params,
+                         self._extract_player.audio_codec, video_path)
+
+            self._extract_playback_started = False
+            self._extract_poll_timer = QTimer(self)
+            self._extract_poll_timer.setInterval(50)
+            self._extract_poll_timer.timeout.connect(self._poll_extraction)
+            self._extract_poll_timer.start()
+            logger.debug("Waveform: started non-blocking MPV extraction (macOS)")
+        except Exception as exc:
+            logger.warning("Waveform: MPV extraction failed to start: %s", exc)
+            self._cleanup_extract_player()
+            self._extractor.start()
+
+    def _poll_extraction(self):
+        """Poll MPV extraction progress (macOS only)."""
+        try:
+            if self._extract_player is None:
+                self._extract_poll_timer.stop()
+                self._extractor.start()
+                return
+            if not self._extract_player.core_idle:
+                self._extract_playback_started = True
+                return
+            if not self._extract_playback_started:
+                return
+            self._extract_poll_timer.stop()
+            import os as _os
+            tmp_size = _os.path.getsize(self._extract_tmp_path) if _os.path.exists(self._extract_tmp_path) else 0
+            logger.debug("Extraction done, temp file size: %d bytes", tmp_size)
+            logger.debug("Waveform: MPV extraction complete (macOS)")
+            try:
+                with open(self._extract_tmp_path, "rb") as f:
+                    raw = f.read()
+            except OSError:
+                raw = b""
+            self._cleanup_extract_player()
+            self._extractor._preloaded_pcm = raw
+            self._extractor.start()
+        except Exception as exc:
+            logger.warning("Waveform: poll error: %s", exc)
+            self._extract_poll_timer.stop()
+            self._cleanup_extract_player()
+            self._extractor.start()
+
+    def _cleanup_extract_player(self):
+        """Clean up the temporary MPV instance and temp file (macOS)."""
+        if hasattr(self, '_extract_player') and self._extract_player is not None:
+            try:
+                self._extract_player.terminate()
+            except Exception:
+                pass
+            self._extract_player = None
+        if hasattr(self, '_extract_tmp_path') and self._extract_tmp_path:
+            try:
+                os.unlink(self._extract_tmp_path)
+            except OSError:
+                pass
+            self._extract_tmp_path = None
 
     def cancel_extraction(self):
+        if hasattr(self, '_extract_poll_timer') and self._extract_poll_timer is not None:
+            self._extract_poll_timer.stop()
+        if hasattr(self, '_extract_player') and self._extract_player is not None:
+            self._cleanup_extract_player()
         if self._extractor is not None and self._extractor.isRunning():
             self._extractor.terminate()
             self._extractor.wait(2000)
@@ -274,7 +399,7 @@ class WaveformWidget(QWidget):
         peak = normalized.max()
         if peak < 1e-6:
             return
-        normalized = np.sqrt(normalized / peak)
+        normalized = np.power(normalized / peak, self._dynamic_range)
 
         painter.setOpacity(self._opacity)
         painter.setPen(Qt.PenStyle.NoPen)
