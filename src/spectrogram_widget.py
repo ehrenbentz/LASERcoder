@@ -160,6 +160,7 @@ class SpectrogramWorker(QThread):
     """
 
     result_ready = Signal(QImage, float, float)
+    no_audio = Signal()
 
     def __init__(self, video_path):
         super().__init__()
@@ -267,6 +268,7 @@ class SpectrogramWorker(QThread):
         else:
             samples = self._extract_pcm(buf_start, extract_dur)
         if samples is None or samples.size == 0:
+            self.no_audio.emit()
             return
 
         # Adjust buf_end to match actual extracted length
@@ -445,6 +447,7 @@ class SpectrogramWidget(QWidget):
             colormap_name=self._colormap_name,
         )
         self._worker.result_ready.connect(self._on_result)
+        self._worker.no_audio.connect(self._on_no_audio)
         self._worker.start()
         self._buffer_timer.start()
         self._update_in_flight = True
@@ -650,6 +653,12 @@ class SpectrogramWidget(QWidget):
         self._buffer_end = buf_end
         self._placeholder_text = None
         self._update_in_flight = False
+        self.update()
+
+    def _on_no_audio(self):
+        self._placeholder_text = "No Audio Available"
+        self._update_in_flight = False
+        self._buffer_timer.stop()
         self.update()
 
     def _check_buffer(self):

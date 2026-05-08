@@ -22,6 +22,7 @@ class WaveformExtractor(QThread):
 
     finished = Signal(np.ndarray)
     error = Signal(str)
+    no_audio = Signal()
 
     def __init__(self, video_path, cache_dir, bin_count, video_duration=0):
         super().__init__()
@@ -65,7 +66,7 @@ class WaveformExtractor(QThread):
                 raw = self._extract_pcm()
 
             if not raw:
-                self.finished.emit(np.zeros(self._bin_count, dtype=np.float32))
+                self.no_audio.emit()
                 return
 
             samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
@@ -208,6 +209,7 @@ class WaveformWidget(QWidget):
             video_duration=duration)
         self._extractor.finished.connect(self._on_extraction_done)
         self._extractor.error.connect(self._on_extraction_error)
+        self._extractor.no_audio.connect(self._on_no_audio)
 
         if sys.platform == "darwin":
             cache = self._extractor._cache_path()
@@ -320,6 +322,11 @@ class WaveformWidget(QWidget):
 
     def _on_extraction_error(self, msg):
         logger.debug("Waveform extraction error: %s", msg)
+
+    def _on_no_audio(self):
+        self._extracted = True
+        self._placeholder_text = "No Audio Available"
+        self.update()
 
     def reset(self):
         """Clear waveform data. Call when loading a new video file."""

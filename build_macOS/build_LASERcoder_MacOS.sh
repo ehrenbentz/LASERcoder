@@ -285,6 +285,12 @@ echo "Installing custom Info.plist (v${APP_VERSION})..."
 sed "s/__APP_VERSION__/${APP_VERSION}/g" ../Info.plist \
     > "${APP_NAME}.app/Contents/Info.plist"
 
+# Re-sign after modifying the bundle (Info.plist change invalidates
+# Nuitka's ad-hoc signature; TCC requires a valid signature to prompt
+# for Desktop/Documents/Downloads access).
+echo "Re-signing app bundle..."
+codesign --force --deep --sign - "${APP_NAME}.app"
+
 cd ..
 
 # ==================================================================

@@ -28,5 +28,11 @@
   <true/>
   <key>NSHumanReadableCopyright</key>
   <string>Copyright 2026 Ehren Bentz. Licensed under GNU GPL v3. See https://github.com/ehrenbentz/LASERcoder</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>LASERcoder needs access to your Desktop to save and load project files.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>LASERcoder needs access to your Documents to save and load project files.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>LASERcoder needs access to your Downloads to save and load project files.</string>
 </dict>
 </plist>

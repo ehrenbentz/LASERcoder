@@ -488,7 +488,7 @@ class FilesManager(QDialog):
                 except OSError:
                     continue
                 item = QListWidgetItem(
-                    f"{d}  (\u29C9 {len(parts)} parts)")
+                    f"{d}  (\u29C9 {len(parts)} video files)")
                 item.setData(Qt.ItemDataRole.UserRole, {
                     "type": "multi_part",
                     "folder": subdir,
