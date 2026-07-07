@@ -1,6 +1,7 @@
 # annotation_store.py
 
 import os
+import re
 import csv
 import json
 import time
@@ -104,12 +105,17 @@ class AnnotationStore:
     # Chunk management
 
     def _get_chunk_files(self):
-        """Return sorted list of chunk filenames in the annotations dir."""
+        """Return chunk filenames sorted by numeric chunk index.
+
+        Numeric sort keeps ordering correct past 999 chunks, where a
+        plain lexicographic sort would place chunk_1000 before chunk_101.
+        """
         if not os.path.isdir(self.annotations_dir):
             return []
         return sorted(
-            f for f in os.listdir(self.annotations_dir)
-            if f.endswith(".csv") and "_chunk_" in f)
+            (f for f in os.listdir(self.annotations_dir)
+             if f.endswith(".csv") and "_chunk_" in f),
+            key=lambda f: (_chunk_index(f), f))
 
     def _chunk_path(self, filename):
         return os.path.join(self.annotations_dir, filename)
@@ -124,11 +130,13 @@ class AnnotationStore:
         last_exc = None
         for attempt in range(_retries + 1):
             try:
-                with open(temp, "w", newline="") as f:
+                with open(temp, "w", newline="", encoding="utf-8-sig") as f:
                     writer = csv.DictWriter(f, fieldnames=self.CSV_HEADERS)
                     writer.writeheader()
                     for row in rows:
                         writer.writerow(row)
+                    f.flush()
+                    os.fsync(f.fileno())
                 os.replace(temp, path)
                 return
             except OSError as exc:
@@ -221,8 +229,10 @@ class AnnotationStore:
                         existing = list(csv.DictReader(f))
 
             if not chunks or len(existing) >= CHUNK_SIZE:
-                # Start a new chunk
-                chunk_name = f"{self.video_name}_chunk_{len(chunks):03d}.csv"
+                # Start a new chunk (max existing index + 1, robust
+                # against gaps left by deleted chunks)
+                next_idx = (_chunk_index(chunks[-1]) + 1) if chunks else 0
+                chunk_name = f"{self.video_name}_chunk_{next_idx:03d}.csv"
                 self._write_chunk_atomic(chunk_name, [record])
             else:
                 # Append to existing chunk — atomic rewrite of ~100 rows
@@ -230,34 +240,45 @@ class AnnotationStore:
                 self._write_chunk_atomic(chunks[-1], existing)
 
             return True
-        except (PermissionError, OSError):
+        except (PermissionError, OSError, ValueError):
+            # ValueError covers UnicodeEncodeError so encoding surprises
+            # surface through the write-error UI instead of crashing.
             return False
 
-    def update_state_event_end(self, event_name, end_time):
+    def update_state_event_end(self, event_name, end_time, subject=None):
         """Update a single started state event's end time in its chunk.
 
         Scans chunks in reverse (newest first) to find the row with
         matching Event name and End='NA', then rewrites only that chunk.
-        Returns True on success.
+        When *subject* is given, rows with a matching Subject are
+        preferred; if none exists anywhere, falls back to matching by
+        event name alone (open rows from older sessions may predate
+        subject tracking). Returns True on success.
         """
         try:
             h_end = format_time_human(end_time)
             end_str = format_time_machine(end_time)
 
-            for chunk_name in reversed(self._get_chunk_files()):
-                chunk_path = self._chunk_path(chunk_name)
-                if not os.path.exists(chunk_path):
-                    continue
+            passes = [subject, None] if subject is not None else [None]
+            for want_subject in passes:
+                for chunk_name in reversed(self._get_chunk_files()):
+                    chunk_path = self._chunk_path(chunk_name)
+                    if not os.path.exists(chunk_path):
+                        continue
 
-                with open(chunk_path, "r", newline="",
-                          encoding="utf-8-sig") as f:
-                    rows = list(csv.DictReader(f))
+                    with open(chunk_path, "r", newline="",
+                              encoding="utf-8-sig") as f:
+                        rows = list(csv.DictReader(f))
 
-                for row in rows:
-                    end_val = row.get("End", "").strip()
-                    if (row.get("Event", "").strip() == event_name
-                            and row.get("Type", "").strip().lower() == "state"
-                            and (end_val == "NA" or end_val == "")):
+                    for row in rows:
+                        end_val = row.get("End", "").strip()
+                        if not (row.get("Event", "").strip() == event_name
+                                and row.get("Type", "").strip().lower() == "state"
+                                and (end_val == "NA" or end_val == "")):
+                            continue
+                        if (want_subject is not None
+                                and row.get("Subject", "").strip() != want_subject):
+                            continue
                         start_str = row.get("Start", "").strip()
                         try:
                             start_val = float(start_str)
@@ -271,7 +292,7 @@ class AnnotationStore:
                         return True
 
             return False
-        except (PermissionError, OSError):
+        except (PermissionError, OSError, ValueError):
             return False
 
     def save_sorted_annotations(self):
@@ -280,7 +301,7 @@ class AnnotationStore:
             os.makedirs(self.annotations_dir, exist_ok=True)
             self._write_chunks_from_memory()
             return True
-        except (PermissionError, OSError):
+        except (PermissionError, OSError, ValueError):
             return False
 
     def import_annotations(self, rows, mode="merge"):
@@ -349,7 +370,7 @@ class AnnotationStore:
             self.write_full_annotations_file()
 
             return True, imported, skipped
-        except (PermissionError, OSError) as exc:
+        except (PermissionError, OSError, ValueError) as exc:
             logger.warning("Import annotations failed: %s", exc)
             return False, 0, 0
 
@@ -363,14 +384,16 @@ class AnnotationStore:
             path = self.full_annotations_file
             os.makedirs(os.path.dirname(path), exist_ok=True)
             temp = path + ".tmp"
-            with open(temp, "w", newline="") as f:
+            with open(temp, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.DictWriter(f, fieldnames=self.CSV_HEADERS)
                 writer.writeheader()
                 for row in all_rows:
                     writer.writerow(row)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(temp, path)
             return True
-        except (PermissionError, OSError) as exc:
+        except (PermissionError, OSError, ValueError) as exc:
             logger.warning("Failed to write full annotations file: %s", exc)
             return False
 
@@ -465,7 +488,7 @@ class AnnotationStore:
         data = {}
         if os.path.exists(path):
             try:
-                with open(path, "r") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
             except (json.JSONDecodeError, ValueError, OSError):
                 data = {}
@@ -474,8 +497,10 @@ class AnnotationStore:
 
         try:
             temp = path + ".tmp"
-            with open(temp, "w") as f:
+            with open(temp, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(temp, path)
             return True
         except (PermissionError, OSError):
@@ -513,7 +538,7 @@ class AnnotationStore:
             return None
 
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, ValueError, OSError):
             return None
@@ -552,7 +577,7 @@ class AnnotationStore:
         if not os.path.exists(path):
             return default
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, ValueError, OSError):
             return default
@@ -652,6 +677,12 @@ class AnnotationStore:
 
 # Module-level helpers
 
+def _chunk_index(fname):
+    """Extract the numeric chunk index from a chunk filename (-1 if none)."""
+    m = re.search(r"_chunk_(\d+)\.csv$", fname)
+    return int(m.group(1)) if m else -1
+
+
 def is_chunked_annotations_dir(path):
     """Return True if path is a directory containing chunk CSV files."""
     if not os.path.isdir(path):
@@ -740,9 +771,11 @@ def init_annotations_dir(annotations_dir, video_name):
     chunk_name = f"{video_name}_chunk_000.csv"
     chunk_path = os.path.join(annotations_dir, chunk_name)
     temp = chunk_path + ".tmp"
-    with open(temp, "w", newline="") as f:
+    with open(temp, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=AnnotationStore.CSV_HEADERS)
         writer.writeheader()
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(temp, chunk_path)
 
 

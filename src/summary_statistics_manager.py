@@ -459,11 +459,13 @@ class SummaryStatisticsManager(QDialog):
         try:
             temp = out_path + ".tmp"
             fieldnames = [f for f in fieldnames if f is not None]
-            with open(temp, "w", newline="") as fh:
+            with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
                 writer = csv.DictWriter(
                     fh, fieldnames=fieldnames, extrasaction="ignore")
                 writer.writeheader()
                 writer.writerows(all_rows)
+                fh.flush()
+                os.fsync(fh.fileno())
             os.replace(temp, out_path)
             return out_path
         except OSError as exc:

@@ -374,11 +374,13 @@ class SubjectEditor(QDialog):
 
             temp = path + ".tmp"
             try:
-                with open(temp, "w", newline="") as fh:
+                with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
                     writer = csv.writer(fh)
                     writer.writerow(SUBJECT_KEY_HEADERS)
                     for _ in range(30):
                         writer.writerow(["", "", "", ""])
+                    fh.flush()
+                    os.fsync(fh.fileno())
                 os.replace(temp, path)
 
                 self.subject_file = path
@@ -447,7 +449,7 @@ class SubjectEditor(QDialog):
 
         temp = self.subject_file + ".tmp"
         try:
-            with open(temp, "w", newline="") as fh:
+            with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
                 writer = csv.writer(fh)
                 writer.writerow(SUBJECT_KEY_HEADERS)
                 for i in range(30):
@@ -457,6 +459,8 @@ class SubjectEditor(QDialog):
                         self._me_group_entries[i].text(),
                         self._subject_colors[i],
                     ])
+                fh.flush()
+                os.fsync(fh.fileno())
             os.replace(temp, self.subject_file)
             self.config_manager.set_last_subject_file(
                 os.path.basename(self.subject_file))
@@ -845,7 +849,9 @@ class SubjectEditor(QDialog):
                         return False
             else:
                 if os.path.exists(path):
-                    with open(path, "r") as fh:
+                    # Binary read: an access probe must not trip over
+                    # text decoding.
+                    with open(path, "rb") as fh:
                         fh.read(1)
                 else:
                     return False

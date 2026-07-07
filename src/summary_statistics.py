@@ -57,6 +57,10 @@ def compute_summary_rows(annotations_path, use_whole_video=False):
             except (json.JSONDecodeError, ValueError, OSError):
                 pass
 
+    coding_end = (coding_start + coding_duration
+                  if coding_duration is not None and coding_duration > 0
+                  else None)
+
     # total duration from the data
     total_duration_seconds = 0.0
     for row in rows:
@@ -74,16 +78,23 @@ def compute_summary_rows(annotations_path, use_whole_video=False):
                          else total_duration_seconds)
     analysis_minutes = analysis_duration / 60 if analysis_duration else 0
 
-    # group rows by (event name, subject)
+    # group rows by (event name, subject), restricted to the coding
+    # window when one is defined: point events must fall inside it,
+    # state events must overlap it (their durations are clipped to the
+    # window in _sum_state_durations)
     rows_by_key = {}
     for row in rows:
         name = row.get("Event", "").strip()
         subject = row.get("Subject", "NA").strip()
         if not subject:
             subject = "NA"
-        if name:
-            key = (name, subject)
-            rows_by_key.setdefault(key, []).append(row)
+        if not name:
+            continue
+        if (coding_end is not None
+                and not _row_in_window(row, coding_start, coding_end)):
+            continue
+        key = (name, subject)
+        rows_by_key.setdefault(key, []).append(row)
 
     # per-event-per-subject stats
     summary_rows = []
@@ -95,7 +106,7 @@ def compute_summary_rows(annotations_path, use_whole_video=False):
 
         if btype == "State":
             total_dur = _sum_state_durations(
-                brows, coding_start, coding_duration)
+                brows, coding_start, coding_end)
             pct = (total_dur / analysis_duration * 100
                    if analysis_duration > 0 else 0)
             summary_rows.append({
@@ -162,7 +173,7 @@ def generate_summary_statistics(annotations_path, custom_output_file=None):
         "Observations_per_minute", "Total_Duration_seconds", "Percent_Time",
     ]
 
-    with open(output_file, "w", newline="") as fh:
+    with open(output_file, "w", newline="", encoding="utf-8-sig") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(summary_rows)
@@ -174,7 +185,8 @@ def generate_summary_statistics(annotations_path, custom_output_file=None):
         if all_rows:
             complete_file = os.path.join(
                 summary_dir, f"{video_name}_Annotations.csv")
-            with open(complete_file, "w", newline="") as fh:
+            with open(complete_file, "w", newline="",
+                      encoding="utf-8-sig") as fh:
                 writer = csv.DictWriter(
                     fh, fieldnames=AnnotationStore.CSV_HEADERS)
                 writer.writeheader()
@@ -244,7 +256,7 @@ def combine_summaries(summary_files, output_file):
         "Mean_Percent_Time", "Mean_Observations_per_minute",
     ]
 
-    with open(output_file, "w", newline="") as fh:
+    with open(output_file, "w", newline="", encoding="utf-8-sig") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(summary_rows)
@@ -283,34 +295,65 @@ def _infer_type(rows):
     return "Point"
 
 
-def _sum_state_durations(rows, coding_start, coding_duration):
-    """Sum durations for state-event rows, clipping to the coding period"""
+def _row_is_state(row):
+    """Best-effort per-row State/Point classification."""
+    raw = row.get("Type", "").strip().lower()
+    if raw:
+        return raw == "state"
+    dur = row.get("Duration", "").strip()
+    end = row.get("End", "").strip()
+    return bool((dur and dur != "NA") or (end and end != "NA"))
+
+
+def _row_in_window(row, coding_start, coding_end):
+    """Return True if an annotation belongs to the coding window.
+
+    Point events: timestamp inside the window.
+    State events: any overlap with the window (still-open events count
+    as extending to the end of the video).
+    Rows whose timestamps cannot be parsed are kept.
+    """
+    start = _safe_float(row.get("Start", ""))
+    if _row_is_state(row):
+        if start is None:
+            return True
+        if start > coding_end:
+            return False
+        end = _safe_float(row.get("End", ""))
+        if end is not None and end < coding_start:
+            return False
+        return True
+    if start is None:
+        return True
+    return coding_start <= start <= coding_end
+
+
+def _sum_state_durations(rows, coding_start, coding_end):
+    """Sum durations for state-event rows, clipped to the coding window.
+
+    Start/End timestamps are preferred so events crossing a window
+    boundary contribute only their in-window portion. The Duration
+    column is used only when timestamps are missing or unparsable
+    (it cannot be clipped in that case).
+    """
     total = 0.0
-    coding_end = (coding_start + coding_duration
-                  if coding_duration is not None else None)
-
     for row in rows:
-        # Prefer the explicit Duration column when available
-        dur_raw = row.get("Duration", "").strip()
-        if dur_raw and dur_raw != "NA":
-            dur_val = _safe_float(dur_raw)
-            if dur_val is not None:
-                total += dur_val
-                continue
-
-        # Fall back to Start/End
         start = _safe_float(row.get("Start", ""))
         end = _safe_float(row.get("End", ""))
-        if start is None or end is None:
+
+        if start is not None and end is not None:
+            if coding_end is not None:
+                if end < coding_start or start > coding_end:
+                    continue
+                start = max(start, coding_start)
+                end = min(end, coding_end)
+            total += max(0.0, end - start)
             continue
 
-        if coding_end is not None:
-            if end < coding_start or start > coding_end:
-                continue
-            start = max(start, coding_start)
-            end = min(end, coding_end)
-
-        total += end - start
+        # Fall back to the explicit Duration column
+        dur_val = _safe_float(row.get("Duration", "").strip())
+        if dur_val is not None:
+            total += max(0.0, dur_val)
 
     return total
 

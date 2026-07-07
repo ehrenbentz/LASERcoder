@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QInputDialog, QApplication, QFileDialog, QMenu, QComboBox, QGroupBox,
     QRadioButton,
 )
-from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtCore import Qt, QTimer, QSize, QThread, Signal
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen
 
 from display_utils import get_screen_geometry, center_window, is_os_junk
@@ -26,6 +26,26 @@ from summary_viewer import show_table_viewer, show_boxplot_viewer
 from config_manager import get_config
 from dialogs import show_message, get_text, show_colors_theme_dialog
 import theme
+
+
+class _FileOpWorker(QThread):
+    """Run a blocking file operation (backup copy, delete) off the GUI
+    thread so large project trees do not freeze the dialog."""
+
+    succeeded = Signal()
+    failed = Signal(str)
+
+    def __init__(self, fn, parent=None):
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self):
+        try:
+            self._fn()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.succeeded.emit()
 
 
 class FilesManager(QDialog):
@@ -529,7 +549,7 @@ class FilesManager(QDialog):
             if not os.path.isfile(state_file):
                 continue
             try:
-                with open(state_file, "r") as f:
+                with open(state_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if data.get("completed"):
                     result[fname] = "complete"
@@ -629,7 +649,7 @@ class FilesManager(QDialog):
             data = {}
             if os.path.exists(state_file):
                 try:
-                    with open(state_file, "r") as fh:
+                    with open(state_file, "r", encoding="utf-8") as fh:
                         data = json.load(fh)
                 except (json.JSONDecodeError, OSError):
                     data = {}
@@ -643,8 +663,10 @@ class FilesManager(QDialog):
 
             temp = state_file + ".tmp"
             try:
-                with open(temp, "w") as fh:
+                with open(temp, "w", encoding="utf-8") as fh:
                     json.dump(data, fh)
+                    fh.flush()
+                    os.fsync(fh.fileno())
                 os.replace(temp, state_file)
             except OSError as exc:
                 try:
@@ -728,28 +750,62 @@ class FilesManager(QDialog):
             dest = os.path.normpath(os.path.join(dest_parent, name))
             counter += 1
 
-        try:
-            shutil.copytree(self.output_dir, dest)
-        except OSError as exc:
+        src_dir = self.output_dir
+
+        def _on_done():
+            # Mark the backup so it cannot be opened as a project
+            try:
+                marker = os.path.join(dest, ".no_project")
+                with open(marker, "w", encoding="utf-8") as fh:
+                    fh.write("This directory is a LASERcoder backup and "
+                             "cannot be used as a project directory.\n")
+            except OSError:
+                pass
+
+            get_config().add_backup_dir(dest)
+
             show_message(
-                self, "Error", f"Backup failed: {exc}")
-            return
+                self, "Backup Complete",
+                f"Project backed up to:\n{dest}",
+                icon="information")
 
-        # Mark the backup so it cannot be opened as a project
-        try:
-            marker = os.path.join(dest, ".no_project")
-            with open(marker, "w") as fh:
-                fh.write("This directory is a LASERcoder backup and "
-                         "cannot be used as a project directory.\n")
-        except OSError:
-            pass
+        def _on_error(msg):
+            show_message(
+                self, "Error", f"Backup failed: {msg}")
 
-        get_config().add_backup_dir(dest)
+        self._run_file_op_async(
+            lambda: shutil.copytree(src_dir, dest), _on_done, _on_error)
 
-        show_message(
-            self, "Backup Complete",
-            f"Project backed up to:\n{dest}",
-            icon="information")
+    def _run_file_op_async(self, fn, on_success, on_error):
+        """Run a blocking file operation on a worker thread.
+
+        The dialog is disabled and a wait cursor shown until the
+        operation finishes, then *on_success* or *on_error* runs on the
+        GUI thread.
+        """
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self.setEnabled(False)
+
+        worker = _FileOpWorker(fn, parent=self)
+        self._file_op_worker = worker
+
+        def _finish():
+            QApplication.restoreOverrideCursor()
+            self.setEnabled(True)
+            self._file_op_worker = None
+            worker.deleteLater()
+
+        def _ok():
+            _finish()
+            on_success()
+
+        def _err(msg):
+            _finish()
+            on_error(msg)
+
+        worker.succeeded.connect(_ok)
+        worker.failed.connect(_err)
+        worker.start()
 
     def _move_working_directory(self):
         if not self.output_dir or not os.path.isdir(self.output_dir):
@@ -881,16 +937,25 @@ class FilesManager(QDialog):
                     icon="question")
                 if confirm != QMessageBox.StandardButton.Yes:
                     return
+        except OSError as exc:
+            show_message(
+                self, "Error", f"Could not delete directory: {exc}")
+            return
 
-            shutil.rmtree(dir_path)
+        def _on_done():
             self._populate_dir_list(self.current_output_dir)
             show_message(
                 self, "Success",
                 f"Directory '{dir_name}' has been deleted.",
                 icon="information")
-        except OSError as exc:
+
+        def _on_error(msg):
+            self._populate_dir_list(self.current_output_dir)
             show_message(
-                self, "Error", f"Could not delete directory: {exc}")
+                self, "Error", f"Could not delete directory: {msg}")
+
+        self._run_file_op_async(
+            lambda: shutil.rmtree(dir_path), _on_done, _on_error)
 
     def _select_directory(self):
         current_item = self.output_dir_listbox.currentItem()
@@ -1748,6 +1813,15 @@ class FilesManager(QDialog):
 
     # Key handling
 
+
+    def closeEvent(self, event):
+        # Never destroy the dialog while a background file operation
+        # (backup copy, delete) is still running.
+        worker = getattr(self, "_file_op_worker", None)
+        if worker is not None and worker.isRunning():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:

@@ -16,7 +16,7 @@
 #         LASERcoder_v{ver}_linux_amd64_portable.tar.gz
 #
 # Prerequisites:
-#   pip install nuitka PySide6 python-mpv
+#   pip install nuitka PySide6 python-mpv numpy
 #
 # Usage:
 #   cd LASERcoder/build_Linux
@@ -194,6 +194,9 @@ $PYTHON -m nuitka \
 if [ -d "main.dist" ] && [ "main.dist" != "${APP_NAME}.dist" ]; then
     mv "main.dist" "${APP_NAME}.dist"
 fi
+
+# Include license text in the distributed folder (deb and tarball)
+cp ../../LICENSE "${APP_NAME}.dist/LICENSE.txt"
 
 # ==================================================================
 # Clean up staged source from output

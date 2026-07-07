@@ -1,6 +1,6 @@
 #!/bin/bash
 # build_LASERcoder_MacOS.sh
-# Run from inside LASERcoder/build_MacOS/
+# Run from inside LASERcoder/build_macOS/
 #
 # Directory structure:
 #   LASERcoder/
@@ -9,7 +9,7 @@
 #     icons/                 Icons.icns and logo PNGs
 #     libs/mpv/macOS/arm64/  Pre-collected dylibs for Apple Silicon
 #     libs/mpv/macOS/x86_64/ Pre-collected dylibs for Intel
-#     build_MacOS/           This script, collect_dylibs.sh,
+#     build_macOS/           This script, collect_dylibs.sh,
 #                            create_dmg.sh, create_pkg.sh, Info.plist
 #       dist_macOS_<arch>_v#_#_#/  Build output (arch + version-stamped)
 #
@@ -19,10 +19,10 @@
 #
 # Prerequisites:
 #   brew install mpv (only needed if libs_<arch>/ does not exist yet)
-#   pip install nuitka PySide6 python-mpv
+#   pip install nuitka PySide6 python-mpv numpy
 #
 # Usage:
-#   cd LASERcoder/build_MacOS
+#   cd LASERcoder/build_macOS
 #   ./build_LASERcoder_MacOS.sh
 
 set -e
@@ -141,7 +141,7 @@ echo ""
 # ==================================================================
 if [ ! -d "$SOURCE_DIR" ]; then
     echo "ERROR: source directory not found at $SOURCE_DIR"
-    echo "Run this script from inside LASERcoder/build_MacOS/"
+    echo "Run this script from inside LASERcoder/build_macOS/"
     exit 1
 fi
 
@@ -190,6 +190,15 @@ cp "$SOURCE_DIR"/*.py "$OUTPUT_DIR/"
 cp "$ICONS_DIR/Icons.icns" "$OUTPUT_DIR/"
 cp -R "$LIBS_DIR" "$OUTPUT_DIR/libs"
 chmod 755 "$OUTPUT_DIR"/libs/*.dylib
+
+# Determine the true minimum macOS version from the bundled dylibs
+# (Homebrew builds target the host OS; claiming an older version in
+# Info.plist would let the app install where it cannot run).
+MIN_OS=$(for lib in "$OUTPUT_DIR"/libs/*.dylib; do
+    otool -l "$lib" 2>/dev/null | awk '$1 == "minos" {print $2}'
+done | sort -V | tail -n 1)
+[ -z "$MIN_OS" ] && MIN_OS="12.0"
+echo "Minimum macOS version (from bundled dylibs): $MIN_OS"
 
 # ==================================================================
 # Compile with Nuitka
@@ -281,9 +290,14 @@ rm -f "${MACOS_DIR}/PySide6/Qt3DCore.so" 2>/dev/null
 ## Replace Nuitka's auto-generated Info.plist with our custom one
 ## and stamp the version from APP_VERSION
 echo ""
-echo "Installing custom Info.plist (v${APP_VERSION})..."
-sed "s/__APP_VERSION__/${APP_VERSION}/g" ../Info.plist \
+echo "Installing custom Info.plist (v${APP_VERSION}, minOS ${MIN_OS})..."
+sed -e "s/__APP_VERSION__/${APP_VERSION}/g" \
+    -e "s/__MIN_OS__/${MIN_OS}/g" ../Info.plist \
     > "${APP_NAME}.app/Contents/Info.plist"
+
+# Include the license text in the app bundle
+mkdir -p "${APP_NAME}.app/Contents/Resources"
+cp ../../LICENSE "${APP_NAME}.app/Contents/Resources/LICENSE.txt"
 
 # Re-sign after modifying the bundle (Info.plist change invalidates
 # Nuitka's ad-hoc signature; TCC requires a valid signature to prompt

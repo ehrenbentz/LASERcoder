@@ -14,7 +14,7 @@ REM         LASERcoder_v{ver}_windows_x64_setup.exe    Installer
 REM         LASERcoder_v{ver}_windows_x64_portable.zip Portable zip
 REM
 REM Prerequisites:
-REM   pip install nuitka PySide6 python-mpv
+REM   pip install nuitka PySide6 python-mpv numpy
 REM
 REM Usage:
 REM   cd LASERcoder\build_Windows
@@ -217,6 +217,9 @@ if exist "%OUTPUT_DIR%\main.dist" (
     ren "%OUTPUT_DIR%\main.dist" "%APP_NAME%.dist"
 )
 
+REM Include license text in the distributed folder (installer and zip)
+copy "..\LICENSE" "%OUTPUT_DIR%\%APP_NAME%.dist\LICENSE.txt" >nul
+
 REM =====================================================================
 REM Clean up staged source from output
 REM =====================================================================
@@ -246,7 +249,7 @@ if not defined CERT_FILE (
     echo "Skipping code signing (certificate not found at %CERT_FILE%)"
 ) else (
     echo "Signing executable"
-    signtool.exe sign /f "%CERT_FILE%" /p !CERT_PASS! /fd sha256 /td sha256 /tr http://timestamp.digicert.com /a "%OUTPUT_DIR%\%APP_NAME%.dist\%APP_NAME%.exe"
+    signtool.exe sign /f "%CERT_FILE%" /p "!CERT_PASS!" /fd sha256 /td sha256 /tr http://timestamp.digicert.com /a "%OUTPUT_DIR%\%APP_NAME%.dist\%APP_NAME%.exe"
     if !errorlevel! neq 0 (
         echo WARNING: Code signing failed. Continuing without signature.
     ) else (
@@ -274,7 +277,7 @@ if exist %ISCC% (
             echo Installer created: %OUTPUT_DIR%\%SETUP_NAME%
             if defined CERT_FILE if defined CERT_PASS (
                 echo Signing installer...
-                signtool.exe sign /f "%CERT_FILE%" /p !CERT_PASS! /fd sha256 /td sha256 /tr http://timestamp.digicert.com /a "%OUTPUT_DIR%\%SETUP_NAME%"
+                signtool.exe sign /f "%CERT_FILE%" /p "!CERT_PASS!" /fd sha256 /td sha256 /tr http://timestamp.digicert.com /a "%OUTPUT_DIR%\%SETUP_NAME%"
                 if !errorlevel! neq 0 (
                     echo WARNING: Installer signing failed.
                 ) else (
@@ -298,8 +301,13 @@ REM =====================================================================
 
  if exist "%OUTPUT_DIR%\%ZIP_NAME%" del "%OUTPUT_DIR%\%ZIP_NAME%"
 
+ REM Rename the dist folder so the zip extracts into a single
+ REM "LASERcoder" folder instead of spraying files into the current dir.
+ if exist "%OUTPUT_DIR%\%APP_NAME%" rmdir /s /q "%OUTPUT_DIR%\%APP_NAME%"
+ ren "%OUTPUT_DIR%\%APP_NAME%.dist" "%APP_NAME%"
+
  powershell -NoProfile -Command ^
-     "Compress-Archive -Path '%OUTPUT_DIR%\%APP_NAME%.dist\*' -DestinationPath '%OUTPUT_DIR%\%ZIP_NAME%'"
+     "Compress-Archive -Path '%OUTPUT_DIR%\%APP_NAME%' -DestinationPath '%OUTPUT_DIR%\%ZIP_NAME%'"
 
  if %errorlevel% neq 0 (
      echo WARNING: Failed to create zip file.
@@ -315,6 +323,10 @@ echo Cleaning up...
 if exist "%OUTPUT_DIR%\%APP_NAME%.dist" (
     echo Removing distribution directory...
     rmdir /s /q "%OUTPUT_DIR%\%APP_NAME%.dist"
+)
+if exist "%OUTPUT_DIR%\%APP_NAME%" (
+    echo Removing distribution directory...
+    rmdir /s /q "%OUTPUT_DIR%\%APP_NAME%"
 )
 
 REM =====================================================================

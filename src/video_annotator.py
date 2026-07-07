@@ -263,6 +263,9 @@ class VideoAnnotator(QFrame):
         self.limit_timeline_to_coding = False
         self._video_completed = False
         self.active_state_events = {}
+        # key -> Subject string recorded when the state was started, so
+        # the end-time update targets the exact row that was opened.
+        self.active_state_subjects = {}
         self.used_point_events = set()
         self._mpv_duration = 0.0
 
@@ -2138,6 +2141,7 @@ class VideoAnnotator(QFrame):
                 key = name_to_key.get(evt["Event"])
                 if key:
                     self.active_state_events[key] = evt["start_time"]
+                    self.active_state_subjects[key] = evt.get("Subject")
 
     def _load_session_state(self):
         state = self.store.load_session_state()
@@ -2616,11 +2620,9 @@ class VideoAnnotator(QFrame):
                 )
                 return False
             self.active_state_events.pop(key)
-            for evt in self.store.state_events:
-                if evt["Event"] == name and evt["end_time"] is None:
-                    evt["end_time"] = frame_ts
-                    break
-            if not self.store.update_state_event_end(name, frame_ts):
+            subj = self.active_state_subjects.pop(key, None)
+            self._set_memory_state_end(name, frame_ts, subj)
+            if not self.store.update_state_event_end(name, frame_ts, subj):
                 return False
             self._update_state_tree_end_time(name, format_time_human(frame_ts))
             self._populate_event_trees()
@@ -2647,6 +2649,7 @@ class VideoAnnotator(QFrame):
                 return False
 
             self.active_state_events[key] = frame_ts
+            self.active_state_subjects[key] = subject
             self.store.state_events.append({
                 "Event": name, "Subject": subject,
                 "start_time": frame_ts, "end_time": None,
@@ -2657,6 +2660,26 @@ class VideoAnnotator(QFrame):
             self._append_state_to_tree(self.store.state_events[-1])
             self._populate_event_trees()
             return True
+
+    def _set_memory_state_end(self, name, frame_ts, subject=None):
+        """Set end_time on the matching open in-memory state event.
+
+        Prefers a Subject match, falling back to event name alone (open
+        rows restored from older sessions may lack subject tracking).
+        """
+        candidates = [evt for evt in self.store.state_events
+                      if evt["Event"] == name and evt["end_time"] is None]
+        if not candidates:
+            return
+        target = None
+        if subject is not None:
+            for evt in candidates:
+                if evt.get("Subject", "NA") == subject:
+                    target = evt
+                    break
+        if target is None:
+            target = candidates[0]
+        target["end_time"] = frame_ts
 
     def _deactivate_me_group(self, me_group, frame_ts, current_key):
         to_deactivate = [
@@ -2692,15 +2715,14 @@ class VideoAnnotator(QFrame):
                 return False
 
             removed.append(key)
-            for evt in self.store.state_events:
-                if evt["Event"] == name and evt["end_time"] is None:
-                    evt["end_time"] = frame_ts
-                    break
+            self._set_memory_state_end(
+                name, frame_ts, self.active_state_subjects.get(key))
 
         for key in removed:
             name = self.store.state_event_keys.get(key)
             self.active_state_events.pop(key)
-            if not self.store.update_state_event_end(name, frame_ts):
+            subj = self.active_state_subjects.pop(key, None)
+            if not self.store.update_state_event_end(name, frame_ts, subj):
                 return False
 
         if removed:
@@ -2982,6 +3004,7 @@ class VideoAnnotator(QFrame):
                     active_key = name_to_key.get(deleted.get("Event"))
                     if active_key is not None:
                         self.active_state_events.pop(active_key, None)
+                        self.active_state_subjects.pop(active_key, None)
 
                 self.undo_stack.append((atype, idx, deleted))
                 lst.pop(idx)
@@ -3018,6 +3041,7 @@ class VideoAnnotator(QFrame):
                 active_key = name_to_key.get(deleted.get("Event"))
                 if active_key is not None:
                     self.active_state_events.pop(active_key, None)
+                    self.active_state_subjects.pop(active_key, None)
 
             self.undo_stack.append(("state", self.selected_index, deleted))
             self.store.state_events.pop(self.selected_index)
@@ -3071,6 +3095,7 @@ class VideoAnnotator(QFrame):
             active_key = name_to_key.get(annotation.get("Event"))
             if active_key is not None:
                 self.active_state_events[active_key] = annotation["start_time"]
+                self.active_state_subjects[active_key] = annotation.get("Subject")
 
         self._update_annotations()
         self._populate_event_trees()
@@ -3373,6 +3398,7 @@ class VideoAnnotator(QFrame):
                     self.event_key_file = bk_file
                     self.store.event_key_file = bk_file
                     self.active_state_events.clear()
+                    self.active_state_subjects.clear()
                     self.store.load_events()
                     self.store.load_annotations()
                     self._update_annotations()

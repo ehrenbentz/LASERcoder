@@ -41,7 +41,7 @@ SetupIconFile=..\icons\laser.ico
 UninstallDisplayIcon={app}\laser.ico
 UninstallDisplayName=LASERcoder
 VersionInfoCompany=Ehren Bentz
-VersionInfoCopyright=Copyright 2025 Ehren Bentz. Licensed under GNU GPL v3.
+VersionInfoCopyright=Copyright 2026 Ehren Bentz. Licensed under GNU GPL v3.
 VersionInfoDescription=LASERcoder Setup
 VersionInfoProductName=LASERcoder
 #ifdef SignEnabled
@@ -64,48 +64,9 @@ Name: "{commondesktop}\LASERcoder"; Filename: "{app}\LASERcoder.exe"; WorkingDir
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"
 
-[Code]
-procedure CurStepChanged(CurStep: TSetupStep);
-var
-  Path: string;
-  AppPath: string;
-begin
-  if CurStep = ssPostInstall then
-  begin
-    AppPath := ExpandConstant('{app}');
-    if RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Path) then
-    begin
-      if Pos(Uppercase(AppPath), Uppercase(Path)) = 0 then
-      begin
-        if Length(Path) > 0 then
-          Path := Path + ';';
-        Path := Path + AppPath;
-        RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Path);
-      end;
-    end
-    else
-    begin
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', AppPath);
-    end;
-  end;
-end;
-
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  Path: string;
-  AppPath: string;
-begin
-  if CurUninstallStep = usPostUninstall then
-  begin
-    AppPath := ExpandConstant('{app}');
-    if RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Path) then
-    begin
-      StringChangeEx(Path, ';' + AppPath + ';', ';', True);
-      StringChangeEx(Path, ';' + AppPath, '', True);
-      StringChangeEx(Path, AppPath + ';', '', True);
-      if Path = AppPath then
-        Path := '';
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Path);
-    end;
-  end;
-end;
+; NOTE: Earlier versions added {app} to the user's PATH in a [Code]
+; section. That was removed in 1.7.4: a GUI app does not need to be on
+; PATH, the installer runs elevated (so HKCU belonged to the elevating
+; admin, not necessarily the installing user), and rewriting PATH as
+; REG_SZ destroyed REG_EXPAND_SZ entries containing %VARIABLES%.
+; Old uninstallers still remove the entry they added.

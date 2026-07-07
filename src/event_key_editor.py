@@ -519,11 +519,13 @@ class EventKeyEditor(QDialog):
 
             temp = path + ".tmp"
             try:
-                with open(temp, "w", newline="") as fh:
+                with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
                     writer = csv.writer(fh)
                     writer.writerow(EVENT_KEY_HEADERS)
                     for _ in range(30):
                         writer.writerow(["", "", "point", ""])
+                    fh.flush()
+                    os.fsync(fh.fileno())
                 os.replace(temp, path)
 
                 self.event_key_file = path
@@ -673,7 +675,7 @@ class EventKeyEditor(QDialog):
 
         temp = self.event_key_file + ".tmp"
         try:
-            with open(temp, "w", newline="") as fh:
+            with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
                 writer = csv.writer(fh)
                 writer.writerow(EVENT_KEY_HEADERS)
                 for i in range(30):
@@ -685,6 +687,8 @@ class EventKeyEditor(QDialog):
                          else "point"),
                         self._me_group_entries[i].text(),
                     ])
+                fh.flush()
+                os.fsync(fh.fileno())
             os.replace(temp, self.event_key_file)
             self.config_manager.update_last_event_key(
                 os.path.basename(self.event_key_file))
@@ -802,7 +806,9 @@ class EventKeyEditor(QDialog):
                         return False
             else:
                 if os.path.exists(path):
-                    with open(path, "r") as fh:
+                    # Binary read: an access probe must not trip over
+                    # text decoding.
+                    with open(path, "rb") as fh:
                         fh.read(1)
                 else:
                     return False

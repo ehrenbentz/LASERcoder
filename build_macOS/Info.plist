@@ -22,8 +22,11 @@
   <string>__APP_VERSION__</string>
   <key>CFBundleSignature</key>
   <string>????</string>
+  <!-- Stamped by build_LASERcoder_MacOS.sh from the highest minos
+       version found in the bundled Homebrew dylibs, so the app never
+       claims to support an older macOS than its libraries do. -->
   <key>LSMinimumSystemVersion</key>
-  <string>10.13.0</string>
+  <string>__MIN_OS__</string>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSHumanReadableCopyright</key>

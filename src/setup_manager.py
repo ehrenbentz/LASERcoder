@@ -167,10 +167,12 @@ class SetupManager(QObject):
         with open(edl_path, "w", newline="\n", encoding="utf-8") as f:
             f.write("# mpv EDL v0\n")
             for path in self.multi_part_files:
-                escaped = (path.replace("%", "%25")
-                           .replace(",", "%2C")
-                           .replace(";", "%3B"))
-                f.write(f"{escaped}\n")
+                # mpv EDL has no percent-decoding; paths containing
+                # special characters must use the %<bytelen>%<path>
+                # quoting syntax from the EDL spec.
+                f.write(f"%{len(path.encode('utf-8'))}%{path}\n")
+            f.flush()
+            os.fsync(f.fileno())
         return edl_path
 
     def _create_empty_files(self):
@@ -198,8 +200,10 @@ class SetupManager(QObject):
             }
             if self.multi_part_files:
                 state["multi_part_files"] = self.multi_part_files
-            with open(temp_state, "w") as fh:
+            with open(temp_state, "w", encoding="utf-8") as fh:
                 json.dump(state, fh)
+                fh.flush()
+                os.fsync(fh.fileno())
             os.replace(temp_state, self.session_state_file)
         except (PermissionError, OSError):
             _remove_temp(temp_state)
@@ -218,7 +222,8 @@ class SetupManager(QObject):
         try:
             if os.path.exists(self.session_state_file):
                 try:
-                    with open(self.session_state_file, "r") as fh:
+                    with open(self.session_state_file, "r",
+                              encoding="utf-8") as fh:
                         self.saved_state = json.load(fh)
 
                     if "timestamp_ms" in self.saved_state:
@@ -246,7 +251,9 @@ class SetupManager(QObject):
                                     fh.write("t")
                                 os.remove(probe)
                             else:
-                                with open(self.full_annotations_file, "r") as fh:
+                                # Binary read: an access probe must not
+                                # trip over text decoding.
+                                with open(self.full_annotations_file, "rb") as fh:
                                     fh.read(1)
                         except (PermissionError, OSError):
                             show_message(

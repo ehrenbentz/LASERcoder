@@ -86,9 +86,9 @@ mkdir -p "${STAGING}${INSTALL_DIR}"
 cp -a "$APP_DIR"/. "${STAGING}${INSTALL_DIR}/"
 chmod 755 "${STAGING}${INSTALL_DIR}/${APP_NAME}"
 
-# Symlink in /usr/local/bin
-mkdir -p "${STAGING}/usr/local/bin"
-ln -s "${INSTALL_DIR}/${APP_NAME}" "${STAGING}/usr/local/bin/lasercoder"
+# Symlink in /usr/bin (Debian policy reserves /usr/local for the admin)
+mkdir -p "${STAGING}/usr/bin"
+ln -s "${INSTALL_DIR}/${APP_NAME}" "${STAGING}/usr/bin/lasercoder"
 
 # Desktop entry
 mkdir -p "${STAGING}/usr/share/applications"
@@ -106,8 +106,29 @@ elif [ -f "laser.png" ]; then
 fi
 
 # ==================================================================
+# Debian copyright file (required by Debian policy for /usr/share/doc)
+# ==================================================================
+mkdir -p "${STAGING}/usr/share/doc/lasercoder"
+cat > "${STAGING}/usr/share/doc/lasercoder/copyright" << EOF
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: LASERcoder
+Source: https://github.com/ehrenbentz/LASERcoder
+
+Files: *
+Copyright: 2026 Ehren Bentz
+License: GPL-3.0+
+ On Debian systems, the complete text of the GNU General Public
+ License version 3 can be found in "/usr/share/common-licenses/GPL-3".
+EOF
+
+# ==================================================================
 # DEBIAN control file
 # ==================================================================
+# NOTE (Linux alpha): the bundled libmpv.so.2 is a distro build that
+# dynamically links the full ffmpeg-6 stack, SDL2, libass, etc. Until
+# the dependency closure is bundled (or a static libmpv is used), the
+# mpv/libmpv dependency below pulls those libraries in via apt so the
+# app can at least start. See the tier-4 item in the build notes.
 mkdir -p "${STAGING}/DEBIAN"
 
 cat > "${STAGING}/DEBIAN/control" << EOF
@@ -116,7 +137,7 @@ Version: ${APP_VERSION}
 Section: science
 Priority: optional
 Architecture: ${DEB_ARCH}
-Depends: libgl1, libegl1
+Depends: libgl1, libegl1, mpv | libmpv2 | libmpv1
 Maintainer: Ehren Bentz <ehren.bentz@cornell.edu>
 Homepage: https://github.com/ehrenbentz/LASERcoder
 Description: Lightweight Annotation Software for Ethology Research
@@ -141,6 +162,8 @@ chmod 755 "${STAGING}/DEBIAN/postinst"
 # ==================================================================
 cat > "${STAGING}/DEBIAN/prerm" << 'EOF'
 #!/bin/bash
+rm -f /usr/bin/lasercoder
+# Clean up the legacy symlink installed by pre-1.7.4 packages
 rm -f /usr/local/bin/lasercoder
 exit 0
 EOF
@@ -160,7 +183,9 @@ chmod 755 "${STAGING}/DEBIAN/postrm"
 # ==================================================================
 # Build the .deb
 # ==================================================================
-dpkg-deb --build "$STAGING" "$OUTPUT_DIR/$DEB_NAME"
+# --root-owner-group: without it the installed files would be owned by
+# the build user's uid/gid instead of root.
+dpkg-deb --build --root-owner-group "$STAGING" "$OUTPUT_DIR/$DEB_NAME"
 
 echo ""
 echo "Created: $OUTPUT_DIR/$DEB_NAME"

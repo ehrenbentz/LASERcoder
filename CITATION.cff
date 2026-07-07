@@ -11,8 +11,8 @@ authors:
     given-names: "R. S."
   - family-names: "Ophir"
     given-names: "Alexander G."
-version: "1.2.0"
-date-released: "2026-01-01"
+version: "1.7.4"
+date-released: "2026-07-07"
 license: "GPL-3.0"
 repository-code: "https://github.com/ehrenbentz/LASERcoder"
 keywords:

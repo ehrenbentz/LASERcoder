@@ -32,6 +32,22 @@ class WaveformExtractor(QThread):
         self._video_duration = video_duration
 
         self._preloaded_pcm = None
+        self._cancelled = False
+        self._player = None    # headless mpv instance while extracting
+
+    def cancel(self):
+        """Request a cooperative stop of the extraction.
+
+        Sets the cancel flag and asks the in-flight mpv instance to
+        quit, which unblocks wait_for_playback() in the worker.
+        """
+        self._cancelled = True
+        player = self._player
+        if player is not None:
+            try:
+                player.quit()
+            except Exception:
+                pass
 
     def _cache_path(self):
         try:
@@ -64,6 +80,9 @@ class WaveformExtractor(QThread):
                 self._preloaded_pcm = None
             else:
                 raw = self._extract_pcm()
+
+            if self._cancelled:
+                return
 
             if not raw:
                 self.no_audio.emit()
@@ -120,18 +139,29 @@ class WaveformExtractor(QThread):
                 mpv_opts["start"] = "0"
                 mpv_opts["end"] = str(self._video_duration)
             player = mpv.MPV(**mpv_opts)
+            self._player = player
+            if self._cancelled:
+                player.terminate()
+                self._player = None
+                return b""
             player.play(self._video_path)
             logger.debug("mpv ao=%s, audio-codec=%s, path=%s",
                          player.audio_out_params, player.audio_codec, self._video_path)
             player.wait_for_playback()
             player.terminate()
+            self._player = None
+
+            if self._cancelled:
+                return b""
 
             with open(tmp_path, "rb") as f:
                 raw = f.read()
             logger.debug("PCM temp file size: %d bytes", len(raw) if raw else 0)
             return raw
         except Exception as exc:
-            logger.warning("MPV audio extraction failed: %s", exc)
+            self._player = None
+            if not self._cancelled:
+                logger.warning("MPV audio extraction failed: %s", exc)
             return b""
         finally:
             try:
@@ -313,8 +343,12 @@ class WaveformWidget(QWidget):
         if hasattr(self, '_extract_player') and self._extract_player is not None:
             self._cleanup_extract_player()
         if self._extractor is not None and self._extractor.isRunning():
-            self._extractor.terminate()
-            self._extractor.wait(2000)
+            # Cooperative stop: flag + mpv quit unblocks the worker.
+            # terminate() only as a last resort if it does not exit.
+            self._extractor.cancel()
+            if not self._extractor.wait(5000):
+                self._extractor.terminate()
+                self._extractor.wait(2000)
 
     def _on_extraction_done(self, data):
         self._extracted = True

@@ -79,13 +79,22 @@ class ConfigManager:
         }
 
     def save_config(self):
-        """Save configuration to file"""
+        """Save configuration to file (atomic temp + fsync + replace)"""
+        temp = self.config_file + '.tmp'
         try:
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
-            with open(self.config_file, 'w', encoding='utf-8') as f:
+            with open(temp, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp, self.config_file)
         except Exception as exc:
             logger.warning("Config save failed: %s", exc)
+            try:
+                if os.path.exists(temp):
+                    os.remove(temp)
+            except OSError:
+                pass
 
     def get_output_dir(self):
         """Get the current output directory"""

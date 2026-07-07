@@ -190,12 +190,14 @@ def _split_csv_to_chunks(csv_path, video_name, chunks_dir):
             chunk_name = f"{video_name}_chunk_{i // CHUNK_SIZE:03d}.csv"
             path = os.path.join(chunks_dir, chunk_name)
             temp = path + ".tmp"
-            with open(temp, "w", newline="") as f:
+            with open(temp, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.DictWriter(
                     f, fieldnames=AnnotationStore.CSV_HEADERS)
                 writer.writeheader()
                 for row in batch:
                     writer.writerow(row)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(temp, path)
         logger.info("Split %s into %d chunks for %s",
                      csv_path, (len(rows) - 1) // CHUNK_SIZE + 1,
@@ -251,16 +253,20 @@ def _prepend_header_if_missing(path, headers):
         logger.warning("Header migration: failed to read %s: %s", path, exc)
         return False
 
-    if rows and rows[0][:len(headers)] == headers:
+    # Tolerant comparison: whitespace variations in an existing header
+    # must not cause a second header row to be prepended.
+    if rows and [c.strip() for c in rows[0][:len(headers)]] == headers:
         return False
 
     temp = path + ".tmp"
     try:
-        with open(temp, "w", newline="") as fh:
+        with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
             writer = csv.writer(fh)
             writer.writerow(headers)
             for row in rows:
                 writer.writerow(row)
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(temp, path)
         logger.info("Header migration: prepended header to %s", path)
         return True

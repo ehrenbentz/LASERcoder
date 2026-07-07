@@ -2,10 +2,43 @@
 
 import os
 import sys
+import time
 import logging
 import shutil
 import tempfile
 from datetime import datetime
+
+# Log retention: keep at most this many logs per directory, and none
+# older than this many days. Applied at startup to both the temp log
+# directory and the per-project Debug/ directory.
+LOG_KEEP_COUNT = 10
+LOG_MAX_AGE_DAYS = 14
+
+
+def _cleanup_old_logs(directory, keep=LOG_KEEP_COUNT,
+                      max_age_days=LOG_MAX_AGE_DAYS):
+    """Delete old debug_*.log files, newest-first retention."""
+    try:
+        if not os.path.isdir(directory):
+            return
+        logs = []
+        for fname in os.listdir(directory):
+            if fname.startswith("debug_") and fname.endswith(".log"):
+                path = os.path.join(directory, fname)
+                try:
+                    logs.append((os.path.getmtime(path), path))
+                except OSError:
+                    continue
+        logs.sort(reverse=True)
+        cutoff = time.time() - max_age_days * 86400
+        for i, (mtime, path) in enumerate(logs):
+            if i >= keep or mtime < cutoff:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+    except OSError:
+        pass
 
 
 class FlushFileHandler(logging.FileHandler):
@@ -35,6 +68,20 @@ class TeeStream:
                 self._logger.log(self._level, text.rstrip())
             except Exception:
                 pass
+
+    def writelines(self, lines):
+        for line in lines:
+            self.write(line)
+
+    @property
+    def encoding(self):
+        # Some libraries inspect sys.stdout.encoding; report the
+        # original stream's encoding (or UTF-8 when detached).
+        return getattr(self._original, "encoding", None) or "utf-8"
+
+    @property
+    def errors(self):
+        return getattr(self._original, "errors", None) or "replace"
 
     def flush(self):
         if self._original:
@@ -74,6 +121,7 @@ class DebugLogger:
         self._log_filename = f"debug_{ts}.log"
         temp_dir = os.path.join(tempfile.gettempdir(), "LASERcoder_Debug")
         os.makedirs(temp_dir, exist_ok=True)
+        _cleanup_old_logs(temp_dir)
         self._temp_log_path = os.path.join(temp_dir, self._log_filename)
 
         fmt = logging.Formatter(
@@ -115,6 +163,7 @@ class DebugLogger:
         except OSError:
             return
 
+        _cleanup_old_logs(debug_dir)
         self._final_log_path = os.path.join(debug_dir, self._log_filename)
 
         # Flush and close temp handler, copy contents, open new handler
