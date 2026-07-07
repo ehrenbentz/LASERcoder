@@ -185,4 +185,7 @@ LASERcoder is licensed under the [GNU General Public License v3.0](LICENSE). You
 
 LASERcoder was developed in the [Ophir Lab of Integrative Neuroethology](https://www.ophirlab.com/), Department of Psychology, Cornell University.
 
-<!-- TODO: Add specific acknowledgments (funding, contributors) -->
+Coding assistants (Anthropic; Claude) were used during the creation of LASERcoder source code.
+
+I would like to thank the many researchers at Cornell and beyond who tested LASERcoder and provided feedback during several years of testing.
+This project would not have existed without all of you.
