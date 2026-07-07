@@ -2,7 +2,7 @@
 
 **Lightweight Annotation Software for Ethology Research**
 
-LASERcoder is an open-source desktop application for behavioral annotation of video recordings. Built for researchers and students in ethology, animal behavior, ecology, psychology, and related fields who need to score behaviors from video quickly and reliably.
+LASERcoder is an open-source desktop application for behavioral annotation of video recordings. Built for researchers and students in ethology, animal behavior, ecology, psychology, and related fields who need to manually score video data quickly and reliably.
 
 Runs natively on **Windows**, **macOS** (Apple Silicon and Intel), and **Linux**.
 
@@ -50,20 +50,20 @@ Download the installer for your platform from the [Releases](../../releases) pag
 | **Linux** | `LASERcoder_v*_linux_amd64.deb` | Debian/Ubuntu package (see [Linux note](#note-about-linux)) |
 | **Linux** | `LASERcoder_v*_linux_amd64_portable.tar.gz` | Portable tarball, extract and run |
 
-**System requirements:** Windows 10/11 (64-bit). Current macOS builds require **macOS 15 (Sequoia) or newer** — the exact minimum for each release is recorded in the app and shown by the installer.
+**System requirements:** Windows 10/11 (64-bit). Current macOS builds require **macOS 15 (Sequoia) or newer**
 
 ### Note about macOS Gatekeeper
 
 LASERcoder is not signed with an Apple Developer ID, so macOS will warn before the first launch:
 
-- **Using the `.pkg` installer (recommended):** if macOS blocks the installer, right-click the `.pkg`, choose **Open**, and confirm. The installed app then launches normally — the installer clears the quarantine flag for you.
-- **Using the `.dmg`:** after dragging to Applications, right-click `LASERcoder.app`, choose **Open**, and confirm — or run `sudo xattr -cr /Applications/LASERcoder.app` in Terminal, or use **System Settings → Privacy & Security → Open Anyway** after a blocked launch.
+- **Using the `.pkg` installer (recommended):** if macOS blocks the installer, right-click the `.pkg`, choose **Open**, and confirm. The installed app then launches normally. This installer clears the quarantine flag for you.
+- **Using the `.dmg`:** after dragging to Applications, right-click `LASERcoder.app`, choose **Open**, and confirm, or run `sudo xattr -cr /Applications/LASERcoder.app` in Terminal, or use **System Settings → Privacy & Security → Open Anyway** after a blocked launch.
 
-Either way, this is only required once.
+One of these methods should work. This will only be required once.
 
 ### Note about Linux
 
-The Linux build is currently **alpha**. Installing the `.deb` pulls in the required media libraries automatically (`sudo apt install ./LASERcoder_v*_linux_amd64.deb`); the portable tarball requires `mpv` to be installed via your package manager. Feedback from Linux users is very welcome — please [open an issue](../../issues) if something doesn't work.
+The Linux build is currently **alpha**. Installing the `.deb` pulls in the required media libraries automatically (`sudo apt install ./LASERcoder_v*_linux_amd64.deb`); the portable tarball requires `mpv` to be installed via your package manager. Feedback from Linux users is very welcome. Please [open an issue](../../issues) if something doesn't work.
 
 
 ## Quick Start
@@ -151,7 +151,7 @@ Contributions are welcome. Please open an [issue](../../issues) to report bugs o
 
 ## Running or building from source
 
-**Most users should use the pre-built installers above** — they are self-contained and tested on each platform. Building from source is only needed if you are developing LASERcoder or packaging it for an unsupported platform.
+**Most users should use the pre-built installers above**. They are self-contained and tested on each platform. Building from source is only needed if you are developing LASERcoder or packaging it for an unsupported platform.
 
 <details>
 <summary>Instructions for developers</summary>
