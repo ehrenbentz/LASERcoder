@@ -2,7 +2,7 @@
 
 **Lightweight Annotation Software for Ethology Research**
 
-LASERcoder is a free, open-source desktop application for behavioral annotation of video recordings. Built for researchers and students in ethology, animal behavior, ecology, psychology, and related fields who need to score behaviors from video quickly and reliably.
+LASERcoder is an open-source desktop application for behavioral annotation of video recordings. Built for researchers and students in ethology, animal behavior, ecology, psychology, and related fields who need to score behaviors from video quickly and reliably.
 
 Runs natively on **Windows**, **macOS** (Apple Silicon and Intel), and **Linux**.
 
@@ -18,7 +18,7 @@ Runs natively on **Windows**, **macOS** (Apple Silicon and Intel), and **Linux**
 - **Mutually exclusive groups.** Starting one state event automatically ends the others in its group, so your annotations stay logically consistent without extra effort.
 - **Subjects.** Score multiple individuals in the same video. Toggle active subjects with hotkeys or on-screen buttons; every annotation records which subject(s) it applies to.
 - **Keyboard shortcuts and on-screen buttons.** Use hotkeys for speed or movable floating buttons for mouse/touchscreen workflows.
-- **Notes and editing.** Attach notes to any annotation, edit timestamps, delete, and undo — all tracked in the output file.
+- **Notes and editing.** Attach notes to any annotation, edit timestamps, delete, and undo, all tracked in the output file.
 
 **Playback**
 - **Frame-accurate control.** Variable playback speed (0.5x–10x, up to 25x optional), frame stepping, configurable skip intervals, and click-to-zoom.
@@ -37,7 +37,7 @@ Runs natively on **Windows**, **macOS** (Apple Silicon and Intel), and **Linux**
 
 ## Installation
 
-Download the installer for your platform from the [Releases](../../releases) page and run it. That's it — the installers bundle everything LASERcoder needs, including its own media playback libraries. No Python, no dependencies, no setup.
+Download the installer for your platform from the [Releases](../../releases) page and run it. The installers bundle everything LASERcoder needs, including its own media playback libraries.
 
 | Platform | Download | Notes |
 |----------|----------|-------|
@@ -57,7 +57,7 @@ Download the installer for your platform from the [Releases](../../releases) pag
 LASERcoder is not signed with an Apple Developer ID, so macOS will warn before the first launch:
 
 - **Using the `.pkg` installer (recommended):** if macOS blocks the installer, right-click the `.pkg`, choose **Open**, and confirm. The installed app then launches normally — the installer clears the quarantine flag for you.
-- **Using the `.dmg`:** after dragging to Applications, right-click `LASERcoder.app`, choose **Open**, and confirm — or run `xattr -cr /Applications/LASERcoder.app` in Terminal, or use **System Settings → Privacy & Security → Open Anyway** after a blocked launch.
+- **Using the `.dmg`:** after dragging to Applications, right-click `LASERcoder.app`, choose **Open**, and confirm — or run `sudo xattr -cr /Applications/LASERcoder.app` in Terminal, or use **System Settings → Privacy & Security → Open Anyway** after a blocked launch.
 
 Either way, this is only required once.
 
@@ -68,7 +68,7 @@ The Linux build is currently **alpha**. Installing the `.deb` pulls in the requi
 
 ## Quick Start
 
-1. **Launch LASERcoder** and select an output directory — this is your project folder. All annotations, keys, session files, and summaries for a project live here (see [Where your data goes](#where-your-data-goes)).
+1. **Launch LASERcoder** and select an output directory: This is your project's working directory. All annotations, keys, session files, and summaries for a project live here (see [Where your data goes](#where-your-data-goes)).
 2. **Select a video directory** and choose the video to annotate. Colored dots show which videos are already in progress or complete.
 3. **Create or load an event key.** Define your behaviors with names, keyboard shortcuts, and types (Point or State), and assign mutually exclusive groups as needed. Optionally load a subject key to score multiple individuals.
 4. **Annotate.** Press a behavior's hotkey (or click its button) as the video plays. For state events, press once to start and again to end. Everything is saved as you go.
@@ -134,10 +134,11 @@ Annotation CSVs are UTF-8 encoded, open cleanly in Excel, and import directly in
 
 ## Citation
 
-If you use LASERcoder in published research, please cite:
+If you use LASERcoder in published research, please cite this repository: https://github.com/ehrenbentz/LASERcoder
 
 <!-- TODO: Update with DOI once published -->
 
+A Manuscript is in preparation to provide a stable citation:
 > Bentz, E.J., Laser, R.S., ...[Other Authors]... Ophir, A.G. (2026). LASERcoder: Lightweight Annotation Software for Ethology Research. (in preparation)
 
 See [CITATION.cff](CITATION.cff) for machine-readable citation information.
@@ -165,7 +166,7 @@ cd src
 python main.py
 ```
 
-Release binaries are compiled with [Nuitka](https://nuitka.net/) (`pip install nuitka`). Each platform directory — `build_Windows/`, `build_macOS/`, `build_Linux/` — contains a self-contained build script that compiles the application, creates installers, and packages portable archives. See the comments in each script for prerequisites and details.
+Release binaries are compiled with [Nuitka](https://nuitka.net/) (`pip install nuitka`). Each platform directory (`build_Windows/`, `build_macOS/`, `build_Linux/`) contains a self-contained build script that compiles the application, creates installers, and packages portable archives. See the comments in each script for prerequisites and details.
 
 Platform notes:
 - **Windows:** Nuitka currently compiles successfully on Python 3.12; builds may fail on 3.11 and 3.13+ depending on the Nuitka version.
@@ -177,7 +178,7 @@ Platform notes:
 
 ## License
 
-LASERcoder is licensed under the [GNU General Public License v3.0](LICENSE). You are free to use, study, modify, and share it. If you distribute LASERcoder or any software that incorporates its code, you must release that software under the GPL as well, with full source code — it can never be taken proprietary.
+LASERcoder is licensed under the [GNU General Public License v3.0](LICENSE). You are free to use, study, modify, and share it. If you distribute LASERcoder or any software that incorporates its code, you must release that software under the GPL as well, with full source code. No part of LASERcoder may be used in any part of proprietary, commercial, or closed-source software.
 
 
 ## Acknowledgments
