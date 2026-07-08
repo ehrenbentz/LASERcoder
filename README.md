@@ -116,7 +116,7 @@ While you annotate, data is journaled to small chunk files in `Session/` with at
 
 ## Output format
 
-Annotation CSVs are UTF-8 encoded, open cleanly in Excel, and import directly into R or Python — no reformatting or export step:
+Annotation CSVs are UTF-8 encoded, open cleanly in Excel, and import directly into statistical software (e.g. R) with no reformatting or export step:
 
 | Column | Description |
 |--------|-------------|
@@ -126,7 +126,7 @@ Annotation CSVs are UTF-8 encoded, open cleanly in Excel, and import directly in
 | `Type` | `Point` or `State` |
 | `Mutually_Exclusive` | Whether the event belongs to an ME group |
 | `H_Start`, `H_End` | Human-readable timestamps (e.g. `12m3.50s`) |
-| `Start`, `End` | Timestamps in seconds — **use these for analysis** |
+| `Start`, `End` | Timestamps in seconds — *use these for analysis* |
 | `Duration` | Duration in seconds (state events only) |
 | `Manual_Edit` | `True` if the timestamp was edited after scoring |
 | `Notes` | User-added notes |
