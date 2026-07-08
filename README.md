@@ -68,12 +68,12 @@ The Linux build is currently **alpha**. Installing the `.deb` pulls in the requi
 
 ## Quick Start
 
-1. **Launch LASERcoder** you will see the main directory and file selection menu. 
-2. **Select an Output Directory:**. This is your project's working directory. All annotations, keys, session files, and summaries for a project live here (see [Where your data goes](#where-your-data-goes)).
+1. **Launch LASERcoder:** you will see the main directory and file selection menu. 
+2. **Select an Output Directory:** This is your project's working directory. All annotations, keys, session files, and summaries for a project live here (see [Where your data goes](#where-your-data-goes)).
 3. **Select a Video Directory:** and choose the video to annotate. Colored dots show which videos are already in progress or complete.
 4. **Create or load an Event Key:** Define your events with names, keyboard shortcuts, and types (Point or State), and assign mutually exclusive groups as needed. Optionally load a subject key to score multiple individuals.
 5. **Annotate:** Start the video. Press an event's shortcut key or click its button as the video plays. For state events, press once to start and again to end. Everything is saved in real time.
-6. **Press `Escape`** to return to the file selection screen. Your coding progress is remembered for each video, so next time the video is opened, you will resume coding right where you left off.
+6. **Press `Escape`** at any time to return to the file selection screen. Your progress is remembered for each video. Next time the video is opened, you will resume coding where you left off.
 7. **Summary statistics and Combined Annotations:** Generate a Combined Annotation file for a whole experiment. This file is pre-formatted for input in downstream statistical analyses.
 
 
