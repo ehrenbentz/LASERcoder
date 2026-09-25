@@ -763,7 +763,7 @@ def show_av_settings_dialog(annotator):
         "QSlider::sub-page:horizontal { background: #888; border-radius: 3px; }"
     )
 
-    # --- Video sliders ---
+    # Video sliders
     vid_sliders = {}
     vid_labels = {}
 
@@ -821,7 +821,7 @@ def show_av_settings_dialog(annotator):
 
     layout.addWidget(vid_group)
 
-    # --- Audio controls ---
+    # Audio controls
     aud_group = QGroupBox("Audio")
     aud_layout = QGridLayout(aud_group)
     aud_layout.setColumnStretch(1, 1)
@@ -892,7 +892,7 @@ def show_av_settings_dialog(annotator):
 
     layout.addWidget(aud_group)
 
-    # --- Navigation group ---
+    # Navigation group
     nav_group = QGroupBox("Navigation")
     nav_layout = QGridLayout(nav_group)
     nav_layout.setColumnStretch(1, 1)
@@ -929,7 +929,7 @@ def show_av_settings_dialog(annotator):
 
     layout.addWidget(nav_group)
 
-    # --- Audio Track group ---
+    # Audio Track group
     _DR_STEPS = [
         ("Linear", 1.0),
         ("", 0.75),
@@ -1001,7 +1001,7 @@ def show_av_settings_dialog(annotator):
 
     layout.addWidget(track_group)
 
-    # --- Spectrogram group ---
+    # Spectrogram group
     from spectrogram_widget import COLORMAPS
 
     spec_group = QGroupBox("Spectrogram")
@@ -1109,7 +1109,7 @@ def show_av_settings_dialog(annotator):
 
     layout.addWidget(spec_group)
 
-    # --- Buttons ---
+    # Buttons
     btn_frame = QWidget()
     btn_lay = QHBoxLayout(btn_frame)
     reset_all_btn = QPushButton("Reset All")
@@ -1143,7 +1143,7 @@ def show_av_settings_dialog(annotator):
     btn_lay.setContentsMargins(15, 0, 15, 0)
     outer_lay.addWidget(btn_frame)
 
-    # --- Wiring ---
+    # Wiring
     def _load_scope_values(settings):
         for prop in VIDEO_PROPS:
             val = int(settings.get(prop, 0)) if settings else 0
@@ -1657,7 +1657,7 @@ def show_colors_theme_dialog(parent, on_accept=None):
         lbl.setStyleSheet("font-weight: bold; padding-top: 4px;")
         return lbl
 
-    # --- Theme section ---
+    # Theme section
     main_lay.addWidget(_section("Theme"))
     theme_row = QHBoxLayout()
     theme_row.setSpacing(12)
@@ -1692,7 +1692,7 @@ def show_colors_theme_dialog(parent, on_accept=None):
     main_lay.addLayout(theme_row)
     _update_theme_btns()
 
-    # --- Colors section ---
+    # Colors section
     main_lay.addWidget(_section("Colors"))
     color_grid = QGridLayout()
     color_grid.setSpacing(8)
@@ -1747,7 +1747,7 @@ def show_colors_theme_dialog(parent, on_accept=None):
 
     main_lay.addLayout(color_grid)
 
-    # --- Transparency section ---
+    # Transparency section
     main_lay.addWidget(_section("Transparency"))
     trans_grid = QGridLayout()
     trans_grid.setSpacing(8)
@@ -1797,7 +1797,7 @@ def show_colors_theme_dialog(parent, on_accept=None):
 
     main_lay.addLayout(trans_grid)
 
-    # --- Size section ---
+    # Size section
     main_lay.addWidget(_section("Size"))
     size_grid = QGridLayout()
     size_grid.setSpacing(8)
@@ -1837,7 +1837,7 @@ def show_colors_theme_dialog(parent, on_accept=None):
 
     main_lay.addStretch()
 
-    # --- Reset + OK/Cancel ---
+    # Reset + OK/Cancel
     def _reset():
         for key in color_defaults:
             _reset_color(key)

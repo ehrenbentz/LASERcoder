@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen, QBrush
 
-
+# Define junk files to prevent them from being displayed
 _OS_JUNK_FILES = frozenset({
     ".DS_Store",            # macOS Finder metadata
     ".Spotlight-V100",      # macOS Spotlight index
@@ -83,7 +83,7 @@ def center_window(window, width, height, screen_info=None):
     window.resize(width, height)
     window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMaximized)
 
-
+# Define angle and offset for default pallete color wheel
 _HUE_ANGLE = 30
 _HUE_OFFSET = 30.0
 
