@@ -2,7 +2,7 @@
 
 **Lightweight Annotation Software for Ethology Research**
 
-LASERcoder is an open-source desktop application for behavioral annotation of video recordings. Built for researchers and students in ethology, animal behavior, ecology, psychology, and related fields who need to manually score video data quickly and reliably.
+LASERcoder is an open-source desktop application for annotation of video recordings. Built for researchers and students in ethology, animal behavior, ecology, psychology, and related fields who need to manually score video data quickly and reliably.
 
 Runs natively on **Windows**, **macOS** (Apple Silicon and Intel), and **Linux**.
 
@@ -29,7 +29,7 @@ Runs natively on **Windows**, **macOS** (Apple Silicon and Intel), and **Linux**
 **Workflow**
 - **Resume anywhere.** Stop and restart coding sessions without losing your place. Videos are flagged as in-progress or complete in the file browser.
 - **Coding windows.** Define per-video observation windows to standardize scoring periods across videos without editing video files. Statistics are computed within the window.
-- **Annotation timelines.** Visualize all annotated behaviors on a timeline and export as high-resolution images (JPG/PNG, 100–900 DPI).
+- **Annotation timelines.** Visualize all annotated events on a timeline and export as high-resolution images (JPG/PNG, 100–900 DPI).
 - **Summary statistics.** Generate per-video and per-experiment summaries and box plots, plus combined annotation files formatted for downstream statistical analysis.
 - **Project backup.** Back up an entire project directory from within the app.
 - **Light and dark themes** with customizable interface colors.
@@ -41,11 +41,11 @@ Download the installer for your platform from the [Releases](../../releases) pag
 
 | Platform | Download | Notes |
 |----------|----------|-------|
-| **Windows (64-bit)** | `LASERcoder_v*_windows_x64_setup.exe` | Installer with Start Menu shortcuts |
-| **Windows (64-bit)** | `LASERcoder_v*_windows_x64_portable.zip` | Portable; extracts to a `LASERcoder` folder, no installation |
-| **macOS (Apple Silicon)** | `LASERcoder_v*_macOS_arm64.pkg` | Installer; clears the quarantine flag for you |
+| **Windows (64-bit)** | `LASERcoder_v*_windows_x64_setup.exe` | Install on your system |
+| **Windows (64-bit)** | `LASERcoder_v*_windows_x64_portable.zip` | Portable; Extract and run without installation |
+| **macOS (Apple Silicon)** | `LASERcoder_v*_macOS_arm64.pkg` | Installer; Automatically clears the quarantine flag |
 | **macOS (Apple Silicon)** | `LASERcoder_v*_macOS_arm64.dmg` | Drag to Applications (see [Gatekeeper note](#note-about-macos-gatekeeper)) |
-| **macOS (Intel)** | `LASERcoder_v*_macOS_x86_64.pkg` | Installer; clears the quarantine flag for you |
+| **macOS (Intel)** | `LASERcoder_v*_macOS_x86_64.pkg` | Installer; Automatically clears the quarantine flag |
 | **macOS (Intel)** | `LASERcoder_v*_macOS_x86_64.dmg` | Drag to Applications (see [Gatekeeper note](#note-about-macos-gatekeeper)) |
 | **Linux** | `LASERcoder_v*_linux_amd64.deb` | Debian/Ubuntu package (see [Linux note](#note-about-linux)) |
 | **Linux** | `LASERcoder_v*_linux_amd64_portable.tar.gz` | Portable tarball, extract and run |
@@ -68,11 +68,13 @@ The Linux build is currently **alpha**. Installing the `.deb` pulls in the requi
 
 ## Quick Start
 
-1. **Launch LASERcoder** and select an output directory: This is your project's working directory. All annotations, keys, session files, and summaries for a project live here (see [Where your data goes](#where-your-data-goes)).
-2. **Select a video directory** and choose the video to annotate. Colored dots show which videos are already in progress or complete.
-3. **Create or load an event key.** Define your behaviors with names, keyboard shortcuts, and types (Point or State), and assign mutually exclusive groups as needed. Optionally load a subject key to score multiple individuals.
-4. **Annotate.** Press a behavior's hotkey (or click its button) as the video plays. For state events, press once to start and again to end. Everything is saved as you go.
-5. **Press `Escape`** to return to the file selection screen — your position is remembered. From there, mark videos complete, visualize timelines, and **generate summary statistics** for one video or the whole experiment.
+1. **Launch LASERcoder:** you will see the main directory and file selection menu. 
+2. **Select an Output Directory:** This is your project's working directory. All annotations, keys, session files, and summaries for a project live here (see [Where your data goes](#where-your-data-goes)).
+3. **Select a Video Directory:** and choose the video to annotate. Colored dots show which videos are already in progress or complete.
+4. **Create or load an Event Key:** Define your events with names, keyboard shortcuts, and types (Point or State), and assign mutually exclusive groups as needed. Optionally load a subject key to score multiple individuals.
+5. **Annotate:** Start the video. Press an event's shortcut key or click its button as the video plays. For state events, press once to start and again to end. Everything is saved in real time.
+6. **Press `Escape`** at any time to return to the file selection screen. Your progress is remembered for each video. Next time the video is opened, you will resume coding where you left off.
+7. **Summary statistics and Combined Annotations:** Generate a Combined Annotation file for a whole experiment. This file is pre-formatted for input in downstream statistical analyses.
 
 
 ## Keyboard Controls
@@ -92,12 +94,12 @@ The Linux build is currently **alpha**. Installing the `.deb` pulls in the requi
 | Toggle fullscreen / windowed mode | `F11` or `Ctrl+Shift+W` |
 | Close video and return to file selection | `Escape` |
 
-Skip intervals are configurable in the settings menu, and the `W`/`A`/`S`/`D` navigation keys can be disabled if you want to use those letters as behavior hotkeys.
+Skip intervals are configurable in the settings menu, and the `W`/`A`/`S`/`D` navigation keys can be disabled if you want to use those letters for event shortut keys.
 
 
 ## Where your data goes
 
-Everything lives in your chosen output directory, in plain files you can inspect, copy, and version:
+Everything lives in your chosen output directory, in plain files you can inspect, copy, and edit:
 
 ```
 YourProject/
@@ -106,27 +108,27 @@ YourProject/
 │   ├── Summaries/                      Per-video summary statistics
 │   └── Combined_Annotations/           Merged multi-video annotation files
 ├── Keys/
-│   ├── Event_Keys/                     Behavior definitions (reusable across projects)
+│   ├── Event_Keys/                     List and define events to annotate (reusable across projects)
 │   └── Subject_Keys/                   Subject definitions
-├── Session/                            Per-video session state and resume data
-└── Debug/                              Diagnostic logs (auto-pruned)
+├── Session/                            Per-video session data
+└── Debug/                              Diagnostic logs (for developers)
 ```
 
 While you annotate, data is journaled to small chunk files in `Session/` with atomic writes; the consolidated `VideoName_Annotations.csv` is the file you take to analysis.
 
 ## Output format
 
-Annotation CSVs are UTF-8 encoded, open cleanly in Excel, and import directly into R or Python — no reformatting or export step:
+Annotation CSVs are UTF-8 encoded, open cleanly in Excel, and import directly into statistical software (e.g. R) with no reformatting or export step:
 
 | Column | Description |
 |--------|-------------|
 | `Video` | Video filename |
-| `Event` | Behavior name |
+| `Event` | Event name |
 | `Subject` | Subject ID the annotation applies to (`NA` if unused). When several subjects are active, one row is written per subject |
 | `Type` | `Point` or `State` |
 | `Mutually_Exclusive` | Whether the event belongs to an ME group |
 | `H_Start`, `H_End` | Human-readable timestamps (e.g. `12m3.50s`) |
-| `Start`, `End` | Timestamps in seconds — **use these for analysis** |
+| `Start`, `End` | Timestamps in seconds — *use these for analysis* |
 | `Duration` | Duration in seconds (state events only) |
 | `Manual_Edit` | `True` if the timestamp was edited after scoring |
 | `Notes` | User-added notes |
