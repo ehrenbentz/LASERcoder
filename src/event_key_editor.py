@@ -529,13 +529,27 @@ class EventKeyEditor(QDialog):
                 self._new_dialog_open = False
                 return
 
+            # Entries typed before clicking New are usually meant for
+            # the new file; offer to carry them over instead of
+            # silently replacing the grid with a blank one.
+            rows = [["", "", "point", ""] for _ in range(30)]
+            if self._has_entered_data():
+                reply = show_message(
+                    self, "Keep Current Entries",
+                    f"Copy the events currently in the editor into "
+                    f"'{name}'?\n\nChoose No to start '{name}' as a "
+                    "blank event key.",
+                    icon="question")
+                if reply == QMessageBox.StandardButton.Yes:
+                    rows = self._current_events()
+
             temp = path + ".tmp"
             try:
                 with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
                     writer = csv.writer(fh)
                     writer.writerow(EVENT_KEY_HEADERS)
-                    for _ in range(30):
-                        writer.writerow(["", "", "point", ""])
+                    for row in rows:
+                        writer.writerow(row)
                     fh.flush()
                     os.fsync(fh.fileno())
                 os.replace(temp, path)
@@ -609,25 +623,25 @@ class EventKeyEditor(QDialog):
                 "Check folder permissions.")
             return
 
-        temp = new_path + ".tmp"
+        # Write the editor's *current* entries under the new name (not a
+        # copy of the old file) so nothing typed since the last save is
+        # lost, then retire the old file.  The grid and undo history are
+        # left untouched: no reload from disk.
+        self.event_key_file = new_path
+        if not self._save_events():
+            self.event_key_file = old_path
+            return
         try:
-            with open(old_path, "rb") as src:
-                with open(temp, "wb") as dst:
-                    dst.write(src.read())
-            os.replace(temp, new_path)
-
-            try:
-                os.remove(old_path)
-            except OSError:
-                pass
-
-            self.event_key_file = new_path
-            self._refresh_combo()
-            self._combo.setCurrentText(new_name)
-        except OSError as exc:
-            _remove_temp(temp)
-            show_message(
-                self, "Error", f"Failed to rename the file: {exc}")
+            os.remove(old_path)
+        except OSError:
+            pass
+        self._event_key_files.pop(os.path.basename(old_path), None)
+        self._event_key_files[new_filename] = new_path
+        self._combo.blockSignals(True)
+        self._refresh_combo()
+        self._combo.setCurrentText(new_name)
+        self._combo.blockSignals(False)
+        self.config_manager.update_last_event_key(new_filename)
 
     def _delete_event_key(self):
         current = self._combo.currentText()
@@ -671,11 +685,65 @@ class EventKeyEditor(QDialog):
             show_message(
                 self, "Error", f"Failed to delete the file: {exc}")
 
+    def _has_entered_data(self):
+        """Return True if the user has entered any event data."""
+        return any(e.text().strip() for e in self._name_entries)
+
+    def _create_file_for_save(self):
+        """Prompt for a file name and point self.event_key_file at it
+        without clearing the entry fields, so Save/Start on an unsaved
+        grid keeps what the user typed.  Returns True on success."""
+        name, ok = get_text(
+            self, "Save Event Key File",
+            "Enter a name for the new Event Key file:\n"
+            "(Use only letters, numbers, and underscores)")
+        if not ok or not name:
+            return False
+
+        name = name.strip()
+        if not name:
+            show_message(
+                self, "No Name Entered",
+                "You must enter a name for the Event Key file.")
+            return False
+
+        if not name.replace("_", "").isalnum():
+            show_message(
+                self, "Invalid Characters",
+                "File name can only contain letters, numbers, "
+                "and underscores.")
+            return False
+
+        filename = (f"{name}_events.csv"
+                    if not name.endswith("_events.csv") else name)
+        path = os.path.join(self.event_key_dir, filename)
+
+        if os.path.exists(path):
+            reply = show_message(
+                self, "File Exists",
+                f"'{name}' already exists.\nOverwrite it?",
+                icon="question")
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
+
+        if not self._check_file_access(path, for_writing=True):
+            show_message(
+                self, "Error",
+                "Cannot create event key file.\n"
+                "Check folder permissions.")
+            return False
+
+        self.event_key_file = path
+        self._event_key_files[filename] = path
+        return True
+
     def _save_events(self):
         if (not self.event_key_file
                 or self._combo.currentText() == "No file found"):
-            self._new_event_key_file()
-            return False
+            # Previously this created a *blank* file and reloaded it,
+            # discarding everything in the grid.
+            if not self._create_file_for_save():
+                return False
 
         if not self._check_file_access(
                 self.event_key_file, for_writing=True):
@@ -704,6 +772,15 @@ class EventKeyEditor(QDialog):
             os.replace(temp, self.event_key_file)
             self.config_manager.update_last_event_key(
                 os.path.basename(self.event_key_file))
+            # A file created on this save is not yet in the combo; show
+            # it without reloading (which would wipe the undo history).
+            name = os.path.basename(self.event_key_file).removesuffix(
+                "_events.csv")
+            if self._combo.currentText() != name:
+                self._combo.blockSignals(True)
+                self._refresh_combo()
+                self._combo.setCurrentText(name)
+                self._combo.blockSignals(False)
             return True
         except OSError as exc:
             _remove_temp(temp)
@@ -753,7 +830,10 @@ class EventKeyEditor(QDialog):
         self.done(QDialog.DialogCode.Accepted)
 
     def _on_cancel(self):
-        self._save_events()
+        has_file = (self.event_key_file
+                    and self._combo.currentText() != "No file found")
+        if has_file or self._has_entered_data():
+            self._save_events()
         self._do_cancel()
 
     def _do_cancel(self):

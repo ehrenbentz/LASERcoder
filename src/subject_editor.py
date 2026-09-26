@@ -384,13 +384,32 @@ class SubjectEditor(QDialog):
                 self._new_dialog_open = False
                 return
 
+            # Entries typed before clicking New are usually meant for
+            # the new file; offer to carry them over instead of
+            # silently replacing the grid with a blank one.
+            rows = [["", "", "", ""] for _ in range(30)]
+            if self._has_entered_data():
+                reply = show_message(
+                    self, "Keep Current Entries",
+                    f"Copy the subjects currently in the editor into "
+                    f"'{name}'?\n\nChoose No to start '{name}' as a "
+                    "blank subject file.",
+                    icon="question")
+                if reply == QMessageBox.StandardButton.Yes:
+                    rows = [[
+                        self._name_entries[i].text(),
+                        self._key_entries[i].text(),
+                        self._me_group_entries[i].text(),
+                        self._subject_colors[i],
+                    ] for i in range(30)]
+
             temp = path + ".tmp"
             try:
                 with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
                     writer = csv.writer(fh)
                     writer.writerow(SUBJECT_KEY_HEADERS)
-                    for _ in range(30):
-                        writer.writerow(["", "", "", ""])
+                    for row in rows:
+                        writer.writerow(row)
                     fh.flush()
                     os.fsync(fh.fileno())
                 os.replace(temp, path)
@@ -549,25 +568,25 @@ class SubjectEditor(QDialog):
                 "Check folder permissions.")
             return
 
-        temp = new_path + ".tmp"
+        # Write the editor's *current* entries under the new name (not a
+        # copy of the old file) so nothing typed since the last save is
+        # lost, then retire the old file.  The grid and undo history are
+        # left untouched: no reload from disk.  _save_subjects also
+        # switches the combo to the new name.
+        self.subject_file = new_path
+        if not self._save_subjects():
+            self.subject_file = old_path
+            return
         try:
-            with open(old_path, "rb") as src:
-                with open(temp, "wb") as dst:
-                    dst.write(src.read())
-            os.replace(temp, new_path)
-
-            try:
-                os.remove(old_path)
-            except OSError:
-                pass
-
-            self.subject_file = new_path
-            self._refresh_combo()
-            self._combo.setCurrentText(new_name)
-        except OSError as exc:
-            _remove_temp(temp)
-            show_message(
-                self, "Error", f"Failed to rename the file: {exc}")
+            os.remove(old_path)
+        except OSError:
+            pass
+        self._subject_files.pop(os.path.basename(old_path), None)
+        self._subject_files[new_filename] = new_path
+        self._combo.blockSignals(True)
+        self._refresh_combo()
+        self._combo.setCurrentText(new_name)
+        self._combo.blockSignals(False)
 
     def _delete_subject_file(self):
         current = self._combo.currentText()

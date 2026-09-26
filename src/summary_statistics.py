@@ -261,7 +261,65 @@ def combine_summaries(summary_files, output_file):
         writer.writeheader()
         writer.writerows(summary_rows)
 
+    # Record which videos went into this experiment so the box-plot
+    # viewer can show just those, not every summary in the folder.
+    # Kept out of the CSV (which is analysis-ready) in a sidecar.
+    videos = []
+    for row in all_rows:
+        v = row.get("Video", "").strip()
+        if v and v not in videos:
+            videos.append(v)
+    try:
+        with open(combined_summary_sidecar(output_file), "w",
+                  encoding="utf-8") as fh:
+            json.dump({
+                "videos": videos,
+                "individual_summaries": [
+                    os.path.basename(p) for p in summary_files],
+            }, fh, indent=2)
+    except OSError:
+        pass
+
     return output_file
+
+
+def combined_summary_sidecar(combined_csv_path):
+    """Path of the JSON listing the videos behind a combined summary."""
+    return combined_csv_path.removesuffix(".csv") + ".json"
+
+
+def combined_summary_videos(combined_csv_path):
+    """Return the set of video names a combined summary was built from,
+    or None when unknown (summaries written before the sidecar existed;
+    falls back to the experiment's Combined_Annotations file if any)."""
+    try:
+        with open(combined_summary_sidecar(combined_csv_path), "r",
+                  encoding="utf-8") as fh:
+            data = json.load(fh)
+        videos = data.get("videos")
+        if isinstance(videos, list):
+            return {str(v) for v in videos}
+    except (OSError, ValueError):
+        pass
+
+    # Legacy fallback: Annotations/Combined_Annotations/{exp}_Annotations_Combined.csv
+    experiment = os.path.basename(combined_csv_path).removesuffix(
+        "_Combined_Summary.csv")
+    combined_ann = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(combined_csv_path))),
+        "Combined_Annotations", f"{experiment}_Annotations_Combined.csv")
+    if os.path.isfile(combined_ann):
+        try:
+            with open(combined_ann, "r", newline="",
+                      encoding="utf-8-sig") as fh:
+                videos = {row.get("Video", "").strip()
+                          for row in csv.DictReader(fh)}
+            videos.discard("")
+            if videos:
+                return videos
+        except (OSError, csv.Error):
+            pass
+    return None
 
 
 # Internal helpers

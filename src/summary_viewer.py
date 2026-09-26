@@ -339,13 +339,23 @@ class _BoxplotViewer(QDialog):
         # Load combined summary to get the list of events
         comb_rows = _load_csv(comb_path)
 
-        # Load all individual summary files for per-video distributions
+        # Only the videos this experiment was built from (None = unknown,
+        # legacy summary: fall back to every individual summary).
+        from summary_statistics import combined_summary_videos
+        self._selected_videos = combined_summary_videos(comb_path)
+
+        # Load the individual summary files for per-video distributions
         self._ind_rows = []
         if self._ind_dir and os.path.isdir(self._ind_dir):
             for fname in sorted(os.listdir(self._ind_dir)):
-                if fname.endswith("_Summary.csv") and not is_os_junk(fname):
-                    self._ind_rows.extend(
-                        _load_csv(os.path.join(self._ind_dir, fname)))
+                if not fname.endswith("_Summary.csv") or is_os_junk(fname):
+                    continue
+                video = fname.removesuffix("_Summary.csv")
+                if (self._selected_videos is not None
+                        and video not in self._selected_videos):
+                    continue
+                self._ind_rows.extend(
+                    _load_csv(os.path.join(self._ind_dir, fname)))
 
         # Reset whole-video cache (recomputed lazily on demand)
         self._whole_rows = []
@@ -383,11 +393,14 @@ class _BoxplotViewer(QDialog):
         from summary_statistics import compute_summary_rows
 
         seen_names = set()
+        selected = getattr(self, "_selected_videos", None)
 
         # Chunked annotations under Session/*/Chunks/
         if self._session_dir and os.path.isdir(self._session_dir):
             for name in sorted(os.listdir(self._session_dir)):
                 if is_os_junk(name):
+                    continue
+                if selected is not None and name not in selected:
                     continue
                 chunks_dir = os.path.join(self._session_dir, name, "Chunks")
                 if is_chunked_annotations_dir(chunks_dir):
@@ -403,6 +416,8 @@ class _BoxplotViewer(QDialog):
                 if (fname.endswith("_Annotations.csv")
                         and not is_os_junk(fname)):
                     video_name = fname.removesuffix("_Annotations.csv")
+                    if selected is not None and video_name not in selected:
+                        continue
                     if video_name not in seen_names:
                         full = os.path.join(self._ann_dir, fname)
                         rows = compute_summary_rows(
