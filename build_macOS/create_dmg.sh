@@ -102,6 +102,13 @@ echo "Creating DMG installer (${ARCH_LABEL})..."
 retry_busy cp -R "$APP_PATH" "$STAGING_DIR/"
 ln -s /Applications "$STAGING_DIR/Applications"
 
+# mktemp -d creates the staging folder with mode 0700.  hdiutil copies
+# that mode onto the image's root folder, so on another account the
+# mounted DMG can show as empty or refuse to open.  Make the volume
+# root and the bundle world-readable before imaging.
+chmod 755 "$STAGING_DIR"
+chmod -R u+rwX,go+rX,go-w "$STAGING_DIR/$(basename "$APP_PATH")"
+
 retry_busy hdiutil create \
     -volname "$DMG_VOLUME_NAME" \
     -srcfolder "$STAGING_DIR" \

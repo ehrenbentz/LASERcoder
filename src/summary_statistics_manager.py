@@ -18,6 +18,26 @@ from dialogs import show_message, get_text
 import theme
 
 
+def _video_name_for(path):
+    """Video name for an annotation source: legacy CSV, a chunk folder,
+    or a Session/{video}/Chunks folder (whose own basename is 'Chunks')."""
+    if os.path.isdir(path):
+        base = os.path.basename(path)
+        if base == "Chunks":
+            return os.path.basename(os.path.dirname(path))
+        return base
+    return os.path.basename(path).removesuffix("_Annotations.csv")
+
+
+def _project_root_for(path):
+    """Output directory that owns *path* (where Annotations/Summaries
+    lives): two levels up from Annotations/{file}, three from
+    Session/{video}/Chunks."""
+    if os.path.isdir(path) and os.path.basename(path) == "Chunks":
+        return os.path.dirname(os.path.dirname(os.path.dirname(path)))
+    return os.path.dirname(os.path.dirname(path))
+
+
 class SummaryStatisticsManager(QDialog):
     """Dialog for generating and combining summary statistics"""
 
@@ -230,7 +250,7 @@ class SummaryStatisticsManager(QDialog):
                 "Please select at least one annotation file.")
             return
 
-        base_dir = os.path.dirname(os.path.dirname(selected[0]))
+        base_dir = _project_root_for(selected[0])
         summary_dir = self._ensure_summary_dir(base_dir)
         if not summary_dir:
             return
@@ -249,11 +269,7 @@ class SummaryStatisticsManager(QDialog):
 
         for path in selected:
             try:
-                if os.path.isdir(path):
-                    video_name = os.path.basename(path)
-                else:
-                    video_name = os.path.basename(path).removesuffix(
-                        "_Annotations.csv")
+                video_name = _video_name_for(path)
                 out = os.path.join(individual_dir, f"{video_name}_Summary.csv")
                 if generate_summary_statistics(path, out):
                     success_count += 1
@@ -286,7 +302,7 @@ class SummaryStatisticsManager(QDialog):
                 "Please select at least one annotation file.")
             return
 
-        base_dir = os.path.dirname(os.path.dirname(selected[0]))
+        base_dir = _project_root_for(selected[0])
         summary_dir = self._ensure_summary_dir(base_dir)
         if not summary_dir:
             return
@@ -329,11 +345,7 @@ class SummaryStatisticsManager(QDialog):
         # Locate existing individual summaries
         missing, existing = [], []
         for path in selected:
-            if os.path.isdir(path):
-                video_name = os.path.basename(path)
-            else:
-                video_name = os.path.basename(path).removesuffix(
-                    "_Annotations.csv")
+            video_name = _video_name_for(path)
             individual_path = os.path.join(
                 individual_dir, f"{video_name}_Summary.csv")
             old_path = os.path.join(summary_dir, f"{video_name}_Summary.csv")
@@ -438,11 +450,7 @@ class SummaryStatisticsManager(QDialog):
                             fieldnames.append(f)
 
                 # Derive video name for entries missing it
-                if os.path.isdir(path):
-                    default_video = os.path.basename(path)
-                else:
-                    default_video = os.path.basename(path).removesuffix(
-                        "_Annotations.csv")
+                default_video = _video_name_for(path)
                 for row in rows:
                     if not row.get("Video"):
                         row["Video"] = default_video

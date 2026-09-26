@@ -205,15 +205,25 @@ class AnnotationStore:
             })
 
     def append_annotation(self, record):
-        """Append a single annotation to the current chunk (atomic).
+        """Append a single annotation to the current chunk (atomic)."""
+        return self.append_annotations([record])
 
-        Reads the last chunk (~100 rows max), appends the new row, and
-        writes back atomically via temp+replace.  Only the last chunk is
-        touched — never the full annotation set.
+    def append_annotations(self, records):
+        """Append one or more annotations to the current chunk (atomic).
+
+        Reads the last chunk (~100 rows max), appends the new rows, and
+        writes back atomically via temp+replace.  Only the last chunk
+        (plus any new chunks the rows spill into) is touched — never the
+        full annotation set.  All rows are written in one pass so a
+        multi-subject annotation lands on disk together.
         """
         try:
-            record.setdefault("Subject", "NA")
-            record.setdefault("Notes", "")
+            records = list(records)
+            if not records:
+                return True
+            for record in records:
+                record.setdefault("Subject", "NA")
+                record.setdefault("Notes", "")
 
             os.makedirs(self.annotations_dir, exist_ok=True)
 
@@ -221,23 +231,32 @@ class AnnotationStore:
 
             # Read existing rows from the last chunk
             existing = []
+            chunk_name = None
             if chunks:
-                last_path = self._chunk_path(chunks[-1])
+                chunk_name = chunks[-1]
+                last_path = self._chunk_path(chunk_name)
                 if os.path.exists(last_path):
                     with open(last_path, "r", newline="",
                               encoding="utf-8-sig") as f:
                         existing = list(csv.DictReader(f))
 
-            if not chunks or len(existing) >= CHUNK_SIZE:
-                # Start a new chunk (max existing index + 1, robust
-                # against gaps left by deleted chunks)
-                next_idx = (_chunk_index(chunks[-1]) + 1) if chunks else 0
-                chunk_name = f"{self.video_name}_chunk_{next_idx:03d}.csv"
-                self._write_chunk_atomic(chunk_name, [record])
-            else:
-                # Append to existing chunk — atomic rewrite of ~100 rows
-                existing.append(record)
-                self._write_chunk_atomic(chunks[-1], existing)
+            # Next index for any new chunk (max existing index + 1,
+            # robust against gaps left by deleted chunks)
+            next_idx = (_chunk_index(chunks[-1]) + 1) if chunks else 0
+
+            pending = list(records)
+            if chunk_name is not None and len(existing) < CHUNK_SIZE:
+                # Fill the current chunk first — atomic rewrite of ~100 rows
+                room = CHUNK_SIZE - len(existing)
+                existing.extend(pending[:room])
+                pending = pending[room:]
+                self._write_chunk_atomic(chunk_name, existing)
+
+            while pending:
+                batch, pending = pending[:CHUNK_SIZE], pending[CHUNK_SIZE:]
+                new_name = f"{self.video_name}_chunk_{next_idx:03d}.csv"
+                self._write_chunk_atomic(new_name, batch)
+                next_idx += 1
 
             return True
         except (PermissionError, OSError, ValueError):
@@ -246,31 +265,51 @@ class AnnotationStore:
             return False
 
     def update_state_event_end(self, event_name, end_time, subject=None):
-        """Update a single started state event's end time in its chunk.
+        """Close a single started state event row (see
+        :meth:`update_state_event_ends`)."""
+        return self.update_state_event_ends(
+            event_name, end_time, [subject] if subject is not None else None)
 
-        Scans chunks in reverse (newest first) to find the row with
-        matching Event name and End='NA', then rewrites only that chunk.
-        When *subject* is given, rows with a matching Subject are
-        preferred; if none exists anywhere, falls back to matching by
-        event name alone (open rows from older sessions may predate
-        subject tracking). Returns True on success.
+    def update_state_event_ends(self, event_name, end_time, subjects=None):
+        """Set the end time on open state rows for *event_name*.
+
+        One row is closed per entry in *subjects* (a state started with
+        several active subjects is stored as one row per subject).  For
+        each subject, a row whose Subject matches is preferred; if none
+        exists anywhere, the search falls back to any still-open row for
+        the event (open rows from older sessions may predate subject
+        tracking).  When *subjects* is None or empty a single row is
+        closed by event name alone.
+
+        Chunks are scanned newest-first and each touched chunk is
+        rewritten once.  Returns True if every requested row was found.
         """
         try:
             h_end = format_time_human(end_time)
             end_str = format_time_machine(end_time)
+            wanted = list(subjects) if subjects else [None]
 
-            passes = [subject, None] if subject is not None else [None]
-            for want_subject in passes:
-                for chunk_name in reversed(self._get_chunk_files()):
-                    chunk_path = self._chunk_path(chunk_name)
-                    if not os.path.exists(chunk_path):
-                        continue
+            chunk_names = list(reversed(self._get_chunk_files()))
+            loaded = {}     # chunk_name -> rows
+            claimed = set() # (chunk_name, row index) already closed here
+            dirty = set()
 
-                    with open(chunk_path, "r", newline="",
-                              encoding="utf-8-sig") as f:
-                        rows = list(csv.DictReader(f))
+            def rows_for(name):
+                if name not in loaded:
+                    path = self._chunk_path(name)
+                    if not os.path.exists(path):
+                        loaded[name] = []
+                    else:
+                        with open(path, "r", newline="",
+                                  encoding="utf-8-sig") as f:
+                            loaded[name] = list(csv.DictReader(f))
+                return loaded[name]
 
-                    for row in rows:
+            def find_open_row(want_subject):
+                for name in chunk_names:
+                    for idx, row in enumerate(rows_for(name)):
+                        if (name, idx) in claimed:
+                            continue
                         end_val = row.get("End", "").strip()
                         if not (row.get("Event", "").strip() == event_name
                                 and row.get("Type", "").strip().lower() == "state"
@@ -279,19 +318,33 @@ class AnnotationStore:
                         if (want_subject is not None
                                 and row.get("Subject", "").strip() != want_subject):
                             continue
-                        start_str = row.get("Start", "").strip()
-                        try:
-                            start_val = float(start_str)
-                            dur = end_time - start_val
-                        except (ValueError, TypeError):
-                            dur = 0
-                        row["End"] = end_str
-                        row["H_End"] = h_end
-                        row["Duration"] = format_time_machine(dur)
-                        self._write_chunk_atomic(chunk_name, rows)
-                        return True
+                        return name, idx
+                return None
 
-            return False
+            all_found = True
+            for subj in wanted:
+                hit = find_open_row(subj)
+                if hit is None and subj is not None:
+                    hit = find_open_row(None)
+                if hit is None:
+                    all_found = False
+                    continue
+                name, idx = hit
+                row = loaded[name][idx]
+                try:
+                    dur = end_time - float(row.get("Start", "").strip())
+                except (ValueError, TypeError):
+                    dur = 0
+                row["End"] = end_str
+                row["H_End"] = h_end
+                row["Duration"] = format_time_machine(dur)
+                claimed.add(hit)
+                dirty.add(name)
+
+            for name in dirty:
+                self._write_chunk_atomic(name, loaded[name])
+
+            return all_found
         except (PermissionError, OSError, ValueError):
             return False
 
@@ -435,14 +488,16 @@ class AnnotationStore:
         """Format all in-memory annotations as CSV row dicts."""
         rows = []
         for evt in self.state_events:
-            start = format_time_machine(evt["start_time"])
-            end = (format_time_machine(evt["end_time"])
-                   if evt["end_time"] is not None else "NA")
-            dur = (format_time_machine(evt["end_time"] - evt["start_time"])
-                   if evt["end_time"] is not None else "NA")
-            h_start = format_time_human(evt["start_time"])
-            h_end = (format_time_human(evt["end_time"])
-                     if evt["end_time"] is not None else "NA")
+            st = evt["start_time"]
+            et = evt["end_time"]
+            # An imported row can lack a Start; keep it as NA rather
+            # than crashing every subsequent rewrite with float(None).
+            start = format_time_machine(st) if st is not None else "NA"
+            end = format_time_machine(et) if et is not None else "NA"
+            dur = (format_time_machine(et - st)
+                   if et is not None and st is not None else "NA")
+            h_start = format_time_human(st) if st is not None else "NA"
+            h_end = format_time_human(et) if et is not None else "NA"
             rows.append({
                 "Video": self.video_name,
                 "Event": evt["Event"],
@@ -483,7 +538,6 @@ class AnnotationStore:
 
         """
         path = self._session_state_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
 
         data = {}
         if os.path.exists(path):
@@ -496,6 +550,9 @@ class AnnotationStore:
         data.update(updates)
 
         try:
+            # Inside the guard: a detached output drive raises here, and
+            # an escaping exception would kill the auto-save timer chain.
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             temp = path + ".tmp"
             with open(temp, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)

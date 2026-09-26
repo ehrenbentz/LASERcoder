@@ -303,7 +303,9 @@ class SubjectEditor(QDialog):
                 while len(self.subjects) < 30:
                     self.subjects.append(["", "", "", ""])
             return True
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError, csv.Error) as exc:
+            # A non-UTF-8 (e.g. Excel "ANSI") or malformed CSV must not
+            # leave a half-read grid that Save would then persist.
             show_message(
                 self, "Error", f"Error loading subjects: {exc}")
             self.subjects = [["", "", "", ""] for _ in range(30)]
@@ -362,6 +364,16 @@ class SubjectEditor(QDialog):
             filename = (f"{name}_subjects.csv"
                         if not name.endswith("_subjects.csv") else name)
             path = os.path.join(self.subjects_dir, filename)
+
+            if os.path.exists(path):
+                reply = show_message(
+                    self, "File Exists",
+                    f"'{name}' already exists.\nOverwrite it with a "
+                    "blank subject file?",
+                    icon="question")
+                if reply != QMessageBox.StandardButton.Yes:
+                    self._new_dialog_open = False
+                    return
 
             if not self._check_file_access(path, for_writing=True):
                 show_message(
@@ -464,6 +476,16 @@ class SubjectEditor(QDialog):
             os.replace(temp, self.subject_file)
             self.config_manager.set_last_subject_file(
                 os.path.basename(self.subject_file))
+            # A file created on this save was not on disk when the combo
+            # was last refreshed, so it still read "No file found" and
+            # the next Save prompted for a name again.
+            name = os.path.basename(self.subject_file).removesuffix(
+                "_subjects.csv")
+            if self._combo.currentText() != name:
+                self._refresh_combo()
+                self._combo.blockSignals(True)
+                self._combo.setCurrentText(name)
+                self._combo.blockSignals(False)
             return True
         except OSError as exc:
             _remove_temp(temp)

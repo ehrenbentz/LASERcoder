@@ -387,7 +387,9 @@ class EventKeyEditor(QDialog):
                 while len(self.events) < 30:
                     self.events.append(["", "", "point", ""])
             return True
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError, csv.Error) as exc:
+            # A non-UTF-8 (e.g. Excel "ANSI") or malformed CSV must not
+            # leave a half-read grid that Save would then persist.
             show_message(
                 self, "Error", f"Error loading events: {exc}")
             self.events = [["", "", "point", ""] for _ in range(30)]
@@ -507,6 +509,16 @@ class EventKeyEditor(QDialog):
             filename = (f"{name}_events.csv"
                         if not name.endswith("_events.csv") else name)
             path = os.path.join(self.event_key_dir, filename)
+
+            if os.path.exists(path):
+                reply = show_message(
+                    self, "File Exists",
+                    f"'{name}' already exists.\nOverwrite it with a "
+                    "blank event key?",
+                    icon="question")
+                if reply != QMessageBox.StandardButton.Yes:
+                    self._new_dialog_open = False
+                    return
 
             if not self._check_file_access(path, for_writing=True):
                 show_message(

@@ -195,6 +195,8 @@ class AnnotationsVisualizer(QFrame):
         for event in events:
             st = event.get('start_time')
             et = event.get('end_time')
+            if st is None:
+                continue
             if et is not None and et < self.effective_start:
                 continue
             if self.effective_end is not None and st > self.effective_end:
@@ -942,7 +944,10 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                     else "PNG Images (*.png)")
 
             suffix = ""
-            if bounds and bounds.get("has_bounds") and not bounds.get("whole_video"):
+            # The "Coded segment only" checkbox lives on the timeline
+            # widget; the bounds dict passed in is never updated.
+            if (bounds and bounds.get("has_bounds")
+                    and not timeline_widget.whole_video):
                 st = bounds.get("start", 0)
                 et = bounds.get("end")
                 if st > 0 and et is not None:
@@ -961,7 +966,12 @@ def show_visualization_dialog(parent, video_name, state_events, point_events,
                 return
             try:
                 image, _ = timeline_widget.render_to_image(fmt, dpi)
-                image.save(file_path)
+                # QImage.save returns False instead of raising
+                if image.isNull() or not image.save(file_path):
+                    raise RuntimeError(
+                        "Could not write the image file. Check the "
+                        "destination folder, file extension, and try a "
+                        "lower DPI.")
                 show_message(viz_dialog, "Export Successful",
                                    "Visualization exported successfully",
                                    icon="information")

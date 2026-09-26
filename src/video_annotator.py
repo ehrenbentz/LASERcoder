@@ -185,6 +185,12 @@ class MpvOpenGLWidget(QOpenGLWidget):
             self.render_ctx = None
             self.doneCurrent()
 
+def _fmt_time_or_blank(seconds):
+    """Human time string, or '' when the value is missing (open state,
+    or an imported row without a Start)."""
+    return format_time_human(seconds) if seconds is not None else ""
+
+
 class _AutoFitButton(QPushButton):
     """QPushButton that shrinks its font to fit the available width."""
     def resizeEvent(self, event):
@@ -1642,11 +1648,16 @@ class VideoAnnotator(QFrame):
     # Annotation data helpers
 
     def _update_annotations(self):
+        # Rebuilding the trees drops the visual selection, so forget the
+        # remembered row too; otherwise the Delete key acts on whatever
+        # now sits at the stale index (e.g. after a Sort).
+        self.selected_item = None
+        self.selected_index = None
         for tree, events, fmt_fn in [
             (self.state_annotations_tree, self.store.state_events,
              lambda evt: [evt["Event"],
-                          format_time_human(evt["start_time"]),
-                          format_time_human(evt["end_time"]) if evt["end_time"] else ""]),
+                          _fmt_time_or_blank(evt["start_time"]),
+                          _fmt_time_or_blank(evt["end_time"])]),
             (self.point_annotations_tree, self.store.point_events,
              lambda evt: [evt["Event"], evt["time"]]),
         ]:
@@ -1678,8 +1689,8 @@ class VideoAnnotator(QFrame):
         """Append a single state annotation to the state tree and scroll to it."""
         item = QTreeWidgetItem([
             evt["Event"],
-            format_time_human(evt["start_time"]),
-            format_time_human(evt["end_time"]) if evt["end_time"] else "",
+            _fmt_time_or_blank(evt["start_time"]),
+            _fmt_time_or_blank(evt["end_time"]),
         ])
         for col in (1, 2):
             item.setTextAlignment(
@@ -1688,14 +1699,22 @@ class VideoAnnotator(QFrame):
         self.state_annotations_tree.scrollToItem(
             item, QAbstractItemView.ScrollHint.EnsureVisible)
 
-    def _update_state_tree_end_time(self, event_name, end_time_str):
-        """Update the end-time column for a matching open state event in the tree."""
+    def _update_state_tree_end_time(self, event_name, end_time_str, count=1):
+        """Fill the end-time column for open rows of *event_name* in the tree.
+
+        *count* rows are updated (one per subject the state was started
+        with); None updates every open row for the event.
+        """
         tree = self.state_annotations_tree
+        remaining = count
         for i in range(tree.topLevelItemCount()):
+            if remaining is not None and remaining <= 0:
+                return
             item = tree.topLevelItem(i)
             if item.text(0) == event_name and item.text(2) == "":
                 item.setText(2, end_time_str)
-                return
+                if remaining is not None:
+                    remaining -= 1
 
     def _populate_event_trees(self):
         self.state_events_tree.clear()
@@ -2104,14 +2123,16 @@ class VideoAnnotator(QFrame):
     def _sort_state_annotations(self):
         self.store.state_events.sort(
             key=lambda e: e["start_time"] if e["start_time"] is not None else 0)
-        self.store.save_sorted_annotations()
+        if not self.store.save_sorted_annotations():
+            self.on_write_error()
         self._schedule_full_annotations_write()
         self._update_annotations()
 
     def _sort_point_annotations(self):
         self.store.point_events.sort(
             key=lambda e: parse_time(e["time"]) if e["time"] else 0)
-        self.store.save_sorted_annotations()
+        if not self.store.save_sorted_annotations():
+            self.on_write_error()
         self._schedule_full_annotations_write()
         self._update_annotations()
 
@@ -2135,13 +2156,46 @@ class VideoAnnotator(QFrame):
 
     def _restore_active_state_events(self):
         """Re-populate active_state_events from incomplete annotations on disk"""
-        name_to_key = {v: k for k, v in self.store.state_event_keys.items()}
+        self.active_state_events.clear()
+        self.active_state_subjects.clear()
         for evt in self.store.state_events:
             if evt["end_time"] is None and evt["start_time"] is not None:
-                key = name_to_key.get(evt["Event"])
-                if key:
-                    self.active_state_events[key] = evt["start_time"]
-                    self.active_state_subjects[key] = evt.get("Subject")
+                self._register_open_state(evt)
+
+    def _register_open_state(self, evt):
+        """Track an open in-memory state row so its hotkey closes it.
+
+        A state started with several active subjects is one row per
+        subject; all of them share the key, so the subjects are kept as
+        a list and closed together.
+        """
+        name_to_key = {v: k for k, v in self.store.state_event_keys.items()}
+        key = name_to_key.get(evt.get("Event"))
+        if key is None:
+            return
+        self.active_state_events[key] = evt["start_time"]
+        self.active_state_subjects.setdefault(key, []).append(
+            evt.get("Subject", "NA"))
+
+    def _unregister_open_state(self, evt):
+        """Stop tracking an open state row (e.g. after it was deleted).
+
+        The key stays active while other subject rows of the same
+        state remain open.
+        """
+        name_to_key = {v: k for k, v in self.store.state_event_keys.items()}
+        key = name_to_key.get(evt.get("Event"))
+        if key is None or key not in self.active_state_events:
+            return
+        subjects = self.active_state_subjects.get(key) or []
+        subj = evt.get("Subject", "NA")
+        if subj in subjects:
+            subjects.remove(subj)
+        elif subjects:
+            subjects.pop()
+        if not subjects:
+            self.active_state_events.pop(key, None)
+            self.active_state_subjects.pop(key, None)
 
     def _load_session_state(self):
         state = self.store.load_session_state()
@@ -2203,6 +2257,8 @@ class VideoAnnotator(QFrame):
             QTimer.singleShot(5000, self._auto_save_session_state)
 
     def _schedule_resume(self, timestamp_sec):
+        if self._shutting_down or not self.player:
+            return
         if (self.player.duration or 0) > 0:
             self.player.time_pos = timestamp_sec
             if (self.coding_duration is not None
@@ -2407,14 +2463,12 @@ class VideoAnnotator(QFrame):
             if etype == QEvent.Type.Resize:
                 self._reflow_video_height()
 
-        # Re-anchor floating controls when the video frame itself
-        # changes size (waveform / spectrogram show/hide/resize).
-        if (obj is getattr(self, "video_frame", None)
-                and etype == QEvent.Type.Resize):
-            self._schedule_reposition()
-
+            # Hide the floating Tool windows while the main window is
+            # minimized or another app is in front; re-show on return.
+            # (This block used to sit inside the video_frame Resize
+            # branch below, where etype could never match.)
             if etype in (QEvent.Type.ActivationChange,
-                        QEvent.Type.WindowStateChange):
+                         QEvent.Type.WindowStateChange):
                 state = self.parent.windowState()
                 is_minimized = bool(
                     state & Qt.WindowState.WindowMinimized
@@ -2425,6 +2479,12 @@ class VideoAnnotator(QFrame):
                     self._activation_pending = True
                     QTimer.singleShot(
                         100, self._handle_activation_deferred)
+
+        # Re-anchor floating controls when the video frame itself
+        # changes size (waveform / spectrogram show/hide/resize).
+        if (obj is getattr(self, "video_frame", None)
+                and etype == QEvent.Type.Resize):
+            self._schedule_reposition()
 
         if (sys.platform == "darwin"
                 and etype == QEvent.Type.MouseButtonPress
@@ -2566,33 +2626,43 @@ class VideoAnnotator(QFrame):
         elif info["Type"] == "Point":
             self._add_point_annotation(key, info, current, fmt)
 
+    def _current_subjects(self):
+        """Subjects to stamp on a new annotation: one row is written per
+        active subject, or a single 'NA' row when none is active."""
+        return sorted(self.active_subjects) if self.active_subjects else ["NA"]
+
     def _add_point_annotation(self, key, info, current_time, formatted_time):
-        if any(e["Event"] == info["Event"] and e["time"] == formatted_time
-               for e in self.store.point_events):
+        records = []
+        new_events = []
+        for subject in self._current_subjects():
+            if any(e["Event"] == info["Event"] and e["time"] == formatted_time
+                   and e.get("Subject", "NA") == subject
+                   for e in self.store.point_events):
+                continue
+            records.append({
+                "Video": self.video_name, "Event": info["Event"],
+                "Subject": subject, "Type": "Point",
+                "Mutually_Exclusive": "False", "H_Start": formatted_time,
+                "H_End": "NA", "Start": f"{current_time:.2f}", "End": "NA",
+                "Duration": "NA", "Manual_Edit": "False", "Notes": "",
+            })
+            new_events.append({
+                "Event": info["Event"], "Subject": subject,
+                "time": formatted_time,
+                "Manual_Edit": False, "Notes": "",
+            })
+        if not records:
             return
 
-        subject = ";".join(sorted(self.active_subjects)) if self.active_subjects else "NA"
-
-        record = {
-            "Video": self.video_name, "Event": info["Event"],
-            "Subject": subject, "Type": "Point",
-            "Mutually_Exclusive": "False", "H_Start": formatted_time,
-            "H_End": "NA", "Start": f"{current_time:.2f}", "End": "NA",
-            "Duration": "NA", "Manual_Edit": "False", "Notes": "",
-        }
-
-        if not self.store.append_annotation(record):
+        if not self.store.append_annotations(records):
             self.on_write_error()
             return
 
-        self.store.point_events.append({
-            "Event": info["Event"], "Subject": subject,
-            "time": formatted_time,
-            "Manual_Edit": False, "Notes": "",
-        })
+        self.store.point_events.extend(new_events)
         self.used_point_events.add(key)
         QTimer.singleShot(100, lambda: self.used_point_events.discard(key))
-        self._append_point_to_tree(self.store.point_events[-1])
+        for evt in new_events:
+            self._append_point_to_tree(evt)
         self._populate_event_trees()
 
     def handle_state_event(self, key, frame_ts, formatted_ts):
@@ -2620,11 +2690,18 @@ class VideoAnnotator(QFrame):
                 )
                 return False
             self.active_state_events.pop(key)
-            subj = self.active_state_subjects.pop(key, None)
-            self._set_memory_state_end(name, frame_ts, subj)
-            if not self.store.update_state_event_end(name, frame_ts, subj):
-                return False
-            self._update_state_tree_end_time(name, format_time_human(frame_ts))
+            subjects = self.active_state_subjects.pop(key, None) or [None]
+            for subj in subjects:
+                self._set_memory_state_end(name, frame_ts, subj)
+            if not self.store.update_state_event_ends(name, frame_ts, subjects):
+                # Disk and memory disagree; a full rewrite from memory
+                # repairs it, and the user must hear about the failure.
+                if not self.store.save_sorted_annotations():
+                    self.on_write_error()
+                    return False
+                self._schedule_full_annotations_write()
+            self._update_state_tree_end_time(
+                name, format_time_human(frame_ts), len(subjects))
             self._populate_event_trees()
             return True
         else:
@@ -2632,32 +2709,35 @@ class VideoAnnotator(QFrame):
                 if not self._deactivate_me_group(me_group, frame_ts, key):
                     return False
 
-            subject = ";".join(sorted(self.active_subjects)) if self.active_subjects else "NA"
-
-            record = {
+            # One row per active subject (or a single "NA" row)
+            subjects = self._current_subjects()
+            me_flag = "True" if me_group else "False"
+            records = [{
                 "Video": self.video_name, "Event": name,
                 "Subject": subject, "Type": "State",
-                "Mutually_Exclusive": "True" if me_group else "False",
+                "Mutually_Exclusive": me_flag,
                 "H_Start": format_time_human(frame_ts),
                 "H_End": "NA",
                 "Start": format_time_machine(frame_ts),
                 "End": "NA", "Duration": "NA",
                 "Manual_Edit": "False", "Notes": "",
-            }
-            if not self.store.append_annotation(record):
+            } for subject in subjects]
+            if not self.store.append_annotations(records):
                 self.on_write_error()
                 return False
 
             self.active_state_events[key] = frame_ts
-            self.active_state_subjects[key] = subject
-            self.store.state_events.append({
-                "Event": name, "Subject": subject,
-                "start_time": frame_ts, "end_time": None,
-                "Type": "State",
-                "Mutually_Exclusive": "True" if me_group else "False",
-                "Notes": "",
-            })
-            self._append_state_to_tree(self.store.state_events[-1])
+            self.active_state_subjects[key] = list(subjects)
+            for subject in subjects:
+                evt = {
+                    "Event": name, "Subject": subject,
+                    "start_time": frame_ts, "end_time": None,
+                    "Type": "State",
+                    "Mutually_Exclusive": me_flag,
+                    "Notes": "",
+                }
+                self.store.state_events.append(evt)
+                self._append_state_to_tree(evt)
             self._populate_event_trees()
             return True
 
@@ -2715,21 +2795,27 @@ class VideoAnnotator(QFrame):
                 return False
 
             removed.append(key)
-            self._set_memory_state_end(
-                name, frame_ts, self.active_state_subjects.get(key))
+            for subj in self.active_state_subjects.get(key) or [None]:
+                self._set_memory_state_end(name, frame_ts, subj)
 
+        closed_counts = {}
         for key in removed:
             name = self.store.state_event_keys.get(key)
             self.active_state_events.pop(key)
-            subj = self.active_state_subjects.pop(key, None)
-            if not self.store.update_state_event_end(name, frame_ts, subj):
-                return False
+            subjects = self.active_state_subjects.pop(key, None) or [None]
+            closed_counts[key] = len(subjects)
+            if not self.store.update_state_event_ends(name, frame_ts, subjects):
+                if not self.store.save_sorted_annotations():
+                    self.on_write_error()
+                    return False
+                self._schedule_full_annotations_write()
 
         if removed:
             end_str = format_time_human(frame_ts)
             for key in removed:
                 deact_name = self.store.state_event_keys.get(key)
-                self._update_state_tree_end_time(deact_name, end_str)
+                self._update_state_tree_end_time(
+                    deact_name, end_str, closed_counts.get(key, 1))
             self._populate_event_trees()
         return True
 
@@ -2946,7 +3032,14 @@ class VideoAnnotator(QFrame):
             menu.addAction("Skip to Annotation", self._skip_to_annotation)
             menu.addAction("Delete", self.delete_annotation)
 
-        menu.exec(tree.viewport().mapToGlobal(point))
+        # Block the global hotkey filter while the popup is open:
+        # otherwise Escape (to dismiss the menu) closes the whole
+        # session and event keys add annotations behind the menu.
+        self.dialog_open = True
+        try:
+            menu.exec(tree.viewport().mapToGlobal(point))
+        finally:
+            self.dialog_open = False
 
     def edit_annotation(self):
         if not self.selected_item:
@@ -2989,27 +3082,20 @@ class VideoAnnotator(QFrame):
         lst = self.store.state_events if is_state else self.store.point_events
         atype = "state" if is_state else "point"
 
-        # Precompute reverse lookup once; only used when is_state is True.
-        name_to_key = (
-            {v: k for k, v in self.store.state_event_keys.items()}
-            if is_state else {})
-
         for idx in indices:
             if 0 <= idx < len(lst):
                 deleted = dict(lst[idx])
 
-                # If any of the deleted state rows is open, clear its key
-                # from active_state_events.
+                # If any of the deleted state rows is open, stop tracking
+                # it so the hotkey does not remain stuck.
                 if is_state and deleted.get("end_time") is None:
-                    active_key = name_to_key.get(deleted.get("Event"))
-                    if active_key is not None:
-                        self.active_state_events.pop(active_key, None)
-                        self.active_state_subjects.pop(active_key, None)
+                    self._unregister_open_state(deleted)
 
                 self.undo_stack.append((atype, idx, deleted))
                 lst.pop(idx)
 
         if not self.store.save_sorted_annotations():
+            self.on_write_error()
             return
         self._schedule_full_annotations_write()
 
@@ -3033,15 +3119,10 @@ class VideoAnnotator(QFrame):
         if self.selected_treeview == self.state_annotations_tree:
             deleted = dict(self.store.state_events[self.selected_index])
 
-            # If the deleted row is an open (active) state, clear its key
-            # from active_state_events so the hotkey does not remain stuck.
+            # If the deleted row is an open (active) state, stop tracking
+            # it so the hotkey does not remain stuck.
             if deleted.get("end_time") is None:
-                name_to_key = {
-                    v: k for k, v in self.store.state_event_keys.items()}
-                active_key = name_to_key.get(deleted.get("Event"))
-                if active_key is not None:
-                    self.active_state_events.pop(active_key, None)
-                    self.active_state_subjects.pop(active_key, None)
+                self._unregister_open_state(deleted)
 
             self.undo_stack.append(("state", self.selected_index, deleted))
             self.store.state_events.pop(self.selected_index)
@@ -3051,6 +3132,7 @@ class VideoAnnotator(QFrame):
             self.store.point_events.pop(self.selected_index)
 
         if not self.store.save_sorted_annotations():
+            self.on_write_error()
             return
         self._schedule_full_annotations_write()
 
@@ -3081,7 +3163,14 @@ class VideoAnnotator(QFrame):
             lst.insert(idx, annotation)
 
         if not self.store.save_sorted_annotations():
+            # Roll the in-memory insert back before re-queueing the undo,
+            # otherwise the next Ctrl+Z inserts a second copy.
+            try:
+                lst.remove(annotation)
+            except ValueError:
+                pass
             self.undo_stack.append((atype, idx, annotation))
+            self.on_write_error()
             return
         self._schedule_full_annotations_write()
 
@@ -3090,12 +3179,7 @@ class VideoAnnotator(QFrame):
         if (atype == "state"
                 and annotation.get("end_time") is None
                 and annotation.get("start_time") is not None):
-            name_to_key = {
-                v: k for k, v in self.store.state_event_keys.items()}
-            active_key = name_to_key.get(annotation.get("Event"))
-            if active_key is not None:
-                self.active_state_events[active_key] = annotation["start_time"]
-                self.active_state_subjects[active_key] = annotation.get("Subject")
+            self._register_open_state(annotation)
 
         self._update_annotations()
         self._populate_event_trees()
@@ -3129,23 +3213,29 @@ class VideoAnnotator(QFrame):
                 "Both Event and Start Time are required.")
             return False
 
-        for ann in self.store.point_events:
-            if ann["Event"] == selected["Event"] and ann["time"] == old_time:
-                if ann["Event"] != new_name or ann["time"] != new_start:
-                    ann["Manual_Edit"] = True
-                ann["Event"] = new_name
-                ann["time"] = new_start
-                break
-        else:
+        # Match the selected row by identity: several rows can share an
+        # event name and time (one per subject), so a name/time search
+        # could edit a different subject's row.
+        target = next((a for a in self.store.point_events if a is selected),
+                      None)
+        if target is None:
+            target = next(
+                (a for a in self.store.point_events
+                 if a["Event"] == selected["Event"] and a["time"] == old_time),
+                None)
+        if target is None:
             dialog.reject()
             return False
 
+        original = dict(target)
+        if target["Event"] != new_name or target["time"] != new_start:
+            target["Manual_Edit"] = True
+        target["Event"] = new_name
+        target["time"] = new_start
+
         if not self.store.save_sorted_annotations():
-            for ann in self.store.point_events:
-                if ann["Event"] == new_name and ann["time"] == new_start:
-                    ann["Event"] = selected["Event"]
-                    ann["time"] = old_time
-                    break
+            target.clear()
+            target.update(original)
             dialog.reject()
             return False
         self._schedule_full_annotations_write()
@@ -3181,27 +3271,31 @@ class VideoAnnotator(QFrame):
                 "Could not parse time values. Please check format.")
             return False
 
-        original = None
-        for ann in self.store.state_events:
-            if (ann["Event"] == selected["Event"]
-                    and format_time_human(ann.get("start_time", 0)) == old_time):
-                original = dict(ann)
-                ann["Event"] = new_name
-                ann["start_time"] = new_start
-                ann["end_time"] = new_end
-                ann["Manual_Edit"] = True
-                ann.setdefault("Notes", "")
-                break
-
-        if original is None:
+        # Match the selected row by identity: several rows can share an
+        # event name and start time (one per subject), so a name/time
+        # search could edit a different subject's row.
+        target = next((a for a in self.store.state_events if a is selected),
+                      None)
+        if target is None:
+            target = next(
+                (a for a in self.store.state_events
+                 if a["Event"] == selected["Event"]
+                 and format_time_human(a.get("start_time", 0)) == old_time),
+                None)
+        if target is None:
             dialog.reject()
             return False
 
+        original = dict(target)
+        target["Event"] = new_name
+        target["start_time"] = new_start
+        target["end_time"] = new_end
+        target["Manual_Edit"] = True
+        target.setdefault("Notes", "")
+
         if not self.store.save_sorted_annotations():
-            for ann in self.store.state_events:
-                if ann["Event"] == new_name and ann["start_time"] == new_start:
-                    ann.update(original)
-                    break
+            target.clear()
+            target.update(original)
             dialog.reject()
             return False
         self._schedule_full_annotations_write()
@@ -3325,6 +3419,7 @@ class VideoAnnotator(QFrame):
                 raw = 0
             point_ann.append({
                 "Event": evt.get("Event", ""),
+                "Subject": evt.get("Subject", "NA"),
                 "time": t,
                 "raw_time": raw,
                 "Manual_Edit": evt.get("Manual_Edit", "False"),
@@ -3401,6 +3496,10 @@ class VideoAnnotator(QFrame):
                     self.active_state_subjects.clear()
                     self.store.load_events()
                     self.store.load_annotations()
+                    # Re-map still-open rows to their (possibly new)
+                    # hotkeys so pressing a key closes the open state
+                    # instead of starting a duplicate.
+                    self._restore_active_state_events()
                     self._update_annotations()
                     self._populate_event_trees()
 

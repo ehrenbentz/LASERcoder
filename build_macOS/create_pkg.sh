@@ -122,6 +122,33 @@ echo ""
 APP_BUNDLE="$(basename "$APP_PATH")"
 retry_busy cp -R "$APP_PATH" "$PKG_ROOT/${APP_BUNDLE}"
 
+# mktemp -d creates the payload root with mode 0700 owned by the build
+# user.  pkgbuild records the root's mode/owner as the mode/owner of the
+# install location, so Installer would apply 0700 to /Applications and
+# leave it unreadable for other accounts.  Normalise to what
+# /Applications is expected to look like, and make sure the bundle
+# itself is world-readable (Homebrew dylibs and Nuitka output can carry
+# stray private modes).
+chmod 775 "$PKG_ROOT"
+chmod -R u+rwX,go+rX,go-w "$PKG_ROOT/${APP_BUNDLE}"
+
+# ==================================================================
+# Component plist: mark the bundle as NOT relocatable.
+# By default Installer may "relocate" the payload onto any other copy
+# of LASERcoder.app it finds via Spotlight (e.g. one unzipped in
+# ~/Downloads), leaving nothing in /Applications and running the
+# postinstall fix-ups against the wrong path.
+# ==================================================================
+COMPONENT_PLIST="$SCRIPTS_DIR/component.plist"
+pkgbuild --analyze --root "$PKG_ROOT" "$COMPONENT_PLIST" || true
+if [ -f "$COMPONENT_PLIST" ]; then
+    /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" \
+        "$COMPONENT_PLIST" 2>/dev/null || true
+    COMPONENT_ARGS=(--component-plist "$COMPONENT_PLIST")
+else
+    COMPONENT_ARGS=()
+fi
+
 # ==================================================================
 # Create preinstall script
 # Removes any existing .app at the install target before the new
@@ -167,6 +194,8 @@ retry_busy pkgbuild \
     --root "$PKG_ROOT" \
     --install-location "${INSTALL_LOCATION}" \
     --scripts "$SCRIPTS_DIR" \
+    --ownership recommended \
+    "${COMPONENT_ARGS[@]}" \
     --identifier "edu.cornell.ehrenbentz.lasercoder" \
     --version "$APP_VERSION" \
     "$OUTPUT_DIR/$PKG_NAME"

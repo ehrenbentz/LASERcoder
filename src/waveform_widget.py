@@ -229,6 +229,11 @@ class WaveformWidget(QWidget):
             return
         if self._extractor is not None and self._extractor.isRunning():
             return
+        # macOS: the worker thread only starts after the main-thread mpv
+        # pass finishes, so also treat an in-flight mpv extraction as
+        # running. Re-entering would orphan its poll timer and player.
+        if getattr(self, "_extract_player", None) is not None:
+            return
         self._placeholder_text = "Generating Audio Track..."
         self._rms_data = None
         self._rebinned = None

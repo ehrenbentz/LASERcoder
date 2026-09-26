@@ -245,7 +245,9 @@ def show_coding_start_dialog(annotator):
 
     def _save():
         try:
-            annotator.coding_start = (
+            # Validate everything into locals first so a bad field
+            # leaves the annotator's coding window untouched.
+            coding_start = (
                 parse_time(start_input.text().strip())
                 if start_input.text().strip() else 0)
 
@@ -254,23 +256,26 @@ def show_coding_start_dialog(annotator):
                 m = int(mins_in.text() or 0)
                 s = int(secs_in.text() or 0)
                 if h or m or s:
-                    annotator.coding_duration = h * 3600 + m * 60 + s
-                    annotator.coding_end = annotator.coding_start + annotator.coding_duration
+                    coding_duration = h * 3600 + m * 60 + s
+                    coding_end = coding_start + coding_duration
                 else:
-                    annotator.coding_duration = None
-                    annotator.coding_end = None
+                    coding_duration = None
+                    coding_end = None
             else:
                 ets = et_input.text().strip()
                 if ets:
-                    annotator.coding_end = parse_time(ets)
-                    if annotator.coding_end > annotator.coding_start:
-                        annotator.coding_duration = annotator.coding_end - annotator.coding_start
+                    coding_end = parse_time(ets)
+                    if coding_end > coding_start:
+                        coding_duration = coding_end - coding_start
                     else:
                         raise ValueError("End time must be greater than start time")
                 else:
-                    annotator.coding_end = None
-                    annotator.coding_duration = None
+                    coding_end = None
+                    coding_duration = None
 
+            annotator.coding_start = coding_start
+            annotator.coding_duration = coding_duration
+            annotator.coding_end = coding_end
             annotator.coding_end_reached = False
 
             # Set timeline limiting flag
@@ -363,8 +368,10 @@ def show_note_dialog(annotator):
         annotation["Notes"] = note
         if not annotator.store.save_sorted_annotations():
             annotation["Notes"] = original
+            annotator.on_write_error()
             _close()
             return
+        annotator._schedule_full_annotations_write()
         _close()
 
     def _close():
@@ -495,7 +502,8 @@ def show_annotation_details(annotator):
 
     # Store originals for rollback
     originals = {"Event": annotation["Event"],
-                 "Notes": annotation.get("Notes", "")}
+                 "Notes": annotation.get("Notes", ""),
+                 "Manual_Edit": annotation.get("Manual_Edit", False)}
     if atype == "State":
         originals["start_time"] = annotation["start_time"]
         originals["end_time"] = annotation["end_time"]
@@ -559,11 +567,9 @@ def show_annotation_details(annotator):
                         "annotation.\n\n"
                         "End the other instance first.")
                     return
-                if (old_key is not None
-                        and old_key in annotator.active_state_events):
-                    start_ts = annotator.active_state_events.pop(old_key)
-                    if new_key is not None:
-                        annotator.active_state_events[new_key] = start_ts
+                # Move only this row's tracking (a multi-subject state
+                # has sibling rows that stay open under the old key).
+                annotator._unregister_open_state(annotation)
 
             if (annotation["Event"] != new_event
                     or annotation["start_time"] != new_start
@@ -573,6 +579,8 @@ def show_annotation_details(annotator):
             annotation["start_time"] = new_start
             annotation["end_time"] = new_end
             annotation["Notes"] = new_note
+            if active_rename:
+                annotator._register_open_state(annotation)
         else:
             if (annotation["Event"] != new_event
                     or annotation["time"] != vals["H_Start"]):
@@ -582,8 +590,15 @@ def show_annotation_details(annotator):
             annotation["Notes"] = new_note
 
         if not annotator.store.save_sorted_annotations():
+            if atype == "State" and active_rename:
+                annotator._unregister_open_state(annotation)
             annotation.update(originals)
+            annotation["Manual_Edit"] = originals.get("Manual_Edit", False)
+            if atype == "State" and active_rename:
+                annotator._register_open_state(annotation)
+            annotator.on_write_error()
             return
+        annotator._schedule_full_annotations_write()
 
         annotator._update_annotations()
         # Event-tree highlight may have shifted if an active rename moved
@@ -708,7 +723,9 @@ def show_av_settings_dialog(annotator):
         return 0
 
     aud_originals = {
-        "volume": int(annotator.player.volume or 100),
+        # `or 100` turned a muted (0) volume into 100 on Cancel
+        "volume": int(annotator.player.volume
+                      if annotator.player.volume is not None else 100),
         "audio_delay": float(annotator.player.audio_delay or 0),
         "audio_pitch_correction": bool(
             getattr(annotator.player, "audio_pitch_correction", True)),
@@ -1301,7 +1318,9 @@ def show_av_settings_dialog(annotator):
             annotator._recalculate_video_height()
         dlg.accept()
 
-    def _cancel():
+    def _rollback():
+        """Undo the live-applied slider changes.  Runs on any rejection
+        (Cancel button, Escape, window close), not just the button."""
         for prop in VIDEO_PROPS:
             try:
                 setattr(annotator.player, prop, vid_originals[prop])
@@ -1336,10 +1355,10 @@ def show_av_settings_dialog(annotator):
             annotator.spectrogram_widget.setFixedHeight(new_h)
         if hasattr(annotator, '_recalculate_video_height'):
             annotator._recalculate_video_height()
-        dlg.reject()
 
     ok_btn.clicked.connect(_save)
-    cancel_btn.clicked.connect(_cancel)
+    cancel_btn.clicked.connect(dlg.reject)
+    dlg.rejected.connect(_rollback)
 
     # Load initial slider values matching the scope each checkbox
     # was set to above (per-video if present, else global)
@@ -1578,9 +1597,13 @@ def show_colors_theme_dialog(parent, on_accept=None):
     size_sliders = {}
 
     def _save_color_if_changed(setter, key):
-        """Persist a color only if it differs from its initial value,
-        otherwise clear any stale override so the theme base takes over."""
-        if colors[key].name() != initial_colors[key].name():
+        """Persist a color unless it equals the theme default, in which
+        case clear the override so the theme base takes over.
+
+        Comparing against the dialog's *initial* value (as this once
+        did) wiped every saved custom color the user did not re-pick
+        in that session, since an unchanged override compared equal."""
+        if colors[key].name() != QColor(color_defaults[key]).name():
             setter(colors[key].name())
         else:
             setter(None)

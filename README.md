@@ -122,7 +122,7 @@ Annotation CSVs are UTF-8 encoded, open cleanly in Excel, and import directly in
 |--------|-------------|
 | `Video` | Video filename |
 | `Event` | Behavior name |
-| `Subject` | Subject ID(s) the annotation applies to (`NA` if unused) |
+| `Subject` | Subject ID the annotation applies to (`NA` if unused). When several subjects are active, one row is written per subject |
 | `Type` | `Point` or `State` |
 | `Mutually_Exclusive` | Whether the event belongs to an ME group |
 | `H_Start`, `H_End` | Human-readable timestamps (e.g. `12m3.50s`) |

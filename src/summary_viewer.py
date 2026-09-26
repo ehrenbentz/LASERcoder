@@ -796,7 +796,7 @@ class _BoxplotViewer(QDialog):
             path += ".png"
 
         try:
-            from PySide6.QtCore import QRect
+            from PySide6.QtCore import QPoint
             scale = dpi / 96.0
             w = max(v.width() for v in self._chart_views)
             scaled_w = int(w * scale)
@@ -804,16 +804,28 @@ class _BoxplotViewer(QDialog):
             total_h = scaled_h_each * len(self._chart_views)
 
             pm = QPixmap(scaled_w, total_h)
+            if pm.isNull():
+                raise RuntimeError(
+                    "Image too large to allocate; try a lower DPI.")
             pm.fill(QColor(theme.color("dialog_bg")))
             painter = QPainter(pm)
             y_off = 0
             for v in self._chart_views:
-                target = QRect(0, y_off, scaled_w, scaled_h_each)
-                v.render(painter, target)
+                # QWidget.render takes a target offset (QPoint), not a
+                # rect; scaling comes from the painter transform.
+                painter.save()
+                painter.translate(0, y_off)
+                painter.scale(scale, scale)
+                v.render(painter, QPoint(0, 0))
+                painter.restore()
                 y_off += scaled_h_each
             painter.end()
             quality = 95 if fmt == "JPG" else -1
-            pm.save(path, fmt, quality)
+            # QPixmap.save returns False instead of raising
+            if not pm.save(path, fmt, quality):
+                raise RuntimeError(
+                    "Could not write the image file. Check the "
+                    "destination folder and file extension.")
             show_message(
                 self, "Export Successful", f"Figure saved to:\n{path}",
                 icon="information")

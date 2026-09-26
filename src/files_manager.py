@@ -484,8 +484,12 @@ class FilesManager(QDialog):
                 if len(parts) >= 2:
                     multi_part_names.append(d)
 
-            statuses = self._get_all_video_statuses(
-                files + multi_part_names)
+            # Session folders are named after the video stem for single
+            # files, but after the folder itself (verbatim, dots included)
+            # for multi-part videos — see setup_manager.
+            status_names = {f: os.path.splitext(f)[0] for f in files}
+            status_names.update({d: d for d in multi_part_names})
+            statuses = self._get_all_video_statuses(status_names)
 
             for fname in files:
                 item = QListWidgetItem(fname)
@@ -525,8 +529,13 @@ class FilesManager(QDialog):
         except OSError:
             pass
 
-    def _get_all_video_statuses(self, filenames):
-        """Check session state JSONs for all videos at once"""
+    def _get_all_video_statuses(self, video_names):
+        """Check session state JSONs for all videos at once.
+
+        *video_names* maps each list entry (file name or multi-part
+        folder name) to the session folder / video name used on disk.
+        Returns {entry: "complete" | "in_progress"}.
+        """
         result = {}
         if not self.output_dir:
             return result
@@ -539,8 +548,7 @@ class FilesManager(QDialog):
                           if not is_os_junk(d)}
         except OSError:
             return result
-        for fname in filenames:
-            video_name = os.path.splitext(fname)[0]
+        for fname, video_name in video_names.items():
             if video_name not in video_dirs:
                 continue
             state_file = os.path.join(
@@ -553,7 +561,10 @@ class FilesManager(QDialog):
                     data = json.load(f)
                 if data.get("completed"):
                     result[fname] = "complete"
-                elif data.get("timestamp_sec"):
+                elif "timestamp_sec" in data or "timestamp_ms" in data:
+                    # A saved playhead means a session exists.  The
+                    # value itself may legitimately be 0 (video closed
+                    # at the start), so test for presence, not truth.
                     result[fname] = "in_progress"
             except (json.JSONDecodeError, ValueError, OSError):
                 pass
@@ -611,24 +622,24 @@ class FilesManager(QDialog):
 
         item_data = item.data(Qt.ItemDataRole.UserRole)
         if item_data and item_data.get("type") == "multi_part":
-            fname = os.path.basename(item_data["folder"])
+            # Multi-part sessions are named after the folder verbatim
+            video_name = os.path.basename(item_data["folder"])
         else:
-            fname = item.text()
+            video_name = os.path.splitext(item.text())[0]
         if action == mark_complete:
-            self._set_video_status(fname, "complete")
+            self._set_video_status(video_name, "complete")
         elif action == mark_progress:
-            self._set_video_status(fname, "in_progress")
+            self._set_video_status(video_name, "in_progress")
         elif action == mark_clear:
-            self._set_video_status(fname, "clear")
+            self._set_video_status(video_name, "clear")
 
-    def _set_video_status(self, filename, status):
+    def _set_video_status(self, video_name, status):
         if not self.output_dir:
             show_message(
                 self, "Warning",
                 "Please select an output directory first.")
             return
 
-        video_name = os.path.splitext(filename)[0]
         video_session_dir = os.path.join(
             self.output_dir, "Session", video_name)
         os.makedirs(video_session_dir, exist_ok=True)
@@ -1100,18 +1111,27 @@ class FilesManager(QDialog):
                          "No annotation data found.")
             return
         import tempfile
+        # Same encoding the table viewer reads with; the platform
+        # default (cp1252 on Windows) breaks on non-ASCII notes/names.
         tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".csv", delete=False, newline="")
+            mode="w", suffix=".csv", delete=False, newline="",
+            encoding="utf-8-sig")
         try:
             writer = csv.DictWriter(
                 tmp, fieldnames=AnnotationStore.CSV_HEADERS)
             writer.writeheader()
             writer.writerows(rows)
             tmp.close()
+            # The viewer loads the CSV into memory on open, so the
+            # temp file can go right away instead of leaking per view.
             show_table_viewer(parent_dlg, tmp.name,
                               title + " Annotations")
         finally:
             tmp.close()
+            try:
+                os.remove(tmp.name)
+            except OSError:
+                pass
 
     def _visualize_annotation_file(self, parent_dlg, path, title):
         state_ann, point_ann = [], []
@@ -1136,6 +1156,7 @@ class FilesManager(QDialog):
                             end = parse_time(he)
                     state_ann.append({
                         "Event": row.get("Event", "").strip(),
+                        "Subject": row.get("Subject", "").strip() or "NA",
                         "start_time": start, "end_time": end,
                         "Type": "State",
                         "Mutually_Exclusive": row.get(
@@ -1146,6 +1167,7 @@ class FilesManager(QDialog):
                     raw = row.get("Start", "0").strip()
                     point_ann.append({
                         "Event": row.get("Event", "").strip(),
+                        "Subject": row.get("Subject", "").strip() or "NA",
                         "time": row.get("H_Start", "").strip(),
                         "raw_time": (float(raw)
                                      if raw and raw != "NA" else 0),
@@ -1697,15 +1719,18 @@ class FilesManager(QDialog):
                 video_name = os.path.basename(path).removesuffix(
                     "_Annotations.csv")
             out = os.path.join(ind_dir, f"{video_name}_Summary.csv")
-            if os.path.exists(out):
-                ind_paths.append(out)
-                continue
+            # Always regenerate from the current annotations; reusing an
+            # existing summary meant "Update Selected" never picked up
+            # annotations added since the last run.
             try:
                 result = generate_summary_statistics(path, out)
                 if result:
                     ind_paths.append(result)
+                    continue
             except Exception:
                 pass
+            if os.path.exists(out):
+                ind_paths.append(out)
 
         if not ind_paths:
             show_message(
