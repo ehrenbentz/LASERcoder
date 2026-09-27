@@ -93,14 +93,16 @@ def compute_summary_rows(annotations_path, use_whole_video=False):
         if (coding_end is not None
                 and not _row_in_window(row, coding_start, coding_end)):
             continue
-        key = (name, subject)
+        # A state event and a point event may share a name; they are
+        # separate behaviours and must be summarised separately.
+        btype = "State" if _row_is_state(row) else "Point"
+        key = (name, subject, btype)
         rows_by_key.setdefault(key, []).append(row)
 
-    # per-event-per-subject stats
+    # per-event-per-subject-per-type stats
     summary_rows = []
 
-    for (name, subject), brows in rows_by_key.items():
-        btype = _infer_type(brows)
+    for (name, subject, btype), brows in rows_by_key.items():
         count = len(brows)
         frequency = count / analysis_minutes if analysis_minutes > 0 else 0
 
@@ -200,11 +202,11 @@ def combine_summaries(summary_files, output_file):
     Combine multiple per-video summary CSVs into an aggregate summary
 
     """
+    from annotation_store import read_csv_dicts
     all_rows = []
     for path in summary_files:
         try:
-            with open(path, "r", newline="", encoding="utf-8-sig") as fh:
-                all_rows.extend(csv.DictReader(fh))
+            all_rows.extend(read_csv_dicts(path))
         except OSError:
             pass
 
@@ -310,10 +312,9 @@ def combined_summary_videos(combined_csv_path):
         "Combined_Annotations", f"{experiment}_Annotations_Combined.csv")
     if os.path.isfile(combined_ann):
         try:
-            with open(combined_ann, "r", newline="",
-                      encoding="utf-8-sig") as fh:
-                videos = {row.get("Video", "").strip()
-                          for row in csv.DictReader(fh)}
+            from annotation_store import read_csv_dicts
+            videos = {row.get("Video", "").strip()
+                      for row in read_csv_dicts(combined_ann)}
             videos.discard("")
             if videos:
                 return videos
@@ -337,20 +338,6 @@ def _safe_float(raw):
         return float(raw)
     except (ValueError, TypeError):
         return None
-
-
-def _infer_type(rows):
-    """Infer whether a set of annotation rows represents a State or Point"""
-    for row in rows:
-        raw = row.get("Type", "").strip()
-        if raw:
-            return raw.capitalize()
-    # Fallback: if any row has a non-empty Duration, treat as State
-    for row in rows:
-        dur = row.get("Duration", "").strip()
-        if dur and dur != "NA":
-            return "State"
-    return "Point"
 
 
 def _row_is_state(row):

@@ -150,48 +150,61 @@ class SubjectEditor(QDialog):
         layout = QGridLayout(parent)
         layout.setContentsMargins(10, 5, 10, 5)
         layout.setSpacing(5)
+        self._entries_layout = layout
 
         for row in range(30):
-            name_entry = QLineEdit()
-            name_entry.setFixedWidth(300)
-            name_entry.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            name_entry.setTextMargins(0, 0, 0, 0)
-            layout.addWidget(name_entry, row, 0)
-            self._name_entries.append(name_entry)
+            self._add_entry_row(row)
 
-            key_entry = QLineEdit()
-            key_entry.setFixedWidth(75)
-            key_entry.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            layout.addWidget(key_entry, row, 1)
-            self._key_entries.append(key_entry)
+    def _ensure_rows(self, count):
+        """Grow the grid so a subject file with more than the default 30
+        rows (e.g. edited in a spreadsheet) is shown and saved whole."""
+        while len(self._name_entries) < count:
+            self._add_entry_row(len(self._name_entries))
 
-            me_entry = QLineEdit()
-            me_entry.setFixedWidth(120)
-            me_entry.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            layout.addWidget(me_entry, row, 2)
-            self._me_group_entries.append(me_entry)
+    def _add_entry_row(self, row):
+        layout = self._entries_layout
+        while len(self._subject_colors) <= row:
+            self._subject_colors.append("")
+        name_entry = QLineEdit()
+        name_entry.setFixedWidth(300)
+        name_entry.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        name_entry.setTextMargins(0, 0, 0, 0)
+        layout.addWidget(name_entry, row, 0)
+        self._name_entries.append(name_entry)
 
-            color_btn = QPushButton()
-            color_btn.setFixedSize(40, 25)
-            color_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            color_btn.clicked.connect(
-                lambda checked, r=row: self._pick_subject_color(r))
-            color_btn.setContextMenuPolicy(
-                Qt.ContextMenuPolicy.CustomContextMenu)
-            color_btn.customContextMenuRequested.connect(
-                lambda pos, r=row: self._clear_subject_color(r, pos))
-            layout.addWidget(color_btn, row, 3)
-            self._color_buttons.append(color_btn)
+        key_entry = QLineEdit()
+        key_entry.setFixedWidth(75)
+        key_entry.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(key_entry, row, 1)
+        self._key_entries.append(key_entry)
 
-            delete_btn = QPushButton("x")
-            delete_btn.setFixedSize(25, 25)
-            delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            delete_btn.setStyleSheet(
-                "QPushButton { padding: 0px; font-size: 9px;"
-                " font-weight: normal; }")
-            delete_btn.clicked.connect(
-                lambda checked, r=row: self._delete_subject_row(r))
-            layout.addWidget(delete_btn, row, 4)
+        me_entry = QLineEdit()
+        me_entry.setFixedWidth(120)
+        me_entry.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(me_entry, row, 2)
+        self._me_group_entries.append(me_entry)
+
+        color_btn = QPushButton()
+        color_btn.setFixedSize(40, 25)
+        color_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        color_btn.clicked.connect(
+            lambda checked, r=row: self._pick_subject_color(r))
+        color_btn.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        color_btn.customContextMenuRequested.connect(
+            lambda pos, r=row: self._clear_subject_color(r, pos))
+        layout.addWidget(color_btn, row, 3)
+        self._color_buttons.append(color_btn)
+
+        delete_btn = QPushButton("x")
+        delete_btn.setFixedSize(25, 25)
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.setStyleSheet(
+            "QPushButton { padding: 0px; font-size: 9px;"
+            " font-weight: normal; }")
+        delete_btn.clicked.connect(
+            lambda checked, r=row: self._delete_subject_row(r))
+        layout.addWidget(delete_btn, row, 4)
 
     def _create_control_buttons(self):
         frame = QWidget()
@@ -287,21 +300,20 @@ class SubjectEditor(QDialog):
             return False
 
         try:
-            with open(self.subject_file, "r", newline="",
-                       encoding="utf-8-sig") as fh:
-                reader = csv.reader(fh)
-                self.subjects = []
-                first = True
-                for row in reader:
-                    if first:
-                        first = False
-                        if row[:len(SUBJECT_KEY_HEADERS)] == SUBJECT_KEY_HEADERS:
-                            continue
-                    while len(row) < 4:
-                        row.append("")
-                    self.subjects.append(row[:4])
-                while len(self.subjects) < 30:
-                    self.subjects.append(["", "", "", ""])
+            from annotation_store import read_csv_lists, _headers_match
+            loaded = []
+            first = True
+            for row in read_csv_lists(self.subject_file):
+                if first:
+                    first = False
+                    if _headers_match(row, SUBJECT_KEY_HEADERS):
+                        continue
+                while len(row) < 4:
+                    row.append("")
+                loaded.append(row[:4])
+            while len(loaded) < 30:
+                loaded.append(["", "", "", ""])
+            self.subjects = loaded
             return True
         except (OSError, UnicodeDecodeError, csv.Error) as exc:
             # A non-UTF-8 (e.g. Excel "ANSI") or malformed CSV must not
@@ -312,10 +324,10 @@ class SubjectEditor(QDialog):
             return False
 
     def _update_entries(self):
-        for i, subject in enumerate(self.subjects):
-            if i >= len(self._name_entries):
-                break
-            name, key, me_group, color = (subject + [""] * 4)[:4]
+        self._ensure_rows(len(self.subjects))
+        for i in range(len(self._name_entries)):
+            subject = self.subjects[i] if i < len(self.subjects) else []
+            name, key, me_group, color = (list(subject) + [""] * 4)[:4]
             self._name_entries[i].setText(name)
             self._key_entries[i].setText(key)
             self._me_group_entries[i].setText(me_group)
@@ -401,7 +413,7 @@ class SubjectEditor(QDialog):
                         self._key_entries[i].text(),
                         self._me_group_entries[i].text(),
                         self._subject_colors[i],
-                    ] for i in range(30)]
+                    ] for i in range(len(self._name_entries))]
 
             temp = path + ".tmp"
             try:
@@ -483,7 +495,7 @@ class SubjectEditor(QDialog):
             with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
                 writer = csv.writer(fh)
                 writer.writerow(SUBJECT_KEY_HEADERS)
-                for i in range(30):
+                for i in range(len(self._name_entries)):
                     writer.writerow([
                         self._name_entries[i].text(),
                         self._key_entries[i].text(),

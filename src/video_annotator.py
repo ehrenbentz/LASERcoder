@@ -185,6 +185,28 @@ class MpvOpenGLWidget(QOpenGLWidget):
             self.render_ctx = None
             self.doneCurrent()
 
+# Digit-key speed presets (optional, see "Number Keys Set Speed")
+_SPEED_DIGITS = {str(n): float(n) for n in range(1, 10)}
+_SPEED_DIGITS["0"] = 10.0
+
+# State Annotations tree columns
+_STATE_COL_EVENT = 0
+_STATE_COL_SUBJECT = 1
+_STATE_COL_START = 2
+_STATE_COL_END = 3
+_STATE_TIME_COLS = (_STATE_COL_START, _STATE_COL_END)
+
+
+def _state_tree_row(evt):
+    """Cell texts for one state annotation, in column order."""
+    return [
+        evt["Event"],
+        evt.get("Subject", "NA"),
+        _fmt_time_or_blank(evt["start_time"]),
+        _fmt_time_or_blank(evt["end_time"]),
+    ]
+
+
 def _fmt_time_or_blank(seconds):
     """Human time string, or '' when the value is missing (open state,
     or an imported row without a Start)."""
@@ -1230,8 +1252,22 @@ class VideoAnnotator(QFrame):
                     pass
 
     def _load_data_and_start(self):
-        self.store.load_events()
-        self.store.load_annotations()
+        # Reading is tolerant of Excel-reformatted files, but if a file
+        # is truly unreadable we must stop here: continuing with empty
+        # data would let the next save overwrite the real annotations.
+        try:
+            self.store.load_events()
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not read the event key file:\n"
+                f"{self.event_key_file}\n\n{exc}") from exc
+        try:
+            self.store.load_annotations()
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not read the annotations for this video:\n"
+                f"{self.store.annotations_dir}\n\n{exc}") from exc
+        self._reconcile_external_annotation_edits()
         self.store.write_full_annotations_file()
         self._restore_active_state_events()
         self._restore_subjects()
@@ -1267,6 +1303,81 @@ class VideoAnnotator(QFrame):
             QTimer.singleShot(1000, self._start_waveform_extraction)
         if hasattr(self, 'spectrogram_widget') and self.spectrogram_widget.isVisible():
             QTimer.singleShot(1500, self._start_spectrogram)
+
+    def _reconcile_external_annotation_edits(self):
+        """Offer to keep or discard edits made to the full annotations
+        file in another program (Excel, a text editor, another machine).
+
+        The chunk files are the working copy and normally win; without
+        this step an external edit would be silently overwritten on
+        open.  Runs before the full file is rewritten from the chunks.
+        """
+        try:
+            diff = self.store.detect_full_file_changes()
+        except Exception as exc:
+            logger.warning("External-edit check failed: %s", exc)
+            return
+        if not diff:
+            return
+
+        from annotation_store import describe_annotation_key
+        added, removed = diff["added"], diff["removed"]
+
+        def _lines(keys, sign, limit=6):
+            out = [f"   {sign} {describe_annotation_key(k)}" for k in keys[:limit]]
+            if len(keys) > limit:
+                out.append(f"   {sign} … and {len(keys) - limit} more")
+            return out
+
+        summary = [
+            "The annotations file for this video was changed outside "
+            "LASERcoder:",
+            self.store.full_annotations_file,
+            "",
+            f"Compared with LASERcoder's working copy it has "
+            f"{len(added)} annotation(s) added and {len(removed)} "
+            f"removed or changed.",
+        ]
+        if added:
+            summary += ["", "Added:"] + _lines(added, "+")
+        if removed:
+            summary += ["", "Removed or changed:"] + _lines(removed, "−")
+        summary += [
+            "",
+            "Apply these changes to make them permanent, or discard them "
+            "and restore the file from the working copy.",
+        ]
+
+        self.dialog_open = True
+        try:
+            box = QMessageBox(self.parent)
+            box.setWindowTitle("Annotations Edited Outside LASERcoder")
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setText("\n".join(summary))
+            theme.apply_dialog_theme(box)
+            apply_btn = box.addButton("Apply Changes",
+                                      QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Discard Changes", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(apply_btn)
+            box.exec()
+            chosen = box.clickedButton()
+            box.deleteLater()
+        finally:
+            self.dialog_open = False
+
+        if chosen is not apply_btn:
+            logger.info("External annotation edits discarded by user")
+            return
+
+        if self.store.apply_external_annotations(
+                diff["file_state"], diff["file_point"]):
+            logger.info("External annotation edits applied: +%d -%d",
+                        len(added), len(removed))
+        else:
+            self._show_warning(
+                "Could Not Apply Changes",
+                "The edited annotations could not be written to the "
+                "working copy. The previous annotations are kept.")
 
     def _show_floating_controls(self):
         create_toggle_buttons(self)
@@ -1448,10 +1559,12 @@ class VideoAnnotator(QFrame):
 
         # State annotations
         saf, sal, self.state_annotations_tree = _make_tree(
-            ["Event", "Start", "End"])
-        for col in (1, 2):
+            ["Event", "Subject", "Start", "End"])
+        for col in _STATE_TIME_COLS:
             self.state_annotations_tree.headerItem().setTextAlignment(
                 col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.state_annotations_tree.setColumnHidden(
+            _STATE_COL_SUBJECT, not get_config().get_show_subject_column())
         sa_header = QWidget()
         sa_header.setStyleSheet(theme.header_widget_stylesheet())
         self._header_widgets.append(sa_header)
@@ -1655,9 +1768,7 @@ class VideoAnnotator(QFrame):
         self.selected_index = None
         for tree, events, fmt_fn in [
             (self.state_annotations_tree, self.store.state_events,
-             lambda evt: [evt["Event"],
-                          _fmt_time_or_blank(evt["start_time"]),
-                          _fmt_time_or_blank(evt["end_time"])]),
+             _state_tree_row),
             (self.point_annotations_tree, self.store.point_events,
              lambda evt: [evt["Event"], evt["time"]]),
         ]:
@@ -1667,7 +1778,7 @@ class VideoAnnotator(QFrame):
             for evt in events:
                 item = QTreeWidgetItem(fmt_fn(evt))
                 if tree is self.state_annotations_tree:
-                    for col in (1, 2):
+                    for col in _STATE_TIME_COLS:
                         item.setTextAlignment(
                             col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 tree.addTopLevelItem(item)
@@ -1687,12 +1798,8 @@ class VideoAnnotator(QFrame):
 
     def _append_state_to_tree(self, evt):
         """Append a single state annotation to the state tree and scroll to it."""
-        item = QTreeWidgetItem([
-            evt["Event"],
-            _fmt_time_or_blank(evt["start_time"]),
-            _fmt_time_or_blank(evt["end_time"]),
-        ])
-        for col in (1, 2):
+        item = QTreeWidgetItem(_state_tree_row(evt))
+        for col in _STATE_TIME_COLS:
             item.setTextAlignment(
                 col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.state_annotations_tree.addTopLevelItem(item)
@@ -1711,8 +1818,9 @@ class VideoAnnotator(QFrame):
             if remaining is not None and remaining <= 0:
                 return
             item = tree.topLevelItem(i)
-            if item.text(0) == event_name and item.text(2) == "":
-                item.setText(2, end_time_str)
+            if (item.text(_STATE_COL_EVENT) == event_name
+                    and item.text(_STATE_COL_END) == ""):
+                item.setText(_STATE_COL_END, end_time_str)
                 if remaining is not None:
                     remaining -= 1
 
@@ -1819,6 +1927,28 @@ class VideoAnnotator(QFrame):
             lambda checked: self._toggle_floating_item(
                 "floating_headers", checked))
 
+        subject_col_action = menu.addAction("Show Subject Column")
+        subject_col_action.setCheckable(True)
+        subject_col_action.setChecked(cfg.get_show_subject_column())
+        subject_col_action.triggered.connect(
+            lambda checked: self._toggle_floating_item(
+                "subject_column", checked))
+
+        video_name_action = menu.addAction("Show Video Name")
+        video_name_action.setCheckable(True)
+        video_name_action.setChecked(cfg.get_show_video_name())
+        video_name_action.triggered.connect(
+            lambda checked: self._toggle_floating_item(
+                "video_name", checked))
+
+        speed_keys_action = menu.addAction(
+            "Number Keys Set Speed (1–9 = 1x–9x, 0 = 10x)")
+        speed_keys_action.setCheckable(True)
+        speed_keys_action.setChecked(cfg.get_number_key_speed())
+        speed_keys_action.triggered.connect(
+            lambda checked: self._toggle_floating_item(
+                "number_key_speed", checked))
+
         menu.addSeparator()
         # Defer the dialog-opening slot via QTimer so the parent menu's
         # finally block (which clears dialog_open) runs first.
@@ -1877,6 +2007,26 @@ class VideoAnnotator(QFrame):
             if not checked and self.subject_buttons_window:
                 from floating_controls import toggle_subject_buttons
                 toggle_subject_buttons(self)
+        elif item == "subject_column":
+            cfg.set_show_subject_column(checked)
+            self.state_annotations_tree.setColumnHidden(
+                _STATE_COL_SUBJECT, not checked)
+        elif item == "video_name":
+            cfg.set_show_video_name(checked)
+            self._update_subject_overlay()
+        elif item == "number_key_speed":
+            if checked:
+                conflicts = self._number_key_conflicts()
+                if conflicts:
+                    cfg.set_number_key_speed(False)
+                    self._show_warning(
+                        "Number Keys Already Assigned",
+                        "\"Number Keys Set Speed\" cannot be enabled because "
+                        "these keys are assigned in the current event key "
+                        "or subject file:\n\n" + "\n".join(conflicts)
+                        + "\n\nChange those shortcuts first.")
+                    return
+            cfg.set_number_key_speed(checked)
         elif item == "floating_headers":
             cfg.set_show_floating_headers(checked)
             if hasattr(self, "event_buttons_window") and self.event_buttons_window:
@@ -2272,6 +2422,16 @@ class VideoAnnotator(QFrame):
     # Subject tracking
 
     def _create_subject_overlay(self):
+        # Video name (top centre) with the active-subject readout
+        # stacked directly beneath it when subjects are active.
+        self._video_name_overlay = QLabel(self.video_frame)
+        self._video_name_overlay.setStyleSheet(
+            "QLabel { background-color: rgba(0, 0, 0, 160); color: white; "
+            "padding: 3px 12px; border-radius: 6px; font-size: 15px; }")
+        self._video_name_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._video_name_overlay.setText(self.video_name)
+        self._video_name_overlay.hide()
+
         self._subject_overlay = QLabel(self.video_frame)
         self._subject_overlay.setStyleSheet(
             "QLabel { background-color: rgba(0, 0, 0, 160); color: white; "
@@ -2281,6 +2441,22 @@ class VideoAnnotator(QFrame):
         self._subject_overlay.hide()
 
     def _update_subject_overlay(self):
+        """Lay out the top-centre overlays: video name, then subjects."""
+        vw = self.video_frame.width()
+        y = -2
+
+        name_lbl = getattr(self, "_video_name_overlay", None)
+        if name_lbl is not None:
+            if get_config().get_show_video_name():
+                name_lbl.setText(self.video_name)
+                name_lbl.adjustSize()
+                name_lbl.move((vw - name_lbl.width()) // 2, y)
+                name_lbl.show()
+                name_lbl.raise_()
+                y += name_lbl.height() + 2
+            else:
+                name_lbl.hide()
+
         if not self._subject_overlay:
             return
         if not self.active_subjects:
@@ -2289,9 +2465,8 @@ class VideoAnnotator(QFrame):
         self._subject_overlay.setText(
             "Subject: " + "; ".join(sorted(self.active_subjects)))
         self._subject_overlay.adjustSize()
-        vw = self.video_frame.width()
         ow = self._subject_overlay.width()
-        self._subject_overlay.move((vw - ow) // 2, -2)
+        self._subject_overlay.move((vw - ow) // 2, y)
         self._subject_overlay.show()
         self._subject_overlay.raise_()
 
@@ -2306,34 +2481,41 @@ class VideoAnnotator(QFrame):
             self._update_subject_overlay()
             return
         try:
-            with open(subject_file_path, "r", newline="",
-                       encoding="utf-8-sig") as fh:
-                reader = csv.reader(fh)
-                first = True
-                for row in reader:
-                    if first:
-                        first = False
-                        if row[:len(SUBJECT_KEY_HEADERS)] == SUBJECT_KEY_HEADERS:
-                            continue
-                    if len(row) < 2:
+            from annotation_store import read_csv_lists, _headers_match
+            first = True
+            for row in read_csv_lists(subject_file_path):
+                if first:
+                    first = False
+                    if _headers_match(row, SUBJECT_KEY_HEADERS):
                         continue
-                    name = row[0].strip()
-                    hotkey = row[1].strip().lower()
-                    me_group = row[2].strip() if len(row) > 2 else ""
-                    custom_color = row[3].strip() if len(row) > 3 else ""
-                    if not name:
-                        continue
-                    if hotkey:
-                        self.subject_key_map[hotkey] = name
-                    self.subject_names.append(name)
-                    if me_group:
-                        self.subject_me_groups[name] = me_group
-                    if custom_color:
-                        self.subject_colors[name] = custom_color
-        except OSError:
-            pass
+                if len(row) < 1:
+                    continue
+                name = row[0].strip()
+                hotkey = row[1].strip().lower() if len(row) > 1 else ""
+                me_group = row[2].strip() if len(row) > 2 else ""
+                custom_color = row[3].strip() if len(row) > 3 else ""
+                if not name:
+                    continue
+                if hotkey:
+                    self.subject_key_map[hotkey] = name
+                self.subject_names.append(name)
+                if me_group:
+                    self.subject_me_groups[name] = me_group
+                if custom_color:
+                    self.subject_colors[name] = custom_color
+        except Exception as exc:
+            # A subject file Excel reformatted must not stop the video
+            # from opening; the user just gets no subjects until fixed.
+            logger.warning("Cannot read subject file %s: %s",
+                           subject_file_path, exc)
+            self._show_warning(
+                "Subject File Unreadable",
+                f"Could not read the subject file:\n{subject_file_path}\n\n"
+                f"{exc}\n\nThe video will open without subjects.")
         self.subject_file = subject_file_path
         self.store.save_subject_file(subject_file_path)
+        # A subject file may claim a digit that the speed presets use
+        self._revalidate_number_key_speed()
 
         # Rebuild subject buttons if already open (e.g. after editing subjects)
         if self.subject_buttons_window:
@@ -2342,8 +2524,11 @@ class VideoAnnotator(QFrame):
             toggle_subject_buttons(self)
 
     def _restore_subjects(self):
+        # load_subject_file resolves the remembered name inside this
+        # project's Keys/Subject_Keys, so a project moved between
+        # machines or operating systems keeps its subjects.
         subject_file_path = self.store.load_subject_file()
-        if subject_file_path and os.path.exists(subject_file_path):
+        if subject_file_path:
             self._load_subjects(subject_file_path)
         loaded = self.store.load_active_subjects()
         valid_names = set(self.subject_names)
@@ -2351,37 +2536,77 @@ class VideoAnnotator(QFrame):
         self._update_subject_overlay()
 
     def _toggle_subject(self, hotkey):
-        name = self.subject_key_map[hotkey]
+        self.toggle_subject(self.subject_key_map[hotkey])
+
+    def toggle_subject(self, name):
+        """Activate or deactivate a subject (hotkey and button path).
+
+        Refused, with a dialog, when it would deactivate a subject that
+        has an open state annotation: those rows are keyed by subject,
+        and changing the subject set under them corrupted the tracking.
+        End the state first.
+        """
+        if name in self.active_subjects:
+            leaving = {name}
+        else:
+            leaving = self._me_subjects_to_deactivate(name)
+
+        blocked = self._subjects_with_open_states() & leaving
+        if blocked:
+            if self.player:
+                self.player.pause = True
+            lines = []
+            for subj in sorted(blocked):
+                events = sorted({
+                    self.store.state_event_keys.get(k, k)
+                    for k, subs in self.active_state_subjects.items()
+                    if subj in (subs or [])})
+                lines.append(f"  {subj}: {', '.join(events)}")
+            self._show_warning(
+                "Subject Has an Open State",
+                "Cannot change subjects while a state annotation is "
+                "open for:\n\n" + "\n".join(lines)
+                + "\n\nEnd the state first, then change subjects.")
+            return False
+
         if name in self.active_subjects:
             self.active_subjects.discard(name)
         else:
-            self._deactivate_me_subjects(name)
+            for s in leaving:
+                self.active_subjects.discard(s)
             self.active_subjects.add(name)
         self._update_subject_overlay()
         self.store.save_active_subjects(list(self.active_subjects))
         from floating_controls import _refresh_subject_button_styles
         _refresh_subject_button_styles(self)
+        return True
+
+    def _subjects_with_open_states(self):
+        """Subjects that currently have an open state annotation."""
+        found = set()
+        for subs in self.active_state_subjects.values():
+            for s in subs or []:
+                if s and s != "NA":
+                    found.add(s)
+        return found
+
+    def _me_subjects_to_deactivate(self, activating_name):
+        """Subjects that activating *activating_name* would switch off:
+        every other active subject under the all-mutually-exclusive
+        setting, otherwise the active members of its ME group."""
+        if get_config().get_all_subjects_mutually_exclusive():
+            return set(self.active_subjects) - {activating_name}
+        me_group = self.subject_me_groups.get(activating_name)
+        if not me_group:
+            return set()
+        return {s for s in self.active_subjects
+                if self.subject_me_groups.get(s) == me_group
+                and s != activating_name}
 
     def _deactivate_me_subjects(self, activating_name):
         """Deactivate other subjects in the same ME group, or all others
         if the global all-subjects-ME setting is enabled."""
-        from config_manager import get_config
-        cfg = get_config()
-
-        if cfg.get_all_subjects_mutually_exclusive():
-            self.active_subjects.clear()
-            return
-
-        me_group = self.subject_me_groups.get(activating_name)
-        if not me_group:
-            return
-
-        to_remove = [
-            s for s in self.active_subjects
-            if self.subject_me_groups.get(s) == me_group
-            and s != activating_name
-        ]
-        for s in to_remove:
+        for s in self._me_subjects_to_deactivate(activating_name):
             self.active_subjects.discard(s)
 
     # Key bindings
@@ -2589,6 +2814,16 @@ class VideoAnnotator(QFrame):
 
                 if char and char in self.subject_key_map:
                     self._toggle_subject(char)
+                    return True
+
+                # Digit keys as speed presets (1-9 = 1x-9x, 0 = 10x).
+                # Checked after events and subjects so a behaviour bound
+                # to a digit always wins; enabling the option is refused
+                # while any such binding exists.
+                if (char and char in _SPEED_DIGITS
+                        and clean_mods == Qt.KeyboardModifier.NoModifier
+                        and get_config().get_number_key_speed()):
+                    self._set_speed(_SPEED_DIGITS[char])
                     return True
 
         elif event.type() == QEvent.Type.KeyRelease:
@@ -2953,24 +3188,52 @@ class VideoAnnotator(QFrame):
                       key=lambda i: abs(steps[i] - current))
         new_idx = max(0, min(len(steps) - 1,
                              idx + (1 if delta > 0 else -1)))
-        new_rate = steps[new_idx]
-        if new_rate != current:
-            self.player.speed = new_rate
-            if new_rate < current:
-                self.player.command("seek", 0, "relative+exact")
-            self.progress_bar.set_center_text(f"({new_rate:.1f}x)")
-            self.progress_bar.update()
-            if hasattr(self, 'spectrogram_widget') and self.spectrogram_widget.isVisible():
-                self.spectrogram_widget.set_playback_speed(new_rate)
+        self._set_speed(steps[new_idx])
 
     def _reset_speed(self):
-        if self.player.speed != 1.0:
-            self.player.speed = 1.0
+        self._set_speed(1.0)
+
+    def _set_speed(self, new_rate):
+        """Set playback speed and refresh the on-screen speed readout."""
+        if not self.player:
+            return
+        current = self.player.speed
+        if new_rate == current:
+            return
+        self.player.speed = new_rate
+        if new_rate < current:
             self.player.command("seek", 0, "relative+exact")
-            self.progress_bar.set_center_text("(1.0x)")
-            self.progress_bar.update()
-            if hasattr(self, 'spectrogram_widget') and self.spectrogram_widget.isVisible():
-                self.spectrogram_widget.set_playback_speed(1.0)
+        self.progress_bar.set_center_text(f"({new_rate:.1f}x)")
+        self.progress_bar.update()
+        if hasattr(self, 'spectrogram_widget') and self.spectrogram_widget.isVisible():
+            self.spectrogram_widget.set_playback_speed(new_rate)
+
+    def _number_key_conflicts(self):
+        """Digit keys already used by events or subjects, as
+        'key -> what' strings; empty when the speed presets are safe."""
+        conflicts = []
+        for digit in sorted(_SPEED_DIGITS):
+            info = self.store.event_map.get(digit)
+            if info:
+                conflicts.append(f"'{digit}' → event \"{info['Event']}\"")
+            subject = self.subject_key_map.get(digit)
+            if subject:
+                conflicts.append(f"'{digit}' → subject \"{subject}\"")
+        return conflicts
+
+    def _revalidate_number_key_speed(self):
+        """Turn the digit-speed option off if a key or subject file
+        loaded during the session now claims a digit."""
+        cfg = get_config()
+        if not cfg.get_number_key_speed():
+            return
+        conflicts = self._number_key_conflicts()
+        if conflicts:
+            cfg.set_number_key_speed(False)
+            self._show_warning(
+                "Number Key Speed Disabled",
+                "\"Number Keys Set Speed\" was turned off because these "
+                "keys are now assigned:\n\n" + "\n".join(conflicts))
 
     def _reset_coding_end_flag(self):
         current = self.player.time_pos or 0
@@ -3030,6 +3293,12 @@ class VideoAnnotator(QFrame):
             self.selected_index = tree.indexOfTopLevelItem(item)
             menu.addAction("View Details", lambda: show_annotation_details(self))
             menu.addAction("Skip to Annotation", self._skip_to_annotation)
+            if (tree is self.state_annotations_tree
+                    and 0 <= self.selected_index < len(self.store.state_events)
+                    and self.store.state_events[self.selected_index]
+                    .get("end_time") is not None):
+                menu.addAction("Reopen State (clear end time)",
+                               self._reopen_state_annotation)
             menu.addAction("Delete", self.delete_annotation)
 
         # Block the global hotkey filter while the popup is open:
@@ -3040,6 +3309,77 @@ class VideoAnnotator(QFrame):
             menu.exec(tree.viewport().mapToGlobal(point))
         finally:
             self.dialog_open = False
+
+    def _reopen_state_annotation(self):
+        """Clear a closed state's end time so it becomes active again.
+
+        Lets the user fix a wrong end point by pressing the hotkey at
+        the right moment, instead of deleting and re-recording the whole
+        state.  Refused when the event is already active on another
+        annotation, or when a mutually exclusive partner is active.
+        """
+        if (self.selected_treeview is not self.state_annotations_tree
+                or self.selected_index is None
+                or not 0 <= self.selected_index < len(self.store.state_events)):
+            return
+        evt = self.store.state_events[self.selected_index]
+        if evt.get("end_time") is None:
+            return
+
+        if not self.store.check_file_access():
+            if self.player:
+                self.player.pause = True
+            self.on_write_error()
+            return
+
+        name = evt.get("Event", "")
+        name_to_key = {v: k for k, v in self.store.state_event_keys.items()}
+        key = name_to_key.get(name)
+        if key is None:
+            self._show_warning(
+                "Cannot Reopen",
+                f"\"{name}\" is not a state event in the current event key, "
+                "so it cannot be made active.")
+            return
+
+        # Already active on a different annotation (another start time)?
+        # Sibling subject rows of the same start are fine to rejoin.
+        if (key in self.active_state_events
+                and self.active_state_events[key] != evt.get("start_time")):
+            self._show_warning(
+                "Cannot Reopen",
+                f"\"{name}\" is already active on another annotation.\n\n"
+                "End that instance first.")
+            return
+
+        me_group = self.store.me_groups.get(key)
+        if me_group:
+            for other_key in self.active_state_events:
+                if (other_key != key
+                        and self.store.me_groups.get(other_key) == me_group):
+                    other = self.store.state_event_keys.get(other_key)
+                    self._show_warning(
+                        "Cannot Reopen",
+                        f"\"{name}\" is mutually exclusive with \"{other}\", "
+                        "which is currently active.\n\nEnd it first.")
+                    return
+
+        old_end = evt["end_time"]
+        old_manual = evt.get("Manual_Edit", False)
+        evt["end_time"] = None
+        evt["Manual_Edit"] = True
+        if not self.store.save_sorted_annotations():
+            evt["end_time"] = old_end
+            evt["Manual_Edit"] = old_manual
+            self.on_write_error()
+            return
+        self._schedule_full_annotations_write()
+
+        self._register_open_state(evt)
+        logger.info("Reopened state '%s' [%s] at %s",
+                    name, evt.get("Subject"), evt.get("start_time"))
+        self._update_annotations()
+        self._populate_event_trees()
 
     def edit_annotation(self):
         if not self.selected_item:
@@ -3052,7 +3392,11 @@ class VideoAnnotator(QFrame):
     def _skip_to_annotation(self):
         if not self.selected_item:
             return
-        time_str = self.selected_item.text(1)
+        # State tree: Event, Subject, Start, End.  Point tree: Event, Time.
+        col = (_STATE_COL_START
+               if self.selected_treeview is self.state_annotations_tree
+               else 1)
+        time_str = self.selected_item.text(col)
         t = parse_time(time_str)
         if t is not None:
             self.player.time_pos = t
@@ -3500,6 +3844,7 @@ class VideoAnnotator(QFrame):
                     # hotkeys so pressing a key closes the open state
                     # instead of starting a duplicate.
                     self._restore_active_state_events()
+                    self._revalidate_number_key_speed()
                     self._update_annotations()
                     self._populate_event_trees()
 

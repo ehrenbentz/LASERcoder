@@ -315,6 +315,30 @@ class ConfigManager:
         self.config['show_subject_list'] = bool(visible)
         self.save_config()
 
+    def get_show_video_name(self):
+        """Whether the current video's name is shown over the video"""
+        return self.config.get('show_video_name', True)
+
+    def set_show_video_name(self, visible):
+        self.config['show_video_name'] = bool(visible)
+        self.save_config()
+
+    def get_number_key_speed(self):
+        """Whether the digit keys set playback speed (1-9 = 1x-9x, 0 = 10x)"""
+        return self.config.get('number_key_speed', False)
+
+    def set_number_key_speed(self, enabled):
+        self.config['number_key_speed'] = bool(enabled)
+        self.save_config()
+
+    def get_show_subject_column(self):
+        """Whether the State Annotations tree shows its Subject column"""
+        return self.config.get('show_subject_column', True)
+
+    def set_show_subject_column(self, visible):
+        self.config['show_subject_column'] = bool(visible)
+        self.save_config()
+
     def get_subject_list_expanded(self):
         return self.config.get('subject_list_expanded', False)
 

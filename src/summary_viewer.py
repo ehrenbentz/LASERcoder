@@ -27,9 +27,9 @@ from annotation_store import is_chunked_annotations_dir
 
 def _load_csv(path):
     try:
-        with open(path, "r", newline="", encoding="utf-8-sig") as fh:
-            return list(csv.DictReader(fh))
-    except (OSError, csv.Error):
+        from annotation_store import read_csv_dicts
+        return read_csv_dicts(path)
+    except (OSError, csv.Error, ValueError):
         return []
 
 
@@ -161,6 +161,7 @@ class _BoxplotViewer(QDialog):
         self._col_cbs      = {}       # col_key -> QCheckBox
         self._use_whole_video = False
         self._whole_computed = False   # lazily compute whole-video rows
+        self._split_types  = set()    # event names used as both State and Point
 
         # Scan for combined summary CSVs (used for file selector labels)
         self._available = []
@@ -361,8 +362,19 @@ class _BoxplotViewer(QDialog):
         self._whole_rows = []
         self._whole_computed = False
 
-        # Build event list from combined summary (authoritative event set)
-        events = [r.get("Event", "") for r in comb_rows if r.get("Event")]
+        # Build event list from combined summary (authoritative event set).
+        # A name used for both a State and a Point event is shown as two
+        # entries, "Name (State)" and "Name (Point)", so the plots do
+        # not pool the two behaviours.
+        types_by_event = {}
+        for r in comb_rows:
+            ev = r.get("Event", "").strip()
+            if ev:
+                types_by_event.setdefault(ev, set()).add(
+                    r.get("Type", "").strip().capitalize())
+        self._split_types = {ev for ev, ts in types_by_event.items()
+                             if len(ts) > 1}
+        events = [self._event_label(r) for r in comb_rows if r.get("Event")]
         new_order = []
         for e in events:
             if e not in new_order:
@@ -382,6 +394,15 @@ class _BoxplotViewer(QDialog):
 
         self._rebuild_event_list()
         self._generate()
+
+    def _event_label(self, row):
+        """Display key for a summary row: the event name, suffixed with
+        the type when the same name is used by both a State and a Point."""
+        ev = row.get("Event", "").strip()
+        if ev in getattr(self, "_split_types", ()):
+            btype = row.get("Type", "").strip().capitalize() or "Point"
+            return f"{ev} ({btype})"
+        return ev
 
     def _compute_whole_video_rows(self):
         """Recompute individual summary rows ignoring coding parameters"""
@@ -620,7 +641,7 @@ class _BoxplotViewer(QDialog):
         # Build per-event value lists from individual summaries
         event_data = {e: {} for e in visible_events}
         for row in rows:
-            ev = row.get("Event", "").strip()
+            ev = self._event_label(row)
             if ev not in event_data:
                 continue
             for col, _ in _BOXPLOT_COLS:

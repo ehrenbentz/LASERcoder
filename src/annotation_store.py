@@ -1,10 +1,15 @@
 # annotation_store.py
 
+import io
 import os
 import re
 import csv
+import sys
 import json
 import time
+import codecs
+import hashlib
+from collections import Counter
 
 from debug_logger import get_logger
 
@@ -13,6 +18,118 @@ logger = get_logger()
 EVENT_KEY_HEADERS = ["Event", "Key", "Type", "MEgroup"]
 
 CHUNK_SIZE = 100
+
+
+# Tolerant CSV reading
+#
+# Files edited in Excel (especially on macOS) come back in shapes the
+# strict readers used to choke on: Mac Roman or Windows-1252 bytes
+# instead of UTF-8, CR-only or CRLF line endings, ';' or tab delimiters
+# in some locales, trailing blank rows, and '~$' lock files sitting next
+# to the real file.  Everything that reads a CSV goes through here so a
+# reformatted file degrades to "some rows skipped", never to a crash.
+
+def _is_junk_name(name):
+    """OS metadata, resource forks and Office lock files."""
+    return name.startswith(("._", "~", "."))
+
+
+def read_csv_text(path):
+    """Return the decoded text of a CSV file, trying UTF-8 (with or
+    without BOM) first, then the legacy Excel encodings, and finally
+    UTF-8 with replacement characters so decoding never fails."""
+    with open(path, "rb") as f:
+        data = f.read()
+    # Any leftover byte-order mark (double BOMs happen) is stripped so
+    # the first header cell never comes back as "﻿Video".
+    return _decode_csv_bytes(data, path).lstrip("﻿")
+
+
+def _decode_csv_bytes(data, path):
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        try:
+            return data.decode("utf-16")
+        except UnicodeDecodeError:
+            pass
+    if data.startswith(codecs.BOM_UTF8):
+        data = data[len(codecs.BOM_UTF8):]
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    # Mac Roman and Windows-1252 both accept almost any byte, so pick
+    # the decoding whose non-ASCII characters are lowercase letters
+    # (accents such as é, ü, ñ as they occur in words) rather than
+    # symbols or stray capitals: a lowercase accent in one encoding
+    # becomes Ž, È, √ or ¿ in the other.  Ties go to the platform's
+    # own Excel default.
+    legacy = (("mac_roman", "cp1252") if sys.platform == "darwin"
+              else ("cp1252", "mac_roman"))
+    best, best_score = None, None
+    for enc in legacy:
+        try:
+            text = data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        score = sum((1 if c.islower() else 0) if c.isalpha() else -1
+                    for c in text if ord(c) > 127)
+        if best_score is None or score > best_score:
+            best, best_score = (enc, text), score
+    if best is not None:
+        logger.warning("CSV %s is not UTF-8; decoded as %s", path, best[0])
+        return best[1]
+    logger.warning("CSV %s: undecodable bytes replaced", path)
+    return data.decode("utf-8", errors="replace")
+
+
+def _csv_delimiter(text):
+    """Pick the delimiter from the header line: ',' unless ';' or a tab
+    clearly dominates (Excel in some locales writes ';')."""
+    first = text.split("\n", 1)[0].split("\r", 1)[0]
+    counts = {d: first.count(d) for d in (",", ";", "\t")}
+    if not any(counts.values()):
+        return ","
+    return max(counts, key=counts.get)
+
+
+def read_csv_lists(path):
+    """All rows of a CSV as lists of stripped strings (blank rows dropped)."""
+    text = read_csv_text(path)
+    reader = csv.reader(io.StringIO(text, newline=""),
+                        delimiter=_csv_delimiter(text))
+    rows = []
+    for row in reader:
+        cells = [c.strip() for c in row]
+        if any(cells):
+            rows.append(cells)
+    return rows
+
+
+def read_csv_dicts(path):
+    """All data rows of a CSV as dicts keyed by stripped header names.
+
+    Short rows are padded with '' and surplus cells dropped, so callers
+    can use row.get(...) freely.  Blank rows are skipped."""
+    text = read_csv_text(path)
+    reader = csv.DictReader(io.StringIO(text, newline=""),
+                            delimiter=_csv_delimiter(text))
+    if reader.fieldnames:
+        reader.fieldnames = [
+            (h or "").strip() for h in reader.fieldnames]
+    rows = []
+    for row in reader:
+        row.pop(None, None)
+        clean = {k: ("" if v is None else v)
+                 for k, v in row.items() if k}
+        if any(str(v).strip() for v in clean.values()):
+            rows.append(clean)
+    return rows
+
+
+def _headers_match(row, headers):
+    """Case- and whitespace-insensitive header row check."""
+    return ([c.strip().lower() for c in row[:len(headers)]]
+            == [h.lower() for h in headers])
 
 
 class AnnotationStore:
@@ -67,39 +184,41 @@ class AnnotationStore:
         self.me_groups.clear()
         self.event_map.clear()
 
-        with open(self.event_key_file, "r", newline="", encoding="utf-8-sig") as f:
-            reader = csv.reader(f)
-            first = True
-            for row in reader:
-                if first:
-                    first = False
-                    if row[:len(EVENT_KEY_HEADERS)] == EVENT_KEY_HEADERS:
-                        continue
-                if not row or len(row) < 3:
+        first = True
+        for row in read_csv_lists(self.event_key_file):
+            if first:
+                first = False
+                if _headers_match(row, EVENT_KEY_HEADERS):
                     continue
-                name = row[0].strip()
-                key = row[1].strip().lower()
-                btype = row[2].strip().lower()
-                me_group = row[3].strip() if len(row) > 3 else ""
+            if len(row) < 3:
+                continue
+            name = row[0].strip()
+            key = row[1].strip().lower()
+            btype = row[2].strip().lower()
+            me_group = row[3].strip() if len(row) > 3 else ""
 
-                if not name:
-                    continue
+            if not name:
+                continue
+            if btype not in ("state", "point"):
+                logger.warning("Event '%s' has unknown type '%s'; "
+                               "treated as point", name, btype)
+                btype = "point"
 
-                # Events without a shortcut key get a synthetic
-                # internal key so they remain clickable via buttons
-                # but unreachable from the keyboard.
-                if not key:
-                    key = f"__nokey_{len(self.events)}"
+            # Events without a shortcut key get a synthetic
+            # internal key so they remain clickable via buttons
+            # but unreachable from the keyboard.
+            if not key:
+                key = f"__nokey_{len(self.events)}"
 
-                if btype == "state":
-                    self.state_event_keys[key] = name
-                    if me_group:
-                        self.me_groups[key] = me_group
-                elif btype == "point":
-                    self.point_event_keys[key] = name
+            if btype == "state":
+                self.state_event_keys[key] = name
+                if me_group:
+                    self.me_groups[key] = me_group
+            else:
+                self.point_event_keys[key] = name
 
-                self.event_map[key] = {"Event": name, "Type": btype.capitalize()}
-                self.events.append((name, key, btype, me_group))
+            self.event_map[key] = {"Event": name, "Type": btype.capitalize()}
+            self.events.append((name, key, btype, me_group))
 
 
     # Chunk management
@@ -114,7 +233,8 @@ class AnnotationStore:
             return []
         return sorted(
             (f for f in os.listdir(self.annotations_dir)
-             if f.endswith(".csv") and "_chunk_" in f),
+             if f.endswith(".csv") and "_chunk_" in f
+             and not _is_junk_name(f)),
             key=lambda f: (_chunk_index(f), f))
 
     def _chunk_path(self, filename):
@@ -163,27 +283,41 @@ class AnnotationStore:
             for chunk_name in self._get_chunk_files():
                 chunk_path = self._chunk_path(chunk_name)
                 try:
-                    with open(chunk_path, "r", newline="",
-                              encoding="utf-8-sig") as f:
-                        for row in csv.DictReader(f):
-                            self._parse_annotation_row(row)
-                except OSError:
-                    pass
+                    rows = read_csv_dicts(chunk_path)
+                except OSError as exc:
+                    logger.warning("Cannot read chunk %s: %s", chunk_path, exc)
+                    continue
+                for row in rows:
+                    try:
+                        self._parse_annotation_row(row)
+                    except Exception as exc:  # one bad row must not sink the load
+                        logger.warning("Skipping unreadable annotation row "
+                                       "in %s: %s (%s)", chunk_name, row, exc)
 
     def _parse_annotation_row(self, row):
-        """Parse one CSV row into state_events or point_events."""
+        """Parse one CSV row into state_events or point_events.
+
+        Tolerates Excel edits: times are taken from the machine columns
+        when they parse, else from the human-readable columns; rows with
+        no usable event name or (for points) no usable time are skipped.
+        """
         atype = row.get("Type", "").strip().lower()
         name = row.get("Event", "").strip()
+        if not name:
+            return
         notes = row.get("Notes", "")
         subject = row.get("Subject", "").strip() or "NA"
 
+        if not atype:
+            # Type column lost: a row with an End or Duration is a state
+            end_cell = row.get("End", "").strip()
+            dur_cell = row.get("Duration", "").strip()
+            atype = ("state" if (end_cell and end_cell != "NA")
+                     or (dur_cell and dur_cell != "NA") else "point")
+
         if atype == "state":
-            raw_start = row.get("Start", "").strip()
-            raw_end = row.get("End", "").strip()
-            start_time = (float(raw_start)
-                          if raw_start and raw_start != "NA" else None)
-            end_time = (float(raw_end)
-                        if raw_end and raw_end != "NA" else None)
+            start_time = _time_from_cells(row.get("Start"), row.get("H_Start"))
+            end_time = _time_from_cells(row.get("End"), row.get("H_End"))
 
             self.state_events.append({
                 "Event": name,
@@ -196,10 +330,19 @@ class AnnotationStore:
             })
 
         elif atype == "point":
+            human = row.get("H_Start", "").strip()
+            seconds = _time_from_cells(row.get("Start"), human)
+            if seconds is None:
+                logger.warning("Point row without a usable time skipped: %s", row)
+                return
+            try:
+                parse_time(human)
+            except (ValueError, TypeError):
+                human = format_time_human(seconds)
             self.point_events.append({
                 "Event": name,
                 "Subject": subject,
-                "time": row.get("H_Start", "").strip(),
+                "time": human,
                 "Manual_Edit": row.get("Manual_Edit", "False"),
                 "Notes": notes,
             })
@@ -236,9 +379,7 @@ class AnnotationStore:
                 chunk_name = chunks[-1]
                 last_path = self._chunk_path(chunk_name)
                 if os.path.exists(last_path):
-                    with open(last_path, "r", newline="",
-                              encoding="utf-8-sig") as f:
-                        existing = list(csv.DictReader(f))
+                    existing = read_csv_dicts(last_path)
 
             # Next index for any new chunk (max existing index + 1,
             # robust against gaps left by deleted chunks)
@@ -297,12 +438,8 @@ class AnnotationStore:
             def rows_for(name):
                 if name not in loaded:
                     path = self._chunk_path(name)
-                    if not os.path.exists(path):
-                        loaded[name] = []
-                    else:
-                        with open(path, "r", newline="",
-                                  encoding="utf-8-sig") as f:
-                            loaded[name] = list(csv.DictReader(f))
+                    loaded[name] = (read_csv_dicts(path)
+                                    if os.path.exists(path) else [])
                 return loaded[name]
 
             def find_open_row(want_subject):
@@ -445,9 +582,101 @@ class AnnotationStore:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(temp, path)
+            # Remember what we wrote so a later edit of this file in
+            # another program can be recognised (see
+            # detect_full_file_changes).
+            self._merge_and_write({"full_file_hash": _file_fingerprint(path)})
             return True
         except (PermissionError, OSError, ValueError) as exc:
             logger.warning("Failed to write full annotations file: %s", exc)
+            return False
+
+    # External edits of the full annotations file
+
+    def _parse_rows_to_lists(self, rows):
+        """Parse CSV row dicts into (state_events, point_events) without
+        touching this store's own lists."""
+        saved = (self.state_events, self.point_events)
+        self.state_events, self.point_events = [], []
+        try:
+            for row in rows:
+                try:
+                    self._parse_annotation_row(row)
+                except Exception as exc:
+                    logger.warning("Skipping unreadable row %s: %s", row, exc)
+            return self.state_events, self.point_events
+        finally:
+            self.state_events, self.point_events = saved
+
+    def detect_full_file_changes(self):
+        """Report edits made to the full annotations file outside LASERcoder.
+
+        The file is normally a mirror of the chunk files (the working
+        copy).  If its content no longer matches what LASERcoder last
+        wrote, the two are compared annotation by annotation.  Returns
+        None when there is nothing to reconcile (no file, unchanged, or
+        only formatting differs), else a dict with:
+            added / removed: lists of annotation keys (see
+                             annotation_key) present in only one side
+            file_state / file_point: the file's parsed annotations,
+                             ready for apply_external_annotations()
+        """
+        path = self.full_annotations_file
+        if not path or not os.path.isfile(path):
+            return None
+
+        current = _file_fingerprint(path)
+        stored = self._read_session_key("full_file_hash", None)
+        if stored is not None and stored == current:
+            return None
+        if stored is None:
+            # Sessions from before fingerprinting: only consider the
+            # file edited if it is newer than every chunk (a crash before
+            # the debounced full-file write leaves it *older*).
+            try:
+                chunk_mtime = max(
+                    (os.path.getmtime(self._chunk_path(c))
+                     for c in self._get_chunk_files()), default=0.0)
+                if os.path.getmtime(path) <= chunk_mtime + 1.0:
+                    return None
+            except OSError:
+                return None
+
+        try:
+            rows = read_csv_dicts(path)
+        except (OSError, ValueError) as exc:
+            logger.warning("Cannot read %s for comparison: %s", path, exc)
+            return None
+        file_state, file_point = self._parse_rows_to_lists(rows)
+
+        mine = Counter(annotation_key(e) for e in self.state_events)
+        mine.update(annotation_key(e) for e in self.point_events)
+        theirs = Counter(annotation_key(e) for e in file_state)
+        theirs.update(annotation_key(e) for e in file_point)
+        added = sorted((theirs - mine).elements(), key=_key_sort)
+        removed = sorted((mine - theirs).elements(), key=_key_sort)
+        if not added and not removed:
+            return None
+        return {
+            "added": added,
+            "removed": removed,
+            "file_state": file_state,
+            "file_point": file_point,
+        }
+
+    def apply_external_annotations(self, file_state, file_point):
+        """Replace the working copy with annotations from the full file."""
+        try:
+            self.state_events = sorted(
+                file_state,
+                key=lambda e: e["start_time"] if e["start_time"] is not None else 0)
+            self.point_events = sorted(
+                file_point, key=lambda e: _safe_parse_time(e["time"]))
+            os.makedirs(self.annotations_dir, exist_ok=True)
+            self._write_chunks_from_memory()
+            return self.write_full_annotations_file()
+        except (PermissionError, OSError, ValueError) as exc:
+            logger.warning("Applying external annotations failed: %s", exc)
             return False
 
     def _write_chunks_from_memory(self):
@@ -691,12 +920,34 @@ class AnnotationStore:
         return self._read_session_key("active_subjects", [])
 
     def save_subject_file(self, subject_file_path):
-        """Save the path to the subject file used for this video"""
-        self._merge_and_write({"subject_file": subject_file_path})
+        """Remember the subject file used for this video.
+
+        Only the file name is stored: subject files live in
+        Keys/Subject_Keys under the output directory, and an absolute
+        path would break as soon as the project moved to another
+        machine or operating system."""
+        name = (os.path.basename(str(subject_file_path).replace("\\", "/"))
+                if subject_file_path else None)
+        self._merge_and_write({"subject_file": name})
 
     def load_subject_file(self):
-        """Load the subject file path. Returns None if not set"""
-        return self._read_session_key("subject_file", None)
+        """Resolve the remembered subject file to an existing path.
+
+        Accepts the bare file name written by current versions and the
+        absolute path written by older ones; both are looked up in the
+        project's Keys/Subject_Keys folder first so a moved project
+        still finds its subjects.  Returns None if nothing exists."""
+        stored = self._read_session_key("subject_file", None)
+        if not stored:
+            return None
+        name = os.path.basename(stored.replace("\\", "/"))
+        candidates = [os.path.join(self.output_dir, "Keys", "Subject_Keys", name)]
+        if os.path.isabs(stored):
+            candidates.append(stored)
+        for path in candidates:
+            if os.path.isfile(path):
+                return path
+        return None
 
 
     # File access check
@@ -734,6 +985,60 @@ class AnnotationStore:
 
 # Module-level helpers
 
+def _file_fingerprint(path):
+    """SHA-1 of a file's bytes, or None if unreadable."""
+    try:
+        h = hashlib.sha1()
+        with open(path, "rb") as f:
+            for block in iter(lambda: f.read(1 << 16), b""):
+                h.update(block)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def _safe_parse_time(value):
+    try:
+        return parse_time(value)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def annotation_key(evt):
+    """Comparable identity of an in-memory annotation, tolerant of the
+    formatting differences a spreadsheet round-trip introduces."""
+    notes = (evt.get("Notes") or "").strip()
+    subject = (evt.get("Subject") or "NA").strip() or "NA"
+    if "start_time" in evt:
+        st = evt.get("start_time")
+        et = evt.get("end_time")
+        return ("State", evt.get("Event", "").strip(), subject,
+                round(st, 2) if st is not None else None,
+                round(et, 2) if et is not None else None, notes)
+    return ("Point", evt.get("Event", "").strip(), subject,
+            round(_safe_parse_time(evt.get("time")), 2), None, notes)
+
+
+def _key_sort(key):
+    return (key[3] if key[3] is not None else -1, key[0], key[1], key[2])
+
+
+def describe_annotation_key(key):
+    """One-line human description of an annotation_key tuple."""
+    kind, event, subject, start, end, notes = key
+    who = f" [{subject}]" if subject and subject != "NA" else ""
+    if kind == "State":
+        span = (f"{format_time_human(start)} – "
+                f"{format_time_human(end) if end is not None else 'open'}"
+                if start is not None else "no start time")
+    else:
+        span = format_time_human(start or 0)
+    text = f"{event}{who}  {span}"
+    if notes:
+        text += f"  ({notes[:30]}{'…' if len(notes) > 30 else ''})"
+    return text
+
+
 def _chunk_index(fname):
     """Extract the numeric chunk index from a chunk filename (-1 if none)."""
     m = re.search(r"_chunk_(\d+)\.csv$", fname)
@@ -744,7 +1049,7 @@ def is_chunked_annotations_dir(path):
     """Return True if path is a directory containing chunk CSV files."""
     if not os.path.isdir(path):
         return False
-    return any(f.endswith(".csv") and "_chunk_" in f
+    return any(f.endswith(".csv") and "_chunk_" in f and not _is_junk_name(f)
                for f in os.listdir(path))
 
 
@@ -760,22 +1065,21 @@ def read_all_annotation_rows(path):
     """
     if is_chunked_annotations_dir(path):
         rows = []
-        for fname in sorted(os.listdir(path)):
-            if fname.endswith(".csv") and "_chunk_" in fname:
-                chunk_path = os.path.join(path, fname)
-                try:
-                    with open(chunk_path, "r", newline="",
-                              encoding="utf-8-sig") as f:
-                        rows.extend(csv.DictReader(f))
-                except OSError:
-                    pass
+        names = [f for f in os.listdir(path)
+                 if f.endswith(".csv") and "_chunk_" in f
+                 and not _is_junk_name(f)]
+        for fname in sorted(names, key=lambda f: (_chunk_index(f), f)):
+            chunk_path = os.path.join(path, fname)
+            try:
+                rows.extend(read_csv_dicts(chunk_path))
+            except OSError as exc:
+                logger.warning("Cannot read %s: %s", chunk_path, exc)
         return rows
     elif os.path.isfile(path):
         try:
-            with open(path, "r", newline="", encoding="utf-8-sig") as f:
-                return list(csv.DictReader(f))
-        except OSError:
-            pass
+            return read_csv_dicts(path)
+        except OSError as exc:
+            logger.warning("Cannot read %s: %s", path, exc)
     return []
 
 
@@ -786,14 +1090,12 @@ def validate_import_csv(file_path):
         (rows, video_names, error) — error is None on success.
     """
     try:
-        with open(file_path, "r", newline="", encoding="utf-8-sig") as f:
-            reader = csv.reader(f)
-            try:
-                header = next(reader)
-            except StopIteration:
-                return [], set(), "The selected file is empty."
+        lists = read_csv_lists(file_path)
     except OSError as exc:
         return [], set(), f"Could not read file: {exc}"
+    if not lists:
+        return [], set(), "The selected file is empty."
+    header = lists[0]
 
     header_stripped = [h.strip() for h in header]
     expected = set(AnnotationStore.CSV_HEADERS)
@@ -850,11 +1152,44 @@ def format_time_machine(elapsed):
 
 
 def parse_time(time_str):
-    """Parse a human-readable time string (``Xm Y.YYs``) into seconds"""
-    if "m" in time_str and "s" in time_str:
-        m, s = time_str.split("m")
-        return int(m) * 60 + float(s.rstrip("s"))
-    return float(time_str)
+    """Parse a human-readable time string (``Xm Y.YYs``) into seconds.
+
+    Raises ValueError for anything unparsable (including ``NA``).
+    """
+    if time_str is None:
+        raise ValueError("no time")
+    s = str(time_str).strip()
+    if "m" in s and "s" in s:
+        m, sec = s.split("m", 1)
+        return int(m.strip() or 0) * 60 + float(sec.strip().rstrip("s").strip())
+    return float(s)
+
+
+def _time_from_cells(machine, human):
+    """Seconds from a Start/End cell, falling back to the H_Start/H_End
+    cell.  Returns None when neither parses (``NA``, blank, or a value
+    Excel reformatted beyond recognition)."""
+    for raw in (machine, human):
+        if raw is None:
+            continue
+        s = str(raw).strip()
+        if not s or s.upper() == "NA":
+            continue
+        try:
+            return float(s)
+        except ValueError:
+            pass
+        try:
+            return parse_time(s)
+        except (ValueError, TypeError):
+            pass
+        # European-locale decimal comma ("12,5")
+        if "," in s and "." not in s:
+            try:
+                return float(s.replace(",", "."))
+            except ValueError:
+                pass
+    return None
 
 
 def _safe_float(value, default):

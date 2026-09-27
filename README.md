@@ -116,6 +116,8 @@ YourProject/
 
 While you annotate, data is journaled to small chunk files in `Session/` with atomic writes; the consolidated `VideoName_Annotations.csv` is the file you take to analysis.
 
+You can also edit `VideoName_Annotations.csv` outside LASERcoder (in Excel, a text editor, or on another computer). The next time that video is opened, LASERcoder compares the file with its working copy, shows a summary of what was added, removed, or changed, and asks whether to apply the edits permanently or discard them. Event key and subject key files are read directly, so edits to those take effect the next time they are loaded. Files saved by Excel on macOS or Windows are read regardless of encoding or line-ending differences.
+
 ## Output format
 
 Annotation CSVs are UTF-8 encoded, open cleanly in Excel, and import directly into statistical software (e.g. R) with no reformatting or export step:

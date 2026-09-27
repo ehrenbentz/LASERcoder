@@ -1,280 +1,221 @@
 # migration.py
+#
+# One-shot upgrades of a project (output) directory written by an
+# earlier LASERcoder version.  Each step is versioned; a marker file in
+# the project records the last step applied so nothing runs twice.
+#
+# To add a step for a future format change: bump MIGRATION_VERSION,
+# add an `if done < N:` block in migrate_output_dir_if_needed, and
+# delete steps once every user is past them.
+#
+# History
+#   1  (removed) 1.6 -> 1.7 layout move: Event_Keys/, Subjects/, Resume/,
+#      Summary/ into Keys/, Session/, Annotations/Summaries/.  Projects
+#      that still have the old layout must be opened once with 1.7.x.
+#   2  Multi-subject annotations: one row with "A;B" in Subject becomes
+#      one row per subject.  Session state stores the subject file by
+#      name instead of an absolute path.
 
 import os
 import csv
-import shutil
+import json
 
 from debug_logger import get_logger
 
 logger = get_logger()
 
-EVENT_KEY_HEADERS = ["Event", "Key", "Type", "MEgroup"]
-SUBJECT_KEY_HEADERS = ["SubjectID", "Key", "MEgroup", "Color"]
+MIGRATION_VERSION = 2
+_MARKER = ".lasercoder_migration"
 
-
-def migrate_config_if_needed():
-    """Rename ~/.lasertag.conf to ~/.lasercoder.conf if needed."""
-    home = os.path.expanduser("~")
-    old = os.path.join(home, ".lasertag.conf")
-    new = os.path.join(home, ".lasercoder.conf")
-    if os.path.exists(old) and not os.path.exists(new):
-        try:
-            os.rename(old, new)
-            logger.info("Renamed %s -> %s", old, new)
-        except OSError as exc:
-            logger.warning("Failed to rename %s -> %s: %s", old, new, exc)
+# Old-layout folders from before step 1; used only to warn.
+_PRE_17_DIRS = ("Event_Keys", "Subjects", "Resume", "Summary")
 
 
 def migrate_output_dir_if_needed(output_dir):
-    """Migrate an old-layout output directory to the new structure.
+    """Bring *output_dir* up to the current on-disk format.
 
-    Old layout:
-        Event_Keys/, Subjects/, Resume/, Summary/,
-        Annotations/{VideoName}/ (chunks), Annotations/{VideoName}_Annotations.csv
-
-    New layout:
-        Keys/Event_Keys/, Keys/Subject_Keys/, Session/{VideoName}/,
-        Session/{VideoName}/Chunks/, Annotations/Summaries/,
-        Annotations/Combined_Annotations/
-
-    Safe: skips files that already exist at the destination, logs warnings
-    on failure, never removes non-empty directories.
+    Returns True if any file was rewritten (the caller refreshes its
+    listings).  Safe to call on every open: after the first run the
+    marker short-circuits everything.
     """
     if not output_dir or not os.path.isdir(output_dir):
         return False
-
-    headers_migrated = migrate_key_headers_if_needed(output_dir)
-
-    old_event_keys = os.path.join(output_dir, "Event_Keys")
-    old_subjects = os.path.join(output_dir, "Subjects")
-    old_resume = os.path.join(output_dir, "Resume")
-    old_summary = os.path.join(output_dir, "Summary")
-
-    has_old = any(os.path.isdir(d) for d in (
-        old_event_keys, old_subjects, old_resume, old_summary))
-    if not has_old:
-        return headers_migrated
-
-    logger.info("Migrating output directory: %s", output_dir)
-
-    # Keys
-    _migrate_dir_contents(
-        old_event_keys,
-        os.path.join(output_dir, "Keys", "Event_Keys"))
-    _migrate_dir_contents(
-        old_subjects,
-        os.path.join(output_dir, "Keys", "Subject_Keys"))
-
-    # Session state + waveform cache
-    if os.path.isdir(old_resume):
-        for fname in os.listdir(old_resume):
-            src = os.path.join(old_resume, fname)
-            if not os.path.isfile(src):
-                continue
-            if fname.endswith("_session_state.json"):
-                video_name = fname.removesuffix("_session_state.json")
-                dest_dir = os.path.join(output_dir, "Session", video_name)
-                _move_file(src, dest_dir, fname)
-            elif fname.endswith(".npy"):
-                # Waveform cache — leave in place for fallback.
-                # New code will write to Session/{video}/ and fall back
-                # to Resume/ if not found.
-                pass
-
-    # Annotation chunks
-    ann_dir = os.path.join(output_dir, "Annotations")
-    if os.path.isdir(ann_dir):
-        for name in os.listdir(ann_dir):
-            subdir = os.path.join(ann_dir, name)
-            if not os.path.isdir(subdir):
-                continue
-            # Check if this subdirectory contains chunk files
-            chunk_files = [
-                f for f in os.listdir(subdir)
-                if f.endswith(".csv") and "_chunk_" in f]
-            if not chunk_files:
-                continue
-            # Move chunk files to Session/{video_name}/Chunks/
-            dest_chunks = os.path.join(
-                output_dir, "Session", name, "Chunks")
-            for cf in chunk_files:
-                _move_file(os.path.join(subdir, cf), dest_chunks, cf)
-            # Remove the now-empty annotation subdirectory
-            _rmdir_if_empty(subdir)
-
-    # Legacy single-file annotations -> chunks
-    if os.path.isdir(ann_dir):
-        for fname in os.listdir(ann_dir):
-            if not fname.endswith("_Annotations.csv"):
-                continue
-            src_path = os.path.join(ann_dir, fname)
-            if not os.path.isfile(src_path):
-                continue
-            video_name = fname.removesuffix("_Annotations.csv")
-            chunks_dir = os.path.join(
-                output_dir, "Session", video_name, "Chunks")
-            # Skip if chunks already exist
-            if (os.path.isdir(chunks_dir)
-                    and any(f.endswith(".csv") and "_chunk_" in f
-                            for f in os.listdir(chunks_dir))):
-                continue
-            # Read legacy CSV, split into chunks
-            _split_csv_to_chunks(src_path, video_name, chunks_dir)
-
-    # Summaries
-    if os.path.isdir(old_summary):
-        old_ind = os.path.join(old_summary, "Individual_summaries")
-        old_comb = os.path.join(old_summary, "Combined_summaries")
-        old_combined_ann = os.path.join(old_summary, "Combined_Annotations")
-
-        new_summaries = os.path.join(ann_dir, "Summaries")
-        _migrate_dir_contents(
-            old_ind,
-            os.path.join(new_summaries, "Individual_Summaries"))
-        _migrate_dir_contents(
-            old_comb,
-            os.path.join(new_summaries, "Combined_Summaries"))
-        _migrate_dir_contents(
-            old_combined_ann,
-            os.path.join(ann_dir, "Combined_Annotations"))
-
-    # Cleanup empty old directories
-    for d in (old_event_keys, old_subjects, old_resume, old_summary):
-        _rmdir_if_empty(d)
-
-    logger.info("Migration complete: %s", output_dir)
-    return True
-
-
-def _migrate_dir_contents(src_dir, dest_dir):
-    """Move all files from src_dir into dest_dir."""
-    if not os.path.isdir(src_dir):
-        return
-    for fname in os.listdir(src_dir):
-        src = os.path.join(src_dir, fname)
-        if os.path.isfile(src):
-            _move_file(src, dest_dir, fname)
-        elif os.path.isdir(src):
-            # Recurse for nested directories (e.g. Summary subdirs)
-            sub_dest = os.path.join(dest_dir, fname)
-            _migrate_dir_contents(src, sub_dest)
-            _rmdir_if_empty(src)
-    _rmdir_if_empty(src_dir)
-
-
-def _move_file(src, dest_dir, fname):
-    """Move a single file, skipping if destination already exists."""
-    dest = os.path.join(dest_dir, fname)
-    if os.path.exists(dest):
-        return
-    try:
-        os.makedirs(dest_dir, exist_ok=True)
-        shutil.move(src, dest)
-    except (OSError, shutil.Error) as exc:
-        logger.warning("Migration: failed to move %s -> %s: %s",
-                       src, dest, exc)
-
-
-def _split_csv_to_chunks(csv_path, video_name, chunks_dir):
-    """Read a legacy single-file CSV and write as chunks."""
-    import csv
-    from annotation_store import AnnotationStore, CHUNK_SIZE
-    try:
-        with open(csv_path, "r", newline="", encoding="utf-8-sig") as f:
-            rows = list(csv.DictReader(f))
-        if not rows:
-            return
-        os.makedirs(chunks_dir, exist_ok=True)
-        for i in range(0, len(rows), CHUNK_SIZE):
-            batch = rows[i:i + CHUNK_SIZE]
-            chunk_name = f"{video_name}_chunk_{i // CHUNK_SIZE:03d}.csv"
-            path = os.path.join(chunks_dir, chunk_name)
-            temp = path + ".tmp"
-            with open(temp, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.DictWriter(
-                    f, fieldnames=AnnotationStore.CSV_HEADERS)
-                writer.writeheader()
-                for row in batch:
-                    writer.writerow(row)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp, path)
-        logger.info("Split %s into %d chunks for %s",
-                     csv_path, (len(rows) - 1) // CHUNK_SIZE + 1,
-                     video_name)
-    except Exception as exc:
-        logger.warning("Failed to split %s into chunks: %s",
-                        csv_path, exc)
-
-
-def _rmdir_if_empty(path):
-    """Remove a directory only if it is empty."""
-    try:
-        if os.path.isdir(path) and not os.listdir(path):
-            os.rmdir(path)
-    except OSError:
-        pass
-
-
-def migrate_key_headers_if_needed(output_dir):
-    """Prepend header rows to any legacy headerless event/subject key CSVs."""
-    if not output_dir or not os.path.isdir(output_dir):
+    # Backups made by LASERcoder are frozen copies; never rewrite them.
+    if os.path.isfile(os.path.join(output_dir, ".no_project")):
         return False
 
+    done = _read_marker(output_dir)
+    if done >= MIGRATION_VERSION:
+        return False
+
+    if any(os.path.isdir(os.path.join(output_dir, d)) for d in _PRE_17_DIRS):
+        logger.warning(
+            "Project %s uses the pre-1.7 folder layout, which this "
+            "version no longer migrates. Open it once with LASERcoder "
+            "1.7.x first.", output_dir)
+
     changed = False
+    if done < 2:
+        logger.info("Migrating project to format 2: %s", output_dir)
+        changed |= _split_multi_subject_rows(output_dir)
+        changed |= _normalise_session_state(output_dir)
 
-    events_dir = os.path.join(output_dir, "Keys", "Event_Keys")
-    if os.path.isdir(events_dir):
-        for fname in os.listdir(events_dir):
-            if fname.endswith("_events.csv"):
-                path = os.path.join(events_dir, fname)
-                if _prepend_header_if_missing(path, EVENT_KEY_HEADERS):
-                    changed = True
-
-    subjects_dir = os.path.join(output_dir, "Keys", "Subject_Keys")
-    if os.path.isdir(subjects_dir):
-        for fname in os.listdir(subjects_dir):
-            if fname.endswith("_subjects.csv"):
-                path = os.path.join(subjects_dir, fname)
-                if _prepend_header_if_missing(path, SUBJECT_KEY_HEADERS):
-                    changed = True
-
+    _write_marker(output_dir, MIGRATION_VERSION)
     return changed
 
 
-def _prepend_header_if_missing(path, headers):
-    """Prepend a header row to a CSV if it isn't already the first row."""
-    if not os.path.isfile(path):
+# Step 2: one row per subject
+
+def _annotation_files(output_dir):
+    """Every annotation CSV LASERcoder maintains: chunk files (the
+    working copy), the per-video full files, and combined files."""
+    from display_utils import is_os_junk
+
+    session_dir = os.path.join(output_dir, "Session")
+    if os.path.isdir(session_dir):
+        for video in sorted(os.listdir(session_dir)):
+            chunks = os.path.join(session_dir, video, "Chunks")
+            if not os.path.isdir(chunks) or is_os_junk(video):
+                continue
+            for f in sorted(os.listdir(chunks)):
+                if f.endswith(".csv") and "_chunk_" in f and not is_os_junk(f):
+                    yield os.path.join(chunks, f)
+
+    ann_dir = os.path.join(output_dir, "Annotations")
+    if os.path.isdir(ann_dir):
+        for f in sorted(os.listdir(ann_dir)):
+            if f.endswith("_Annotations.csv") and not is_os_junk(f):
+                yield os.path.join(ann_dir, f)
+        combined = os.path.join(ann_dir, "Combined_Annotations")
+        if os.path.isdir(combined):
+            for f in sorted(os.listdir(combined)):
+                if f.endswith(".csv") and not is_os_junk(f):
+                    yield os.path.join(combined, f)
+
+
+def _split_multi_subject_rows(output_dir):
+    """Rewrite annotation CSVs whose Subject cell holds 'A;B' as one
+    row per subject.  Returns True if any file changed."""
+    from annotation_store import read_csv_dicts
+
+    changed = False
+    for path in _annotation_files(output_dir):
+        try:
+            rows = read_csv_dicts(path)
+        except (OSError, ValueError) as exc:
+            logger.warning("Migration: cannot read %s: %s", path, exc)
+            continue
+        if not rows or not any(";" in (r.get("Subject") or "") for r in rows):
+            continue
+
+        out = []
+        for row in rows:
+            subject = (row.get("Subject") or "").strip()
+            parts = [s.strip() for s in subject.split(";") if s.strip()]
+            if len(parts) <= 1:
+                out.append(row)
+                continue
+            for s in parts:
+                copy = dict(row)
+                copy["Subject"] = s
+                out.append(copy)
+
+        fieldnames = list(rows[0].keys())
+        if _write_csv_atomic(path, fieldnames, out):
+            logger.info("Migration: split multi-subject rows in %s "
+                        "(%d -> %d rows)", path, len(rows), len(out))
+            changed = True
+    return changed
+
+
+def _normalise_session_state(output_dir):
+    """Store the subject file by name only (absolute paths broke when a
+    project moved between machines).  Returns True if any file changed."""
+    from display_utils import is_os_junk
+
+    changed = False
+    session_dir = os.path.join(output_dir, "Session")
+    if not os.path.isdir(session_dir):
         return False
+    for video in sorted(os.listdir(session_dir)):
+        if is_os_junk(video):
+            continue
+        path = os.path.join(session_dir, video, f"{video}_session_state.json")
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError) as exc:
+            logger.warning("Migration: cannot read %s: %s", path, exc)
+            continue
+        stored = data.get("subject_file")
+        if not isinstance(stored, str) or not stored:
+            continue
+        name = os.path.basename(stored.replace("\\", "/"))
+        if name == stored:
+            continue
+        data["subject_file"] = name
+        if _write_json_atomic(path, data):
+            changed = True
+    return changed
+
+
+# Helpers
+
+def _read_marker(output_dir):
     try:
-        with open(path, "r", newline="", encoding="utf-8-sig") as fh:
-            rows = list(csv.reader(fh))
+        with open(os.path.join(output_dir, _MARKER), "r", encoding="utf-8") as fh:
+            return int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _write_marker(output_dir, version):
+    try:
+        path = os.path.join(output_dir, _MARKER)
+        with open(path + ".tmp", "w", encoding="utf-8") as fh:
+            fh.write(f"{version}\n")
+        os.replace(path + ".tmp", path)
     except OSError as exc:
-        logger.warning("Header migration: failed to read %s: %s", path, exc)
-        return False
+        logger.warning("Migration: cannot write marker in %s: %s",
+                       output_dir, exc)
 
-    # Tolerant comparison: whitespace variations in an existing header
-    # must not cause a second header row to be prepended.
-    if rows and [c.strip() for c in rows[0][:len(headers)]] == headers:
-        return False
 
+def _write_csv_atomic(path, fieldnames, rows):
     temp = path + ".tmp"
     try:
         with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
-            writer = csv.writer(fh)
-            writer.writerow(headers)
-            for row in rows:
-                writer.writerow(row)
+            writer = csv.DictWriter(fh, fieldnames=fieldnames,
+                                    extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(temp, path)
-        logger.info("Header migration: prepended header to %s", path)
         return True
     except OSError as exc:
-        logger.warning("Header migration: failed to write %s: %s", path, exc)
+        logger.warning("Migration: cannot write %s: %s", path, exc)
         try:
-            if os.path.exists(temp):
-                os.remove(temp)
+            os.remove(temp)
+        except OSError:
+            pass
+        return False
+
+
+def _write_json_atomic(path, data):
+    temp = path + ".tmp"
+    try:
+        with open(temp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp, path)
+        return True
+    except OSError as exc:
+        logger.warning("Migration: cannot write %s: %s", path, exc)
+        try:
+            os.remove(temp)
         except OSError:
             pass
         return False

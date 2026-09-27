@@ -211,6 +211,17 @@ class MainWindow(QMainWindow):
             logger.exception("Failed to initialize VideoAnnotator: %s", e)
             if was_visible:
                 self.show()
+            # Tell the user why, instead of silently returning to the
+            # file picker (which reads as "LASERcoder won't open").
+            try:
+                from dialogs import show_message
+                show_message(
+                    self, "Could Not Open Video",
+                    f"{e}\n\nIf you edited a CSV file in another program, "
+                    "check that it still has the expected columns, then "
+                    "try again.")
+            except Exception:
+                pass
             return False
 
 def main():

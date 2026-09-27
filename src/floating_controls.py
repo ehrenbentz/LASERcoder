@@ -559,16 +559,11 @@ def _create_subject_buttons(annotator):
 
 
 def _on_subject_button_clicked(annotator, subject_name):
-    """Toggle a subject on/off when its floating button is clicked"""
-    if subject_name in annotator.active_subjects:
-        annotator.active_subjects.discard(subject_name)
-    else:
-        annotator._deactivate_me_subjects(subject_name)
-        annotator.active_subjects.add(subject_name)
+    """Toggle a subject on/off when its floating button is clicked.
 
-    annotator._update_subject_overlay()
-    annotator.store.save_active_subjects(list(annotator.active_subjects))
-    _refresh_subject_button_styles(annotator)
+    Shares the annotator's toggle so the open-state guard applies to
+    button clicks exactly as it does to hotkeys."""
+    annotator.toggle_subject(subject_name)
 
 
 def _refresh_subject_button_styles(annotator):
