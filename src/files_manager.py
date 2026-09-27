@@ -8,10 +8,12 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QListWidget, QListWidgetItem, QFrame, QMessageBox, QSplitter, QWidget,
+    QCheckBox,
     QInputDialog, QApplication, QFileDialog, QMenu, QComboBox, QGroupBox,
     QRadioButton,
 )
-from PySide6.QtCore import Qt, QTimer, QSize, QThread, Signal
+from PySide6.QtCore import (Qt, QTimer, QSize, QThread, Signal, QDir,
+                            QSortFilterProxyModel)
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen
 
 from display_utils import get_screen_geometry, center_window, is_os_junk
@@ -48,8 +50,21 @@ class _FileOpWorker(QThread):
             self.succeeded.emit()
 
 
+class _NoJunkProxy(QSortFilterProxyModel):
+    """Hides hidden files and OS metadata (.DS_Store, ._*, Thumbs.db,
+    desktop.ini, ...) in the non-native folder chooser, on every
+    platform, regardless of the file's hidden attribute."""
+
+    def filterAcceptsRow(self, source_row, source_parent):
+        idx = self.sourceModel().index(source_row, 0, source_parent)
+        name = self.sourceModel().data(idx)
+        if not isinstance(name, str):
+            return True
+        return not (name.startswith(".") or is_os_junk(name))
+
+
 class FilesManager(QDialog):
-    """Dialog for selecting output directory and video file"""
+    """Dialog for selecting working directory and video file"""
 
     def __init__(self, parent=None, initial_output_dir=str(Path.home()),
                  initial_video_dir=str(Path.home()),
@@ -90,7 +105,7 @@ class FilesManager(QDialog):
 
         self._screen = get_screen_geometry()
 
-        self.setWindowTitle("LASERcoder - Select Output Directory and Video File")
+        self.setWindowTitle("LASERcoder - Select Working Directory and Video File")
         theme.apply_dialog_theme(self)
 
         if self.parent():
@@ -128,7 +143,7 @@ class FilesManager(QDialog):
         splitter.setSizes([int(width / 3), int(2 * width / 3)])
 
     def _setup_output_panel(self, layout):
-        layout.addWidget(QLabel("Select Output Directory:"))
+        layout.addWidget(QLabel("Select Working Directory:"))
 
         nav_frame = QFrame()
         nav = QHBoxLayout(nav_frame)
@@ -157,7 +172,7 @@ class FilesManager(QDialog):
         layout.addWidget(self.output_dir_listbox)
 
         self.dir_selected_label = QLabel(
-            f"Selected Output Directory: {self.output_dir}")
+            f"Selected Working Directory: {self.output_dir}")
         layout.addWidget(self.dir_selected_label)
 
         btn_frame = QFrame()
@@ -212,7 +227,7 @@ class FilesManager(QDialog):
         # Top row: label + settings gear pushed to the right
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.addWidget(QLabel("Select Video File:"))
+        top_row.addWidget(QLabel("Select Video Directory:"))
         top_row.addStretch()
 
         self._settings_btn = QPushButton("")
@@ -225,6 +240,9 @@ class FilesManager(QDialog):
 
         layout.addLayout(top_row)
 
+        # Video folder: type a path or Browse.  There is deliberately no
+        # folder tree here: double-clicking through folders let a folder
+        # of separate videos be opened as one multi-part video.
         nav_frame = QFrame()
         nav = QHBoxLayout(nav_frame)
         nav.setContentsMargins(0, 0, 0, 0)
@@ -238,7 +256,7 @@ class FilesManager(QDialog):
 
         self.video_dir_entry = QLineEdit(self.initial_video_dir)
         self.video_dir_entry.returnPressed.connect(self._on_video_dir_update)
-        nav.addWidget(self.video_dir_entry)
+        nav.addWidget(self.video_dir_entry, 1)
 
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self._browse_video_dir)
@@ -246,35 +264,19 @@ class FilesManager(QDialog):
 
         layout.addWidget(nav_frame)
 
-        video_container = QWidget()
-        layout.addWidget(video_container, 1)
-        container_layout = QVBoxLayout(video_container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-
-        sub_splitter = QSplitter(Qt.Orientation.Horizontal)
-        container_layout.addWidget(sub_splitter)
-
-        # Directories sub-panel
-        dir_panel = QFrame()
-        dir_layout = QVBoxLayout(dir_panel)
-        dir_layout.setContentsMargins(5, 5, 5, 5)
-        dir_layout.addWidget(QLabel("Directories:"))
-
-        self.video_dir_listbox = QListWidget()
-        self.video_dir_listbox.itemDoubleClicked.connect(
-            self._on_video_dir_double_click)
-        dir_layout.addWidget(self.video_dir_listbox, 1)
-
-        spacer = QWidget()
-        spacer.setFixedHeight(30)
-        dir_layout.addWidget(spacer)
-        sub_splitter.addWidget(dir_panel)
+        # Explicit single-file / multi-part choice, remembered between runs
+        self.multi_part_checkbox = QCheckBox(
+            "My videos are split into multiple parts "
+            "(each subfolder is one video)")
+        self.multi_part_checkbox.setChecked(get_config().get_multi_part_mode())
+        self.multi_part_checkbox.toggled.connect(self._on_multi_part_toggled)
+        layout.addWidget(self.multi_part_checkbox)
 
         # Video files sub-panel
         file_panel = QFrame()
         file_layout = QVBoxLayout(file_panel)
         file_layout.setContentsMargins(5, 5, 5, 5)
-        file_layout.addWidget(QLabel("Video Files:"))
+        file_layout.addWidget(QLabel("Select Video File:"))
 
         self.video_file_listbox = QListWidget()
         self.video_file_listbox.itemDoubleClicked.connect(
@@ -315,13 +317,8 @@ class FilesManager(QDialog):
         btn_row.addStretch(0)
         file_layout.addLayout(btn_row)
 
-        sub_splitter.addWidget(file_panel)
-        sub_splitter.setSizes([
-            int(sub_splitter.width() / 2),
-            int(sub_splitter.width() / 2),
-        ])
+        layout.addWidget(file_panel, 1)
 
-        self._populate_video_dir_list(self.initial_video_dir)
         self._populate_file_list(self.initial_video_dir)
 
 
@@ -338,18 +335,17 @@ class FilesManager(QDialog):
                 if parent != self.output_dir:
                     self.output_dir = None
                     self.dir_selected_label.setText(
-                        "Selected Output Directory: None")
+                        "Selected Working Directory: None")
         else:
             parent = os.path.dirname(self.current_video_dir)
             if os.path.exists(parent):
                 self.current_video_dir = parent
                 self.video_dir_entry.setText(parent)
-                self._populate_video_dir_list(parent)
                 self._populate_file_list(parent)
 
     def _browse_output_dir(self):
         path = QFileDialog.getExistingDirectory(
-            self, "Select Output Directory", self.current_output_dir,
+            self, "Select Working Directory", self.current_output_dir,
             QFileDialog.Option.ShowDirsOnly)
         if path:
             if self._is_backup_dir(path):
@@ -363,18 +359,59 @@ class FilesManager(QDialog):
             self._populate_dir_list(path)
             self.output_dir = path
             self.dir_selected_label.setText(
-                f"Selected Output Directory: {self.output_dir}")
+                f"Selected Working Directory: {self.output_dir}")
             self._warn_if_network_drive(path)
 
     def _browse_video_dir(self):
-        path = QFileDialog.getExistingDirectory(
-            self, "Select Video Directory", self.current_video_dir,
-            QFileDialog.Option.ShowDirsOnly)
+        path = self._pick_video_directory()
         if path:
             self.current_video_dir = path
             self.video_dir_entry.setText(path)
-            self._populate_video_dir_list(path)
             self._populate_file_list(path)
+
+    def _pick_video_directory(self):
+        """Folder chooser that also shows the video files inside each
+        folder, so users can tell they are in the right place.
+
+        The native pickers hide files (Windows) or grey them out
+        inconsistently (macOS), so Qt's own dialog is used in directory
+        mode without the dirs-only option: video files are listed but
+        cannot be chosen, and the current folder is returned.
+        """
+        dlg = QFileDialog(self, "Select Video Directory",
+                          self.current_video_dir)
+        dlg.setFileMode(QFileDialog.FileMode.Directory)
+        dlg.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        dlg.setOption(QFileDialog.Option.ShowDirsOnly, False)
+        dlg.setOption(QFileDialog.Option.ReadOnly, True)
+        dlg.setViewMode(QFileDialog.ViewMode.Detail)
+        dlg.setLabelText(QFileDialog.DialogLabel.Accept, "Select Folder")
+        # The corner resize grip is painted as a stray grey block under
+        # the Cancel button on Windows; edges still resize the dialog.
+        dlg.setSizeGripEnabled(False)
+        # Show every ordinary file (no type filter, so the combo is not
+        # needed) but never hidden or OS housekeeping entries: dotfiles,
+        # Windows hidden/system files, Finder/Spotlight/thumbnail junk.
+        dlg.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
+        dlg.setProxyModel(_NoJunkProxy(dlg))
+        for name in ("fileTypeLabel", "fileTypeCombo"):
+            w = dlg.findChild(QWidget, name)
+            if w is not None:
+                w.hide()
+        theme.apply_dialog_theme(dlg)
+        dlg.resize(int(self._screen["width"] * 0.55),
+                   int(self._screen["height"] * 0.6))
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        selected = dlg.selectedFiles()
+        path = selected[0] if selected else dlg.directory().absolutePath()
+        if path and os.path.isfile(path):
+            path = os.path.dirname(path)
+        return path if path and os.path.isdir(path) else None
+
+    def _on_multi_part_toggled(self, checked):
+        get_config().set_multi_part_mode(checked)
+        self._populate_file_list(self.current_video_dir)
 
     def _on_output_dir_update(self):
         path = self.output_dir_entry.text().strip()
@@ -390,14 +427,13 @@ class FilesManager(QDialog):
             if path != self.output_dir:
                 self.output_dir = path
                 self.dir_selected_label.setText(
-                    f"Selected Output Directory: {self.output_dir}")
+                    f"Selected Working Directory: {self.output_dir}")
                 self._warn_if_network_drive(path)
 
     def _on_video_dir_update(self):
         path = self.video_dir_entry.text().strip()
         if os.path.isdir(path):
             self.current_video_dir = path
-            self._populate_video_dir_list(path)
             self._populate_file_list(path)
 
     def _on_output_dir_double_click(self, item):
@@ -414,17 +450,8 @@ class FilesManager(QDialog):
             self._populate_dir_list(new_dir)
             self.output_dir = new_dir
             self.dir_selected_label.setText(
-                f"Selected Output Directory: {self.output_dir}")
+                f"Selected Working Directory: {self.output_dir}")
             self._warn_if_network_drive(new_dir)
-
-    def _on_video_dir_double_click(self, item):
-        new_dir = os.path.join(self.current_video_dir, item.text())
-        if os.path.isdir(new_dir):
-            self.current_video_dir = new_dir
-            self.video_dir_entry.setText(new_dir)
-            self._populate_video_dir_list(new_dir)
-            self._populate_file_list(new_dir)
-
 
     # List population
 
@@ -440,94 +467,86 @@ class FilesManager(QDialog):
         except OSError:
             pass
 
-    def _populate_video_dir_list(self, directory):
-        self.video_dir_listbox.clear()
+    def _list_videos(self, directory):
+        """Video files directly inside *directory*, sorted."""
+        extensions = tuple(ext.lower() for ext in self.file_types)
         try:
-            dirs = sorted(
-                d for d in os.listdir(directory)
-                if os.path.isdir(os.path.join(directory, d))
-                and not d.startswith("."))
-            self.video_dir_listbox.addItems(dirs)
+            return sorted(
+                f for f in os.listdir(directory)
+                if os.path.isfile(os.path.join(directory, f))
+                and f.lower().endswith(extensions)
+                and not is_os_junk(f))
         except OSError:
-            pass
+            return []
+
+    def _list_video_folders(self, directory):
+        """(folder name, [part file names]) for each subfolder of
+        *directory* that holds at least one video file, sorted."""
+        result = []
+        try:
+            names = sorted(os.listdir(directory))
+        except OSError:
+            return result
+        for d in names:
+            subdir = os.path.join(directory, d)
+            if not os.path.isdir(subdir) or d.startswith(".") or is_os_junk(d):
+                continue
+            parts = self._list_videos(subdir)
+            if parts:
+                result.append((d, parts))
+        return result
 
     def _populate_file_list(self, directory):
+        """Fill the video list for the chosen folder.
+
+        Single-file mode lists the video files in the folder.  Multi-part
+        mode also lists each subfolder that contains video files as ONE
+        video whose parts play back to back, so a project with a mix of
+        single-file and multi-part recordings shows both.  Subfolders
+        are never listed unless the box is ticked, so a folder of
+        separate videos cannot be opened as one video by accident.
+        """
         self.video_file_listbox.clear()
         # Migrate old output layout before reading statuses
         if self.output_dir:
             from migration import migrate_output_dir_if_needed
             if migrate_output_dir_if_needed(self.output_dir):
                 self._populate_dir_list(self.current_output_dir)
-        try:
-            extensions = tuple(ext.lower() for ext in self.file_types)
-            files = sorted(
-                f for f in os.listdir(directory)
-                if os.path.isfile(os.path.join(directory, f))
-                and f.lower().endswith(extensions)
-                and not is_os_junk(f))
 
-            # Detect multi-part subfolders (folders with 2+ video files)
-            multi_part_names = []
-            for d in sorted(os.listdir(directory)):
-                subdir = os.path.join(directory, d)
-                if (not os.path.isdir(subdir)
-                        or d.startswith(".") or is_os_junk(d)):
-                    continue
-                try:
-                    parts = sorted(
-                        f for f in os.listdir(subdir)
-                        if os.path.isfile(os.path.join(subdir, f))
-                        and f.lower().endswith(extensions)
-                        and not is_os_junk(f))
-                except OSError:
-                    continue
-                if len(parts) >= 2:
-                    multi_part_names.append(d)
+        multi_part = self.multi_part_checkbox.isChecked()
+        files = self._list_videos(directory)
+        folders = self._list_video_folders(directory) if multi_part else []
 
-            # Session folders are named after the video stem for single
-            # files, but after the folder itself (verbatim, dots included)
-            # for multi-part videos — see setup_manager.
-            status_names = {f: os.path.splitext(f)[0] for f in files}
-            status_names.update({d: d for d in multi_part_names})
-            statuses = self._get_all_video_statuses(status_names)
+        # Session folders are named after the video stem for single
+        # files, but after the folder itself (verbatim, dots included)
+        # for multi-part videos - see setup_manager.
+        status_names = {f: os.path.splitext(f)[0] for f in files}
+        status_names.update({d: d for d, _ in folders})
+        statuses = self._get_all_video_statuses(status_names)
 
-            for fname in files:
-                item = QListWidgetItem(fname)
-                status = statuses.get(fname, "not_started")
-                if status == "complete":
-                    item.setIcon(self._status_icon("complete"))
-                elif status == "in_progress":
-                    item.setIcon(self._status_icon("in_progress"))
-                self.video_file_listbox.addItem(item)
+        for fname in files:
+            item = QListWidgetItem(fname)
+            status = statuses.get(fname, "not_started")
+            if status in ("complete", "in_progress"):
+                item.setIcon(self._status_icon(status))
+            self.video_file_listbox.addItem(item)
 
-            # Add multi-part subfolder entries
-            for d in multi_part_names:
-                subdir = os.path.join(directory, d)
-                try:
-                    parts = sorted(
-                        f for f in os.listdir(subdir)
-                        if os.path.isfile(os.path.join(subdir, f))
-                        and f.lower().endswith(extensions)
-                        and not is_os_junk(f))
-                except OSError:
-                    continue
-                item = QListWidgetItem(
-                    f"{d}  (\u29C9 {len(parts)} video files)")
-                item.setData(Qt.ItemDataRole.UserRole, {
-                    "type": "multi_part",
-                    "folder": subdir,
-                    "parts": [os.path.join(subdir, f) for f in parts],
-                })
-                status = statuses.get(d, "not_started")
-                if status == "complete":
-                    item.setIcon(self._status_icon("complete"))
-                elif status == "in_progress":
-                    item.setIcon(self._status_icon("in_progress"))
-                else:
-                    item.setIcon(self._status_icon("multi_part"))
-                self.video_file_listbox.addItem(item)
-        except OSError:
-            pass
+        for d, parts in folders:
+            subdir = os.path.join(directory, d)
+            n = len(parts)
+            item = QListWidgetItem(
+                f"{d}  (\u29C9 {n} part{'s' if n != 1 else ''})")
+            item.setData(Qt.ItemDataRole.UserRole, {
+                "type": "multi_part",
+                "folder": subdir,
+                "parts": [os.path.join(subdir, f) for f in parts],
+            })
+            status = statuses.get(d, "not_started")
+            if status in ("complete", "in_progress"):
+                item.setIcon(self._status_icon(status))
+            else:
+                item.setIcon(self._status_icon("multi_part"))
+            self.video_file_listbox.addItem(item)
 
     def _get_all_video_statuses(self, video_names):
         """Check session state JSONs for all videos at once.
@@ -637,7 +656,7 @@ class FilesManager(QDialog):
         if not self.output_dir:
             show_message(
                 self, "Warning",
-                "Please select an output directory first.")
+                "Please select an working directory first.")
             return
 
         video_session_dir = os.path.join(
@@ -735,7 +754,7 @@ class FilesManager(QDialog):
         if not self.output_dir:
             show_message(
                 self, "Warning",
-                "Please select an output directory first.")
+                "Please select an working directory first.")
             return
 
         dest_parent = QFileDialog.getExistingDirectory(
@@ -822,7 +841,7 @@ class FilesManager(QDialog):
         if not self.output_dir or not os.path.isdir(self.output_dir):
             show_message(
                 self, "Warning",
-                "Please select a valid output directory first.")
+                "Please select a valid working directory first.")
             return
 
         dest = QFileDialog.getExistingDirectory(
@@ -891,7 +910,7 @@ class FilesManager(QDialog):
         self.output_dir_entry.setText(dest_dir)
         self._populate_dir_list(dest_dir)
         self.dir_selected_label.setText(
-            f"Selected Output Directory: {dest_dir}")
+            f"Selected Working Directory: {dest_dir}")
         get_config().update_output_dir(dest_dir)
 
         show_message(
@@ -917,7 +936,7 @@ class FilesManager(QDialog):
                 self._populate_dir_list(new_path)
                 self.output_dir = new_path
                 self.dir_selected_label.setText(
-                    f"Selected Output Directory: {self.output_dir}")
+                    f"Selected Working Directory: {self.output_dir}")
             except OSError as exc:
                 show_message(
                     self, "Error", f"Could not create directory: {exc}")
@@ -995,7 +1014,7 @@ class FilesManager(QDialog):
         if self.output_dir:
             get_config().update_output_dir(self.output_dir)
         self.dir_selected_label.setText(
-            f"Selected Output Directory: {self.output_dir}")
+            f"Selected Working Directory: {self.output_dir}")
         self._warn_if_network_drive(self.output_dir)
 
 
@@ -1008,18 +1027,20 @@ class FilesManager(QDialog):
             if not self.output_dir:
                 show_message(
                     self, "Warning",
-                    "Please select an output directory first using the "
+                    "Please select an working directory first using the "
                     "'Select Directory' button.")
                 return
             if self._is_backup_dir(self.output_dir):
                 show_message(
                     self, "Backup Directory",
-                    "The selected output directory is a LASERcoder backup "
+                    "The selected working directory is a LASERcoder backup "
                     "and cannot be used as a project directory.\n\n"
-                    "Please select a different output directory.")
+                    "Please select a different working directory.")
                 return
             item_data = current_item.data(Qt.ItemDataRole.UserRole)
             if item_data and item_data.get("type") == "multi_part":
+                if not self._confirm_multi_part(item_data):
+                    return
                 self.multi_part_files = item_data["parts"]
                 self.multi_part_video_name = os.path.basename(
                     item_data["folder"])
@@ -1034,6 +1055,31 @@ class FilesManager(QDialog):
             show_message(
                 self, "Note", "You must select a video file to proceed",
                 icon="information")
+
+    def _confirm_multi_part(self, item_data):
+        """Before a multi-part folder is opened for the first time, show
+        exactly which files will be joined, in order.  Skipped once the
+        video has a session (the user already confirmed it)."""
+        folder = os.path.basename(item_data["folder"])
+        parts = item_data["parts"]
+        if self.output_dir:
+            state = os.path.join(
+                self.output_dir, "Session", folder,
+                f"{folder}_session_state.json")
+            if os.path.isfile(state):
+                return True
+        shown = [os.path.basename(p) for p in parts[:8]]
+        if len(parts) > len(shown):
+            shown.append(f"... and {len(parts) - len(shown)} more")
+        reply = show_message(
+            self, "Open as One Multi-part Video?",
+            f"\"{folder}\" will be opened as ONE continuous video made of "
+            f"{len(parts)} file{'s' if len(parts) != 1 else ''}, played in "
+            "this order:\n\n  " + "\n  ".join(shown)
+            + "\n\nIf these are separate videos, choose No and open them "
+            "one at a time from that folder instead.",
+            icon="question")
+        return reply == QMessageBox.StandardButton.Yes
 
 
     # View annotations
@@ -1084,7 +1130,7 @@ class FilesManager(QDialog):
             grp_lay.addLayout(btn_row_ann)
         else:
             desc = QLabel(
-                "No annotation files found in the selected output directory.")
+                "No annotation files found in the selected working directory.")
             desc.setWordWrap(True)
             desc.setStyleSheet(
                 f"color: {theme.color('text_secondary')};"
@@ -1264,7 +1310,7 @@ class FilesManager(QDialog):
             show_message(
                 self, "No Annotations",
                 "No annotation files found in the selected "
-                "output directory.",
+                "working directory.",
                 icon="information")
             return
 
@@ -1378,8 +1424,8 @@ class FilesManager(QDialog):
     def _show_import_annotations(self):
         if not self.output_dir:
             show_message(
-                self, "No Output Directory",
-                "Please select an output directory first.",
+                self, "No Working Directory",
+                "Please select an working directory first.",
                 icon="information")
             return
 
@@ -1621,7 +1667,7 @@ class FilesManager(QDialog):
         if not self.output_dir:
             show_message(
                 self, "Warning",
-                "Please select an output directory first.")
+                "Please select an working directory first.")
             return
 
         ann_entries = _discover_annotations(self.output_dir)
@@ -1860,7 +1906,7 @@ class FilesManager(QDialog):
 
 
 def _discover_annotations(output_dir):
-    """Find annotation entries in the output directory.
+    """Find annotation entries in the working directory.
 
     Searches two locations:
       1. Session/*/Chunks/ for chunked annotation directories

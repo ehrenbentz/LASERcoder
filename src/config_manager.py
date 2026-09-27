@@ -97,7 +97,7 @@ class ConfigManager:
                 pass
 
     def get_output_dir(self):
-        """Get the current output directory"""
+        """Get the current working directory"""
         return self.config.get('output_dir', self.home_dir)
 
     def get_video_dir(self):
@@ -109,7 +109,7 @@ class ConfigManager:
         return self.config.get('last_event_key')
 
     def update_output_dir(self, new_dir):
-        """Update the output directory if it exists"""
+        """Update the working directory if it exists"""
         if os.path.exists(new_dir):
             self.config['output_dir'] = new_dir
             self.save_config()
@@ -313,6 +313,15 @@ class ConfigManager:
 
     def set_show_subject_list(self, visible):
         self.config['show_subject_list'] = bool(visible)
+        self.save_config()
+
+    def get_multi_part_mode(self):
+        """Whether the video list treats each subfolder as one
+        multi-part video (True) or lists single video files (False)"""
+        return self.config.get('multi_part_mode', False)
+
+    def set_multi_part_mode(self, enabled):
+        self.config['multi_part_mode'] = bool(enabled)
         self.save_config()
 
     def get_show_video_name(self):

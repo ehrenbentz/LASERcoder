@@ -91,7 +91,7 @@ class SetupManager(QObject):
                     else:
                         show_message(
                             self.parent(), "Warning",
-                            "No video or output directory selected.")
+                            "No video or working directory selected.")
                         self._finish(QDialog.DialogCode.Rejected)
                 else:
                     self._finish(QDialog.DialogCode.Rejected)

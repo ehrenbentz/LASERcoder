@@ -391,6 +391,15 @@ def dialog_stylesheet() -> str:
         f"QMessageBox {{ background-color: {p['dialog_bg']}; }}"
         f"QMessageBox QDialogButtonBox {{ qproperty-centerButtons: true; }}"
         f"QDialogButtonBox QPushButton {{ min-width: 70px; }}"
+        # Dialog button boxes (file dialogs, message boxes) mark one
+        # button as default and draw a focus rectangle; with rounded,
+        # borderless buttons that shows up as a stray square corner.
+        f"QPushButton {{ outline: none; }}"
+        f"QPushButton:focus {{ outline: none; border: none; }}"
+        f"QPushButton:default {{ outline: none; border: none; }}"
+        f"QDialogButtonBox QPushButton:default {{ background-color: {p['button_hover']};"
+        f"  color: {p['text_on_accent']}; }}"
+        f"QSizeGrip {{ background: transparent; }}"
         f"QScrollArea {{ background: {p['dialog_bg']}; border: none; }}"
         f"QScrollBar:vertical {{ border: none; background: {p['scrollbar_bg']}; width: 10px; }}"
         f"QScrollBar::handle:vertical {{ background: {p['scrollbar_handle']}; min-height: 20px;"

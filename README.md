@@ -24,7 +24,7 @@ Runs natively on **Windows**, **macOS** (Apple Silicon and Intel), and **Linux**
 - **Frame-accurate control.** Variable playback speed (0.5x–10x, up to 25x optional), frame stepping, configurable skip intervals, and click-to-zoom.
 - **Audio tools.** Waveform overview and live spectrogram displays, volume/mute, audio delay adjustment, and pitch correction at altered speeds.
 - **Video adjustments.** Per-video brightness, contrast, gamma, saturation, and hue.
-- **Multi-part videos.** Score a recording split across multiple files as a single continuous video.
+- **Multi-part videos.** Score a recording split across multiple files as a single continuous video (one subfolder per recording, enabled with a checkbox in the file picker).
 
 **Workflow**
 - **Resume anywhere.** Stop and restart coding sessions without losing your place. Videos are flagged as in-progress or complete in the file browser.
@@ -68,13 +68,30 @@ The Linux build is currently **alpha**. Installing the `.deb` pulls in the requi
 
 ## Quick Start
 
-1. **Launch LASERcoder:** you will see the main directory and file selection menu. 
-2. **Select an Output Directory:** This is your project's working directory. All annotations, keys, session files, and summaries for a project live here (see [Where your data goes](#where-your-data-goes)).
-3. **Select a Video Directory:** and choose the video to annotate. Colored dots show which videos are already in progress or complete.
-4. **Create or load an Event Key:** Define your events with names, keyboard shortcuts, and types (Point or State), and assign mutually exclusive groups as needed. Optionally load a subject key to score multiple individuals.
-5. **Annotate:** Start the video. Press an event's shortcut key or click its button as the video plays. For state events, press once to start and again to end. Everything is saved in real time.
-6. **Press `Escape`** at any time to return to the file selection screen. Your progress is remembered for each video. Next time the video is opened, you will resume coding where you left off.
-7. **Summary statistics and Combined Annotations:** Generate a Combined Annotation file for a whole experiment. This file is pre-formatted for input in downstream statistical analyses.
+LASERcoder keeps everything for a project in one folder, the **working directory**, and reads your videos from wherever they already are. Set up a project once, then open it again from the same screen each time.
+
+### Key concepts
+
+- **Working directory.** A folder you create for the project. LASERcoder writes everything it produces here: annotation files, event and subject keys, session progress, summaries, and logs (see [Where your data goes](#where-your-data-goes)). Choose or create this first; nothing else can be selected until it exists. Use one working directory per project or experiment, and keep it on a local drive rather than a network share.
+- **Video folder.** The folder that holds the videos you want to score. LASERcoder only reads from it and never modifies your videos. It can be anywhere, including an external drive.
+- **Single vs. multi-part videos.** Most recordings are one file per video. Some cameras split a single recording into several files (for example `trial01_000.mp4`, `trial01_001.mp4`). LASERcoder can play such a set as one continuous video: put each recording's files in their own subfolder of the video folder, and tick **My videos are split into multiple parts** in the file picker. Each such subfolder is then listed as one video, named after the subfolder, alongside any single-file videos in the same folder, and its parts play back to back in filename order.
+- **Event key.** The list of behaviors you score: each has a name, a keyboard shortcut, a type (Point for instantaneous events, State for events with a duration), and optionally a mutually exclusive group. Event keys are saved in the working directory and can be reused across projects.
+- **Subject key (optional).** The individuals in the video, each with a shortcut. When subjects are active, every annotation records which subject it applies to. Only needed when you score more than one individual.
+
+### Setting up a project
+
+1. **Launch LASERcoder.** The setup screen shows the working directory on the left and the video folder on the right.
+2. **Create a working directory.** On the left, browse to where you want the project to live, click **Create Directory**, give it a name, and click **Select Directory**. The chosen folder is confirmed below the list. To reopen an existing project, browse to its folder and click **Select Directory** instead.
+3. **Select the folder that holds your videos.** On the right, click **Browse...** and pick the folder. The videos in it are listed. Colored dots mark videos that are already in progress or complete. If some or all recordings are split into parts, tick **My videos are split into multiple parts**: each subfolder is then listed as one video, together with any single-file videos.
+4. **Select a video** by double-clicking it or clicking **Select Video**.
+5. **Create or load an event key** if the project does not have one yet. Define your events with names, shortcut keys, and types, assign mutually exclusive groups as needed, then **Start Video**. Existing keys are listed in the dropdown.
+6. **Optional: create a subject key** if you are scoring more than one individual. Add each subject with a shortcut and, if wanted, a color and mutually exclusive group.
+
+### Annotating
+
+- Press an event's shortcut key or click its on-screen button as the video plays. For state events, press once to start and again to end. For multiple subjects, toggle the active subjects first; each annotation is written once per active subject. Everything is saved in real time.
+- Press **`Escape`** at any time to return to the setup screen. Your position in the video is remembered, and the next time the video is opened you resume where you left off.
+- **Summary statistics and combined annotations.** From the setup screen, generate per-video summaries, box plots, and a combined annotation file for a whole experiment, pre-formatted for downstream statistical analysis.
 
 
 ## Keyboard Controls
@@ -99,7 +116,7 @@ Skip intervals are configurable in the settings menu, and the `W`/`A`/`S`/`D` na
 
 ## Where your data goes
 
-Everything lives in your chosen output directory, in plain files you can inspect, copy, and edit:
+Everything lives in your working directory, in plain files you can inspect, copy, and edit:
 
 ```
 YourProject/

@@ -30,7 +30,7 @@ def _video_name_for(path):
 
 
 def _project_root_for(path):
-    """Output directory that owns *path* (where Annotations/Summaries
+    """Working directory that owns *path* (where Annotations/Summaries
     lives): two levels up from Annotations/{file}, three from
     Session/{video}/Chunks."""
     if os.path.isdir(path) and os.path.basename(path) == "Chunks":

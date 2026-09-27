@@ -923,7 +923,7 @@ class AnnotationStore:
         """Remember the subject file used for this video.
 
         Only the file name is stored: subject files live in
-        Keys/Subject_Keys under the output directory, and an absolute
+        Keys/Subject_Keys under the working directory, and an absolute
         path would break as soon as the project moved to another
         machine or operating system."""
         name = (os.path.basename(str(subject_file_path).replace("\\", "/"))
