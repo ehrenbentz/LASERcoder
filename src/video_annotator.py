@@ -1041,6 +1041,9 @@ class VideoAnnotator(QFrame):
             self._auto_saving = True
             self.save_session_state()
             self._auto_saving = False
+            # Leave the mpv callback before showing any dialog
+            if self.active_state_events:
+                QTimer.singleShot(0, self._prompt_close_states_at_coding_end)
             return
 
         # Throttle progress bar updates
@@ -3309,6 +3312,52 @@ class VideoAnnotator(QFrame):
             menu.exec(tree.viewport().mapToGlobal(point))
         finally:
             self.dialog_open = False
+
+    def _prompt_close_states_at_coding_end(self):
+        """At the end of the coding segment, offer to close any state
+        annotations still open, with the segment end as their end time."""
+        if (self._shutting_down or self.dialog_open
+                or not self.active_state_events
+                or self.coding_duration is None
+                or self.coding_start is None):
+            return
+        end_ts = self.coding_start + self.coding_duration
+
+        names = []
+        for key in list(self.active_state_events):
+            name = self.store.state_event_keys.get(key, key)
+            subjects = [s for s in (self.active_state_subjects.get(key) or [])
+                        if s and s != "NA"]
+            names.append(f"  {name}" + (f"  [{', '.join(subjects)}]"
+                                      if subjects else ""))
+
+        self.dialog_open = True
+        try:
+            box = QMessageBox(self.parent)
+            box.setWindowTitle("End of Coding Segment")
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setText(
+                "The coding segment has ended at "
+                f"{format_time_human(end_ts)} with these state "
+                "annotations still open:\n\n" + "\n".join(names)
+                + "\n\nEnd them now at the segment end time?")
+            theme.apply_dialog_theme(box)
+            yes = box.addButton("End Events", QMessageBox.ButtonRole.YesRole)
+            box.addButton("Leave Open", QMessageBox.ButtonRole.NoRole)
+            box.setDefaultButton(yes)
+            box.exec()
+            chosen = box.clickedButton()
+            box.deleteLater()
+        finally:
+            self.dialog_open = False
+
+        if chosen is not yes:
+            return
+        fmt = format_time_human(end_ts)
+        for key in list(self.active_state_events):
+            # Same path as pressing the hotkey: validates, updates
+            # memory, disk and the trees.
+            self.handle_state_event(key, end_ts, fmt)
 
     def _reopen_state_annotation(self):
         """Clear a closed state's end time so it becomes active again.
