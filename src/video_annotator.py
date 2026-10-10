@@ -162,7 +162,10 @@ class MpvOpenGLWidget(QOpenGLWidget):
             self._gl_clear_black()
             return
         try:
-            ratio = self.devicePixelRatioF()
+            # Optional 1x rendering for integrated GPUs: a quarter of the
+            # fill work on Retina displays, slightly softer picture.
+            ratio = (1.0 if get_config().get_reduce_video_resolution()
+                     else self.devicePixelRatioF())
             w = int(self.width() * ratio)
             h = int(self.height() * ratio)
             if w <= 0 or h <= 0:
@@ -1054,14 +1057,23 @@ class VideoAnnotator(QFrame):
 
         self.progress_bar.set_progress(self._time_to_ratio(current))
         self.progress_bar.set_left_text(_fmt_current(current))
-        self.progress_bar.set_center_text(f"({self.player.speed:.1f}x)")
+        # Cached in _set_speed: avoids a synchronous mpv read per tick
+        self.progress_bar.set_center_text(f"({self._current_speed:.1f}x)")
         self.progress_bar.update()
 
+        # Audio widgets repaint at half rate (15 Hz) and follow what is
+        # heard: the video clock shifted by the user's audio delay.
+        self._tick_count += 1
+        if self._tick_count % 2:
+            return
+        heard = current + getattr(self, "_audio_delay", 0.0)
+        if total > 0:
+            heard = max(0.0, min(total, heard))
         if hasattr(self, 'waveform_widget') and self.waveform_widget.isVisible():
-            self.waveform_widget.set_progress(self._time_to_ratio(current))
+            self.waveform_widget.set_progress(self._time_to_ratio(heard))
             self.waveform_widget.update()
         if hasattr(self, 'spectrogram_widget') and self.spectrogram_widget.isVisible():
-            self.spectrogram_widget.set_position(current)
+            self.spectrogram_widget.set_position(heard)
 
     def _on_duration_changed(self, total):
         """Handle mpv duration property changes on the GUI thread"""
@@ -1126,14 +1138,17 @@ class VideoAnnotator(QFrame):
 
         if visible:
             self.waveform_widget.setVisible(True)
-            cache_dir = os.path.join(
-                self.store.output_dir, "Session", self.video_name)
-            duration = self._mpv_duration or (
-                self.player.duration if self.player else 0) or 0
-            self.waveform_widget.start_extraction(
-                self.video_path, cache_dir, duration=duration)
+            self._pause_for_extraction()
+            self._start_waveform_extraction()
         else:
             self.waveform_widget.setVisible(False)
+
+    def _pause_for_extraction(self):
+        """Audio extraction is a full-speed decode; never run it under
+        playback (it starves rendering, especially on slow machines)."""
+        if self.player and not self.player.pause:
+            self.player.pause = True
+            self._set_play_pause_icon(True)
 
     def _start_waveform_extraction(self):
         if not hasattr(self, 'waveform_widget'):
@@ -1152,6 +1167,7 @@ class VideoAnnotator(QFrame):
 
         if visible:
             self.spectrogram_widget.setVisible(True)
+            self._pause_for_extraction()
             self.spectrogram_widget.start_spectrogram(self.video_path)
         else:
             self.spectrogram_widget.setVisible(False)
@@ -1205,33 +1221,37 @@ class VideoAnnotator(QFrame):
             QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         locale.setlocale(locale.LC_NUMERIC, "C")
 
+        def _mpv_log(level, component, message):
+            # Surface mpv's own warnings in the debug log; they are the
+            # only record of hwdec fallbacks and decoder trouble.
+            if level in ("error", "fatal", "warn"):
+                logger.warning("mpv [%s] %s: %s", level, component, message)
+
         common_opts = dict(
             vo="libmpv",
             keep_open="yes",
-            log_handler=lambda *a: None,
+            log_handler=_mpv_log,
             profile="fast",
-            video_sync="desync",
-            framedrop="vo",
+            # Keep video locked to the audio clock (mpv's default).
+            # "desync" let the two drift apart on any machine that drops
+            # frames, which is what slow laptops do constantly.
+            video_sync="audio",
+            # Let the decoder skip non-reference frames when it falls
+            # behind (high speeds on weak CPUs); "vo" alone still
+            # decoded every frame and capped the achievable speed.
+            framedrop="decoder+vo",
         )
-
-        if sys.platform == "win32":
-            platform_opts = dict(
-                hwdec="auto",
-                opengl_swapinterval=0,
-            )
-        elif sys.platform == "darwin":
-            platform_opts = dict(
-                hwdec="auto",
-                opengl_swapinterval=0,
-            )
-        else:  # Linux
-            platform_opts = dict(
-                hwdec="auto",
-                opengl_swapinterval=0,
-            )
+        # hwdec=auto picks VideoToolbox / D3D11 / VAAPI as available.
+        platform_opts = dict(hwdec="auto")
 
         self.player = mpv.MPV(**common_opts, **platform_opts)
         self.gl_widget.init_mpv_render(self.player)
+        self.gl_widget._first_frame_cb = self._on_first_frame
+        self._current_speed = 1.0
+        self._audio_delay = 0.0
+        self._user_pitch_correction = True
+        self._pending_extractions = set()
+        self._tick_count = 0
 
         # Observe mpv properties for progress updates (callbacks fire on mpv thread)
         @self.player.property_observer("time-pos")
@@ -1302,10 +1322,14 @@ class VideoAnnotator(QFrame):
         # fullscreen transition on Windows/Linux).
         QTimer.singleShot(800, self._reposition_floating_windows)
         # Start waveform extraction only if widget is already visible
+        # The player starts paused, so these run before the user presses
+        # play; if playback already started they wait for the next pause.
         if hasattr(self, 'waveform_widget') and self.waveform_widget.isVisible():
-            QTimer.singleShot(1000, self._start_waveform_extraction)
+            QTimer.singleShot(1000, lambda: self._defer_until_paused(
+                "waveform", self._start_waveform_extraction))
         if hasattr(self, 'spectrogram_widget') and self.spectrogram_widget.isVisible():
-            QTimer.singleShot(1500, self._start_spectrogram)
+            QTimer.singleShot(1500, lambda: self._defer_until_paused(
+                "spectrogram", self._start_spectrogram))
 
     def _reconcile_external_annotation_edits(self):
         """Offer to keep or discard edits made to the full annotations
@@ -2135,12 +2159,12 @@ class VideoAnnotator(QFrame):
             pass
         try:
             self.player.audio_delay = audio_delay
+            self._audio_delay = float(audio_delay)
         except Exception:
             pass
-        try:
-            self.player.audio_pitch_correction = pitch_correction
-        except Exception:
-            pass
+        self._user_pitch_correction = bool(pitch_correction)
+        self._apply_pitch_correction_for_speed(
+            getattr(self, "_current_speed", 1.0))
         try:
             if semitones == 0:
                 self.player.af = ""
@@ -3064,6 +3088,8 @@ class VideoAnnotator(QFrame):
         self.player.pause = paused
         logger.debug("Play/pause toggled: paused=%s", paused)
         self._set_play_pause_icon(paused)
+        if paused:
+            self._start_pending_extractions()
 
     def update_play_pause_icon(self):
         paused = getattr(self.player, 'pause', True)
@@ -3196,6 +3222,10 @@ class VideoAnnotator(QFrame):
     def _reset_speed(self):
         self._set_speed(1.0)
 
+    # Above this speed mpv's pitch-preserving filter is both expensive
+    # and unintelligible, so it is bypassed regardless of the setting.
+    PITCH_CORRECTION_MAX_SPEED = 4.0
+
     def _set_speed(self, new_rate):
         """Set playback speed and refresh the on-screen speed readout."""
         if not self.player:
@@ -3204,12 +3234,71 @@ class VideoAnnotator(QFrame):
         if new_rate == current:
             return
         self.player.speed = new_rate
+        self._current_speed = new_rate
         if new_rate < current:
             self.player.command("seek", 0, "relative+exact")
+        self._apply_pitch_correction_for_speed(new_rate)
         self.progress_bar.set_center_text(f"({new_rate:.1f}x)")
         self.progress_bar.update()
         if hasattr(self, 'spectrogram_widget') and self.spectrogram_widget.isVisible():
             self.spectrogram_widget.set_playback_speed(new_rate)
+        self._log_playback_diagnostics(f"speed {new_rate:.1f}x")
+
+    def _apply_pitch_correction_for_speed(self, rate):
+        """Honour the user's pitch-correction choice up to
+        PITCH_CORRECTION_MAX_SPEED, bypass it above (never saved)."""
+        want = (getattr(self, "_user_pitch_correction", True)
+                and rate <= self.PITCH_CORRECTION_MAX_SPEED)
+        try:
+            if bool(self.player.audio_pitch_correction) != want:
+                self.player.audio_pitch_correction = want
+        except Exception:
+            pass
+
+    def _on_first_frame(self):
+        """First decoded frame is on screen: record what mpv chose."""
+        QTimer.singleShot(500, lambda: self._log_playback_diagnostics("first frame"))
+
+    def _log_playback_diagnostics(self, tag):
+        """Log decoder/renderer facts that explain choppy playback on a
+        given machine (hwdec path, frame drops, achieved fps)."""
+        player = getattr(self, "player", None)
+        if player is None or self._shutting_down:
+            return
+        props = ("hwdec-current", "video-codec", "video-params/w",
+                 "video-params/h", "container-fps", "estimated-vf-fps",
+                 "frame-drop-count", "decoder-frame-drop-count", "speed",
+                 "audio-pitch-correction")
+        parts = []
+        for name in props:
+            try:
+                value = player._get_property(name)
+            except Exception:
+                value = "?"
+            parts.append(f"{name}={value}")
+        logger.info("Playback diagnostics (%s): %s", tag, " ".join(parts))
+
+    def _start_pending_extractions(self):
+        """Run audio-track / spectrogram extraction that was deferred
+        until the player paused (it competes with playback for CPU and,
+        on macOS, for the GUI thread)."""
+        pending = getattr(self, "_pending_extractions", None)
+        if not pending:
+            return
+        if "waveform" in pending:
+            pending.discard("waveform")
+            self._start_waveform_extraction()
+        if "spectrogram" in pending:
+            pending.discard("spectrogram")
+            self._start_spectrogram()
+
+    def _defer_until_paused(self, what, start_fn):
+        """Start extraction now if paused, else remember it for the
+        next pause."""
+        if self.player and not self.player.pause:
+            self._pending_extractions.add(what)
+        else:
+            start_fn()
 
     def _number_key_conflicts(self):
         """Digit keys already used by events or subjects, as

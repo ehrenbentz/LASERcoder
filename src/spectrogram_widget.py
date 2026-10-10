@@ -465,6 +465,8 @@ class SpectrogramWidget(QWidget):
         if hasattr(self, '_spec_poll_timer') and self._spec_poll_timer is not None:
             self._spec_poll_timer.stop()
         self._cleanup_spec_player()
+        self._spec_retry_after = 0.0
+        self._spec_idle_polls = 0
         self._active = False
         if self._worker is not None:
             try:
@@ -477,6 +479,39 @@ class SpectrogramWidget(QWidget):
         self._placeholder_text = None
         self.update()
 
+    # Recently decoded buffers, keyed by (start, dur) rounded to 0.1 s.
+    # Scrubbing back and forth over the same region then costs nothing;
+    # kept in memory only (a few MB each) and bounded.
+    _PCM_CACHE_MAX = 6
+
+    def _pcm_cache_get(self, buf_start, extract_dur):
+        cache = getattr(self, "_pcm_cache", None)
+        if not cache:
+            return None
+        key = (round(buf_start, 1), round(extract_dur, 1))
+        samples = cache.get(key)
+        if samples is not None:
+            cache[key] = cache.pop(key)      # mark most recently used
+        return samples
+
+    def _pcm_cache_put(self, buf_start, extract_dur, samples):
+        if not hasattr(self, "_pcm_cache"):
+            self._pcm_cache = {}
+        self._pcm_cache[(round(buf_start, 1), round(extract_dur, 1))] = samples
+        while len(self._pcm_cache) > self._PCM_CACHE_MAX:
+            self._pcm_cache.pop(next(iter(self._pcm_cache)))
+
+    def _hand_samples_to_worker(self, samples, buf_start):
+        if samples is not None and self._worker is not None:
+            actual_dur = samples.size / SAMPLE_RATE
+            with QMutexLocker(self._worker._mutex):
+                self._worker._preloaded_samples = samples
+                self._worker._preloaded_buf_start = buf_start
+                self._worker._preloaded_buf_end = buf_start + actual_dur
+            self._worker.request_update(self._current_pos)
+        else:
+            self._update_in_flight = False
+
     def _start_extract_for_worker(self, buf_start, extract_dur):
         """Start non-blocking MPV audio extraction on the main thread (macOS)."""
         import mpv
@@ -484,11 +519,19 @@ class SpectrogramWidget(QWidget):
         if hasattr(self, '_spec_extract_player') and self._spec_extract_player is not None:
             return
 
+        cached = self._pcm_cache_get(buf_start, extract_dur)
+        if cached is not None:
+            self._hand_samples_to_worker(cached, buf_start)
+            return
+
         tmp = tempfile.NamedTemporaryFile(suffix=".pcm", delete=False)
         self._spec_tmp_path = tmp.name
         tmp.close()
         self._spec_extract_start = buf_start
         self._spec_extract_dur = extract_dur
+        # mpv reports core_idle=True before it has opened the file; the
+        # poll must see it busy at least once before trusting idle.
+        self._spec_extract_started = False
 
         try:
             locale.setlocale(locale.LC_NUMERIC, "C")
@@ -531,36 +574,49 @@ class SpectrogramWidget(QWidget):
                 self._spec_poll_timer.stop()
                 self._update_in_flight = False
                 return
-            if self._spec_extract_player.core_idle:
-                self._spec_poll_timer.stop()
-                import os as _os
-                tmp_size = _os.path.getsize(self._spec_tmp_path) if _os.path.exists(self._spec_tmp_path) else 0
-                logger.debug("Extraction done, temp file size: %d bytes", tmp_size)
-                logger.debug("Spectrogram: extraction complete (macOS)")
-                buf_start = self._spec_extract_start
+            if not self._spec_extract_player.core_idle:
+                self._spec_extract_started = True
+                return
+            if not getattr(self, "_spec_extract_started", False):
+                # Still opening the file; idle does not mean done yet.
+                # Give up after ~5 s so a file with no audio cannot
+                # leave the poll running forever.
+                self._spec_idle_polls = getattr(self, "_spec_idle_polls", 0) + 1
+                if self._spec_idle_polls < 100:
+                    return
+            self._spec_idle_polls = 0
+            self._spec_poll_timer.stop()
+            import os as _os
+            tmp_size = _os.path.getsize(self._spec_tmp_path) if _os.path.exists(self._spec_tmp_path) else 0
+            logger.debug("Extraction done, temp file size: %d bytes", tmp_size)
+            logger.debug("Spectrogram: extraction complete (macOS)")
+            buf_start = self._spec_extract_start
+            extract_dur = self._spec_extract_dur
 
-                try:
-                    with open(self._spec_tmp_path, "rb") as fh:
-                        raw = fh.read()
-                    if raw:
-                        samples = np.frombuffer(raw, dtype=np.int16).astype(
-                            np.float32) / 32768.0
-                    else:
-                        samples = None
-                except OSError:
-                    samples = None
-
-                self._cleanup_spec_player()
-
-                if samples is not None and self._worker is not None:
-                    actual_dur = samples.size / SAMPLE_RATE
-                    with QMutexLocker(self._worker._mutex):
-                        self._worker._preloaded_samples = samples
-                        self._worker._preloaded_buf_start = buf_start
-                        self._worker._preloaded_buf_end = buf_start + actual_dur
-                    self._worker.request_update(self._current_pos)
+            try:
+                with open(self._spec_tmp_path, "rb") as fh:
+                    raw = fh.read()
+                if raw:
+                    samples = np.frombuffer(raw, dtype=np.int16).astype(
+                        np.float32) / 32768.0
                 else:
-                    self._update_in_flight = False
+                    samples = None
+            except OSError:
+                samples = None
+
+            self._cleanup_spec_player()
+
+            if samples is None:
+                # Empty result: back off instead of re-extracting on
+                # the next 200 ms buffer check (which looped before).
+                import time as _time
+                self._spec_retry_after = _time.monotonic() + 2.0
+                logger.warning("Spectrogram: extraction returned no "
+                               "audio for %.1f-%.1f; retrying in 2 s",
+                               buf_start, buf_start + extract_dur)
+            else:
+                self._pcm_cache_put(buf_start, extract_dur, samples)
+            self._hand_samples_to_worker(samples, buf_start)
         except Exception as exc:
             logger.warning("Spectrogram: poll error: %s", exc)
             self._spec_poll_timer.stop()
@@ -669,6 +725,12 @@ class SpectrogramWidget(QWidget):
         # Don't spam requests while the worker is busy
         if self._update_in_flight:
             return
+        retry_after = getattr(self, "_spec_retry_after", 0.0)
+        if retry_after:
+            import time as _time
+            if _time.monotonic() < retry_after:
+                return
+            self._spec_retry_after = 0.0
         if self._cached_image is None:
             # No image yet request once and wait
             self._update_in_flight = True

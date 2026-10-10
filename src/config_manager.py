@@ -397,6 +397,15 @@ class ConfigManager:
         self.config['show_floating_headers'] = bool(visible)
         self.save_config()
 
+    def get_reduce_video_resolution(self):
+        """Render video at 1x device pixels (halves GPU fill on Retina);
+        for older or integrated-GPU machines"""
+        return bool(self.config.get('reduce_video_resolution', False))
+
+    def set_reduce_video_resolution(self, enabled):
+        self.config['reduce_video_resolution'] = bool(enabled)
+        self.save_config()
+
     def get_allow_25x_speed(self):
         return self.config.get('allow_25x_speed', False)
 

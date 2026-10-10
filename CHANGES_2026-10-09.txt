@@ -1,0 +1,117 @@
+LASERcoder - session change log (Sept 25 - Oct 9, 2026)
+========================================================
+Reference list of what was addressed in this Claude Code session.
+All items are implemented and unit-tested headlessly unless marked otherwise.
+Commits were made manually by Ehren; items after the last commit are uncommitted.
+
+ANNOTATION DATA
+- Multi-subject annotations now write one row per subject instead of a
+  semicolon-delimited list; closing a state closes every subject row.
+- Migration module rewritten as a versioned step runner (marker file
+  .lasercoder_migration). Old pre-1.7 layout migration removed. Current step
+  splits legacy "A;B" rows and stores subject files by name.
+- Full annotations file edited outside LASERcoder is detected on open
+  (fingerprint in session state) and offered as Apply / Discard with a summary.
+- All CSV reads go through one tolerant reader: UTF-8/UTF-16 BOM, Mac Roman
+  vs Windows-1252 (chosen by lowercase-accent score), CR/CRLF, , ; or tab
+  delimiters, blank rows, and ~$ / ._ junk files. Fixes Excel-on-Mac edits
+  crashing startup. Row parsing tolerates Excel-reformatted numbers and a
+  lost Type column; an unreadable file shows a dialog instead of a silent
+  bounce to the file picker.
+- Subject file remembered by bare name and resolved in Keys/Subject_Keys, so
+  projects move between machines/OSes.
+- Summaries now group by Type as well as name and subject; same-named state
+  and point events are no longer merged. Box plots label such pairs
+  "Name (State)" / "Name (Point)".
+- Combined summaries record their source videos (JSON sidecar); box plots
+  scope to that set instead of pooling every individual summary.
+- "Update Selected" regenerates per-video summaries instead of reusing stale ones.
+
+VIDEO STATUS / FILE PICKER
+- In-progress status tests for presence of timestamp_sec (0.0 counted as
+  not started before); multi-part folder names used verbatim.
+- "Output Directory" renamed "Working Directory" everywhere in the UI and docs.
+- Video panel: centre folder tree removed; "Select Video Directory" with
+  path box, up arrow and Browse; "Select Video File" list beneath.
+- "My videos are split into multiple parts" checkbox (persisted). Unticked:
+  files only. Ticked: files plus one entry per subfolder of parts. First open
+  of a multi-part folder shows a confirmation listing the files.
+- Browse dialog is Qt's own directory chooser showing files (no type filter
+  combo), hiding dotfiles and OS junk; size grip removed (stray grey block
+  under Cancel on Windows).
+
+ANNOTATOR UI
+- State Annotations tree has a Subject column with a "Show Subject Column"
+  settings toggle.
+- "Reopen State (clear end time)" in the annotation right-click menu makes a
+  closed state active again, with the usual active/ME conflict checks.
+- Subject changes are refused with a dialog while that subject has an open
+  state (hotkey and button paths share one method).
+- End of coding segment with open states prompts "End Events" (closed at the
+  segment end time) or "Leave Open".
+- "Number Keys Set Speed" option (1-9 = 1x-9x, 0 = 10x); refused or auto-
+  disabled if a digit is assigned to an event or subject.
+- Video name overlay at top centre of the video with a "Show Video Name"
+  toggle; subject readout stacks beneath it.
+- Escape or hotkeys while an annotation context menu is open no longer close
+  the session; Delete after Sort no longer removes the wrong row.
+- Minimize/deactivate handler for floating windows was unreachable
+  (indentation) and now works.
+
+KEY EDITORS
+- Rename writes the current grid under the new name (unsaved rows kept);
+  Save with no file prompts for a name and keeps entries; New offers to carry
+  entries over; existing files are not overwritten without asking.
+- Grids grow past 30 rows so longer key files are shown and saved whole.
+- Non-UTF-8 / malformed key files no longer leave a half-loaded grid.
+
+DIALOGS / SETTINGS
+- Appearance dialog no longer wipes saved custom colours that were not
+  re-picked. A/V settings Escape/close now rolls back live changes.
+- Coding-start dialog validates before mutating state; details dialog keeps
+  subject tracking consistent on active rename; notes/details saves schedule
+  the full-file write; volume 0 no longer restored as 100.
+
+EXPORTS / VIEWERS
+- Box-plot export fixed (QWidget.render TypeError); image/pixmap save
+  failures now reported instead of "Export Successful".
+- Spreadsheet temp CSV written as UTF-8 and removed after viewing.
+- Visualizer receives Subject for point events (subject filter works);
+  export filename reflects the coded-segment checkbox.
+
+ROBUSTNESS
+- Write failures after deletes/undo/sort/state close are surfaced via the
+  write-error dialog and memory is rolled back; undo no longer duplicates.
+- Auto-save survives a detached output drive (makedirs moved inside guard).
+- Imported state rows without a Start no longer crash load or rewrite.
+- macOS waveform extraction cannot be re-entered mid-flight.
+
+macOS PACKAGING (not testable here; needs a Mac build)
+- create_pkg.sh / create_dmg.sh normalise the mktemp staging roots (0700 was
+  baked into the payload / DMG root) and the pkg is marked non-relocatable.
+
+PLAYBACK PERFORMANCE (Oct 9, for the Intel i5 / Iris 645 tester; uncommitted)
+- mpv: video_sync="audio" (was "desync", caused A/V drift) and
+  framedrop="decoder+vo" (was "vo", capped real speed around 3-5x).
+- Spectrogram macOS poll got the "started" guard it lacked (fixes a
+  re-extraction loop), a 2 s back-off on empty results, and a small
+  in-memory PCM cache.
+- Waveform/spectrogram extraction waits for a pause; toggling them pauses the
+  video first. Waveform bars cached as a pixmap.
+- Per-frame handler uses cached speed, repaints audio widgets at 15 Hz, and
+  offsets them by the audio delay. Pitch correction bypassed above 4x.
+- Optional "Reduce video rendering resolution" (1x device pixels) in A/V
+  settings. mpv warnings and playback diagnostics (hwdec-current, drop
+  counts) now logged.
+
+NOT DONE / OPEN
+- Multi-part sessions still store absolute file paths, so they do not follow
+  a project across machines (deferred to the multi-part rework).
+- Hardware-decoding mode on the Intel Mac is unknown until the tester sends
+  the Debug/ log; hwdec setting unchanged pending that.
+- "Audio quality not great at 1x" on the Intel Mac is unexplained by code;
+  needs tester answers (QuickTime comparison, speed, audio delay/pitch set?).
+- Real-Mac verification still required for: pkg/dmg permission fixes, Excel
+  round-trip of key and annotation files, waveform/spectrogram toggling
+  during playback on Apple Silicon and Intel.
+- Linux libmpv bundling (pre-existing, still deferred).

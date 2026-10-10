@@ -6,7 +6,7 @@ import locale
 
 import numpy as np
 from PySide6.QtCore import Qt, QThread, Signal, QPoint, QTimer
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QWidget, QLabel
 
 import theme
@@ -208,21 +208,33 @@ class WaveformWidget(QWidget):
         if isinstance(color, str):
             color = QColor(color)
         self._fill_color = color
+        self._invalidate_bars()
         self.update()
 
     def set_opacity(self, value):
         self._opacity = max(0.0, min(1.0, value))
+        self._invalidate_bars()
         self.update()
 
     def set_dynamic_range(self, exponent):
         self._dynamic_range = max(0.1, min(1.0, float(exponent)))
+        self._invalidate_bars()
         self.update()
 
     def set_rms_data(self, data):
         self._rms_data = data
         self._rebinned = None
         self._placeholder_text = None
+        self._invalidate_bars()
         self.update()
+
+    def _invalidate_bars(self):
+        self._bars_pixmap = None
+        self._bars_key = None
+
+    def resizeEvent(self, event):
+        self._invalidate_bars()
+        super().resizeEvent(event)
 
     def start_extraction(self, video_path, cache_dir, duration=0):
         if self._extracted:
@@ -434,19 +446,50 @@ class WaveformWidget(QWidget):
                 return self._rms_data[i_start:i_end]
         return self._rms_data
 
+    def _display_key(self, w, h):
+        """Everything the bar image depends on.  While playing only the
+        playhead moves, so the bars are rebuilt rarely."""
+        ann = self._annotator
+        limit = bool(ann is not None and getattr(ann, 'limit_timeline_to_coding', False))
+        return (
+            id(self._rms_data), w, h, round(self._dynamic_range, 3),
+            self._fill_color.name(), round(self._opacity, 3), limit,
+            getattr(ann, 'coding_start', None) if limit else None,
+            getattr(ann, 'coding_end', None) if limit else None,
+            getattr(ann, '_mpv_duration', None) if limit else None,
+        )
+
     def _paint_waveform(self, painter, w, h):
+        """Blit the cached bar image; rebuild it only when the data,
+        size, colour, opacity, dynamic range or visible range changed.
+        The bar drawing itself is unchanged (QPainter, per-column rects);
+        it just no longer runs 30 times a second on the render thread."""
+        key = self._display_key(w, h)
+        pixmap = getattr(self, "_bars_pixmap", None)
+        if pixmap is None or getattr(self, "_bars_key", None) != key:
+            pixmap = self._build_bars_pixmap(w, h)
+            self._bars_pixmap = pixmap
+            self._bars_key = key
+        if pixmap is not None:
+            painter.drawPixmap(0, 0, pixmap)
+
+    def _build_bars_pixmap(self, w, h):
         data = self._get_display_data()
         if data is None or data.size == 0:
-            return
+            return None
 
-        # Rebin to widget width (always fresh since display data may change)
+        # Rebin to widget width (fresh: display data may be a slice)
         normalized = WaveformExtractor._rebin(data, max(1, w))
 
         peak = normalized.max()
         if peak < 1e-6:
-            return
+            return None
         normalized = np.power(normalized / peak, self._dynamic_range)
 
+        pixmap = QPixmap(max(1, w), max(1, h))
+        pixmap.setDevicePixelRatio(1.0)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
         painter.setOpacity(self._opacity)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self._fill_color)
@@ -456,8 +499,8 @@ class WaveformWidget(QWidget):
             bar_h = int(normalized[x] * half_h)
             if bar_h > 0:
                 painter.drawRect(x, int(half_h - bar_h), 1, bar_h * 2)
-
-        painter.setOpacity(1.0)
+        painter.end()
+        return pixmap
 
     # Mouse interaction — click-to-seek
 

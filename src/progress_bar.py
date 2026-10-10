@@ -71,7 +71,9 @@ class ProgressBar(QWidget):
             coding_end = getattr(ann, "coding_end", None)
             duration = getattr(ann, "player", None)
             if coding_end is not None and duration is not None:
-                total = ann.player.duration
+                # Cached by the annotator's duration observer; avoids a
+                # synchronous mpv property read on every repaint.
+                total = getattr(ann, "_mpv_duration", 0) or ann.player.duration
                 if total and total > 0:
                     ratio = coding_end / total
                     if 0 <= ratio <= 1:

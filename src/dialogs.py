@@ -832,9 +832,22 @@ def show_av_settings_dialog(annotator):
         )
     speed_25x_cb.toggled.connect(_on_25x_toggled)
 
+    reduce_res_cb = QCheckBox(
+        "Reduce video rendering resolution (smoother on older computers)")
+    reduce_res_cb.setChecked(cfg.get_reduce_video_resolution())
+    vid_layout.addWidget(reduce_res_cb, len(VIDEO_PROPS) + 1, 0, 1, 4)
+
+    def _on_reduce_res_toggled(checked):
+        # Applied live so the effect is visible immediately
+        cfg.set_reduce_video_resolution(checked)
+        gl = getattr(annotator, "gl_widget", None)
+        if gl is not None:
+            gl.update()
+    reduce_res_cb.toggled.connect(_on_reduce_res_toggled)
+
     video_scope_cb = QCheckBox("Apply video settings to all videos")
     video_scope_cb.setChecked(not bool(per_video))
-    vid_layout.addWidget(video_scope_cb, len(VIDEO_PROPS) + 1, 0, 1, 4)
+    vid_layout.addWidget(video_scope_cb, len(VIDEO_PROPS) + 2, 0, 1, 4)
 
     layout.addWidget(vid_group)
 
@@ -1145,6 +1158,7 @@ def show_av_settings_dialog(annotator):
         height_slider.setValue(20)
         dynamic_range_slider.setValue(0)
         speed_25x_cb.setChecked(False)
+        reduce_res_cb.setChecked(False)
         cmap_combo.setCurrentText("viridis")
         freq_low_spin.setValue(0)
         freq_high_spin.setValue(15000)
@@ -1237,6 +1251,7 @@ def show_av_settings_dialog(annotator):
         secs = val / 1000.0
         delay_lbl.setText(f"{secs:.2f}")
         annotator.player.audio_delay = secs
+        annotator._audio_delay = secs     # waveform/spectrogram follow it
 
     def _apply_pitch(semitones):
         pitch_lbl.setText(str(semitones))
