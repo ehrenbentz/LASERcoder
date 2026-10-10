@@ -102,6 +102,7 @@ echo "Creating DMG installer (${ARCH_LABEL})..."
 retry_busy cp -R "$APP_PATH" "$STAGING_DIR/"
 ln -s /Applications "$STAGING_DIR/Applications"
 
+# Build installers  that implement appropriate permissions for macOS
 # mktemp -d creates the staging folder with mode 0700.  hdiutil copies
 # that mode onto the image's root folder, so on another account the
 # mounted DMG can show as empty or refuse to open.  Make the volume

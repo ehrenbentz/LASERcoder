@@ -122,6 +122,7 @@ echo ""
 APP_BUNDLE="$(basename "$APP_PATH")"
 retry_busy cp -R "$APP_PATH" "$PKG_ROOT/${APP_BUNDLE}"
 
+# Build installer with appropriate permissions for macOS
 # mktemp -d creates the payload root with mode 0700 owned by the build
 # user.  pkgbuild records the root's mode/owner as the mode/owner of the
 # install location, so Installer would apply 0700 to /Applications and
