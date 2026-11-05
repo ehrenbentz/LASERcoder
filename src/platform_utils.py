@@ -4,6 +4,30 @@ import ctypes
 import ctypes.util
 
 
+# Shipped beside the executable in portable packages only
+PORTABLE_MARKER = "portable.txt"
+
+
+def portable_dir():
+    """Return the application folder for a portable package, else None.
+
+    A portable package keeps its settings and logs in its own folder so
+    it can run from an external drive without writing to the host. App
+    bundles must stay unmodified, so macOS never runs in this mode.
+    """
+    if sys.platform == "darwin":
+        return None
+    if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
+        app_dir = os.path.dirname(sys.executable)
+    elif "__compiled__" in globals():
+        app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    else:
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+    if os.path.isfile(os.path.join(app_dir, PORTABLE_MARKER)):
+        return app_dir
+    return None
+
+
 def _get_nsapp():
     """Get the NSApplication shared instance via the Objective-C runtime"""
     objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))

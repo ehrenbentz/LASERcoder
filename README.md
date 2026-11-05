@@ -41,14 +41,14 @@ Download the installer for your platform from the [Releases](../../releases) pag
 
 | Platform | Download | Notes |
 |----------|----------|-------|
-| **Windows (64-bit)** | `LASERcoder_v*_windows_x64_setup.exe` | Install on your system |
-| **Windows (64-bit)** | `LASERcoder_v*_windows_x64_portable.zip` | Portable; Extract and run without installation |
+| **Windows (64-bit)** | `LASERcoder_v*_windows_x64_setup.exe` | Installer; No admin rights needed |
+| **Windows (64-bit)** | `LASERcoder_v*_windows_x64_portable.zip` | Portable; Extract and run from any folder or external drive. Settings and logs stay in that folder |
 | **macOS (Apple Silicon)** | `LASERcoder_v*_macOS_arm64.pkg` | Installer; Automatically clears the quarantine flag |
 | **macOS (Apple Silicon)** | `LASERcoder_v*_macOS_arm64.dmg` | Drag to Applications (see [Gatekeeper note](#note-about-macos-gatekeeper)) |
 | **macOS (Intel)** | `LASERcoder_v*_macOS_x86_64.pkg` | Installer; Automatically clears the quarantine flag |
 | **macOS (Intel)** | `LASERcoder_v*_macOS_x86_64.dmg` | Drag to Applications (see [Gatekeeper note](#note-about-macos-gatekeeper)) |
 | **Linux** | `LASERcoder_v*_linux_amd64.deb` | Debian/Ubuntu package (see [Linux note](#note-about-linux)) |
-| **Linux** | `LASERcoder_v*_linux_amd64_portable.tar.gz` | Portable tarball, extract and run |
+| **Linux** | `LASERcoder_v*_linux_amd64_portable.tar.gz` | Portable tarball, extract and run. Settings and logs stay in that folder |
 
 **System requirements:** Windows 10/11 (64-bit). Current macOS builds require **macOS 15 (Sequoia) or newer**
 

@@ -8,6 +8,8 @@ import shutil
 import tempfile
 from datetime import datetime
 
+from platform_utils import portable_dir
+
 # Log retention: keep at most this many logs per directory, and none
 # older than this many days. Applied at startup to both the temp log
 # directory and the per-project Debug/ directory.
@@ -119,18 +121,29 @@ class DebugLogger:
         # Phase 1: log to temp dir
         ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self._log_filename = f"debug_{ts}.log"
-        temp_dir = os.path.join(tempfile.gettempdir(), "LASERcoder_Debug")
-        os.makedirs(temp_dir, exist_ok=True)
-        _cleanup_old_logs(temp_dir)
-        self._temp_log_path = os.path.join(temp_dir, self._log_filename)
+        app_dir = portable_dir()
+        if app_dir:
+            temp_dir = os.path.join(app_dir, "Debug")
+        else:
+            temp_dir = os.path.join(tempfile.gettempdir(), "LASERcoder_Debug")
 
         fmt = logging.Formatter(
             "%(asctime)s.%(msecs)03d [%(levelname)s] %(module)s: %(message)s",
             datefmt="%H:%M:%S",
         )
-        self._handler = FlushFileHandler(self._temp_log_path, encoding="utf-8")
-        self._handler.setFormatter(fmt)
-        self._logger.addHandler(self._handler)
+        try:
+            os.makedirs(temp_dir, exist_ok=True)
+            _cleanup_old_logs(temp_dir)
+            self._temp_log_path = os.path.join(temp_dir, self._log_filename)
+            self._handler = FlushFileHandler(
+                self._temp_log_path, encoding="utf-8")
+            self._handler.setFormatter(fmt)
+            self._logger.addHandler(self._handler)
+        except OSError:
+            # Read-only location: run without a startup log
+            self._temp_log_path = None
+            self._handler = None
+            self._logger.addHandler(logging.NullHandler())
 
         # Redirect stdout/stderr
         self._orig_stdout = sys.stdout

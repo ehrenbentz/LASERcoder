@@ -1,10 +1,12 @@
 # config_manager.py
 
 import os
+import sys
 import json
 from pathlib import Path
 from PySide6.QtCore import QStandardPaths, QDir
 from debug_logger import get_logger
+from platform_utils import portable_dir
 
 logger = get_logger()
 
@@ -21,7 +23,12 @@ class ConfigManager:
     
     def __init__(self):
         """Initialize the configuration manager with default settings"""
-        self.home_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.HomeLocation)
+        # Portable packages keep everything in their own folder, so the
+        # config and the default Working Directory never touch the host.
+        app_dir = portable_dir()
+        self.portable = app_dir is not None
+        self.home_dir = app_dir or QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.HomeLocation)
         self.config_file = os.path.join(self.home_dir, '.lasercoder.conf')
         old_config = os.path.join(self.home_dir, '.lasertag.conf')
         if not os.path.exists(self.config_file) and os.path.exists(old_config):
@@ -46,8 +53,27 @@ class ConfigManager:
         self._validate_and_update_config()
         return self.config
 
+    def _follow_portable_drive(self, key):
+        """Point a saved folder at the executable's drive if it moved.
+
+        An external drive can get a different letter on another PC."""
+        path = self.config.get(key)
+        if (not self.portable or sys.platform != "win32" or not path
+                or os.path.exists(path)):
+            return
+        drive, tail = os.path.splitdrive(path)
+        if len(drive) != 2:  # UNC share, not a drive letter
+            return
+        moved = os.path.splitdrive(self.home_dir)[0] + tail
+        if os.path.exists(moved):
+            logger.info("Saved folder moved: %s -> %s", path, moved)
+            self.config[key] = moved
+
     def _validate_and_update_config(self):
         """Validate configuration"""
+        self._follow_portable_drive('output_dir')
+        self._follow_portable_drive('video_dir')
+
         if not self.config.get('output_dir') or not os.path.exists(self.config['output_dir']):
             self.config['output_dir'] = self.home_dir
             

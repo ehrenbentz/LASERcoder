@@ -306,6 +306,10 @@ REM =====================================================================
  if exist "%OUTPUT_DIR%\%APP_NAME%" rmdir /s /q "%OUTPUT_DIR%\%APP_NAME%"
  ren "%OUTPUT_DIR%\%APP_NAME%.dist" "%APP_NAME%"
 
+ REM The marker switches the app to portable mode: settings and logs stay
+ REM in this folder. Added here so the installer, built above, omits it.
+ > "%OUTPUT_DIR%\%APP_NAME%\portable.txt" echo This file keeps LASERcoder settings and logs in this folder. Do not delete it.
+
  powershell -NoProfile -Command ^
      "Compress-Archive -Path '%OUTPUT_DIR%\%APP_NAME%' -DestinationPath '%OUTPUT_DIR%\%ZIP_NAME%'"
 

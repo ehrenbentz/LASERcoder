@@ -233,6 +233,11 @@ fi
 echo ""
 echo "Creating portable tarball..."
 
+# The marker switches the app to portable mode: settings and logs stay in
+# its folder. Added here so the .deb, built above, omits it.
+echo "This file keeps LASERcoder settings and logs in this folder. Do not delete it." \
+    > "$OUTPUT_DIR/${APP_NAME}.dist/portable.txt"
+
 tar -czf "$OUTPUT_DIR/$TAR_NAME" -C "$OUTPUT_DIR" "${APP_NAME}.dist"
 echo "Tarball created: $OUTPUT_DIR/$TAR_NAME"
 

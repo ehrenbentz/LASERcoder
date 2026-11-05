@@ -34,7 +34,10 @@ OutputBaseFilename=LASERcoder_windows_x64_setup
 #endif
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=admin
+; Installs for the current user with no admin rights. Admins can choose
+; an all-users install from the dialog at the start of setup.
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
 Compression=lzma
 SolidCompression=yes
 SetupIconFile=..\icons\laser.ico
@@ -59,14 +62,14 @@ Source: "..\icons\laser.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\LASERcoder"; Filename: "{app}\LASERcoder.exe"; WorkingDir: "{app}"; IconFilename: "{app}\laser.ico"
-Name: "{commondesktop}\LASERcoder"; Filename: "{app}\LASERcoder.exe"; WorkingDir: "{app}"; IconFilename: "{app}\laser.ico"; Tasks: desktopicon
+Name: "{autodesktop}\LASERcoder"; Filename: "{app}\LASERcoder.exe"; WorkingDir: "{app}"; IconFilename: "{app}\laser.ico"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"
 
 ; NOTE: Earlier versions added {app} to the user's PATH in a [Code]
 ; section. That was removed in 1.7.4: a GUI app does not need to be on
-; PATH, the installer runs elevated (so HKCU belonged to the elevating
-; admin, not necessarily the installing user), and rewriting PATH as
+; PATH, an elevated installer's HKCU belonged to the elevating admin
+; rather than necessarily the installing user, and rewriting PATH as
 ; REG_SZ destroyed REG_EXPAND_SZ entries containing %VARIABLES%.
 ; Old uninstallers still remove the entry they added.
