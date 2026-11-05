@@ -152,6 +152,22 @@ class SetupManager(QObject):
                 self._show_files_manager()
                 return
 
+    def _saved_part_paths(self, saved_parts):
+        """Full paths for a session's saved parts, in their saved order.
+
+        The saved list fixes which parts were coded, so annotation times
+        stay valid if files are added to the folder. Older sessions hold
+        absolute paths, possibly from another platform; only the file
+        name is used, and the folder comes from the current selection."""
+        if self.multi_part_files:
+            folder = os.path.dirname(self.multi_part_files[0])
+        else:
+            # A single file sharing its name with a multi-part session
+            folder = os.path.join(
+                os.path.dirname(self.video_path), self.video_name)
+        return [os.path.join(folder, os.path.basename(p.replace("\\", "/")))
+                for p in saved_parts]
+
     def _write_edl_file(self):
         missing = [p for p in self.multi_part_files
                    if not os.path.isfile(p)]
@@ -199,7 +215,10 @@ class SetupManager(QObject):
                 "coding_end_reached": False,
             }
             if self.multi_part_files:
-                state["multi_part_files"] = self.multi_part_files
+                # Names only: the folder comes from the current selection,
+                # so a moved folder or new drive letter stays valid.
+                state["multi_part_files"] = [
+                    os.path.basename(p) for p in self.multi_part_files]
             with open(temp_state, "w", encoding="utf-8") as fh:
                 json.dump(state, fh)
                 fh.flush()
@@ -231,7 +250,7 @@ class SetupManager(QObject):
                             self.saved_state["timestamp_ms"] / 1000.0)
 
                     if self.saved_state.get("multi_part_files"):
-                        self.multi_part_files = (
+                        self.multi_part_files = self._saved_part_paths(
                             self.saved_state["multi_part_files"])
                         edl_path = self._write_edl_file()
                         if not edl_path:
