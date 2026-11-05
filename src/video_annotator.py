@@ -204,6 +204,12 @@ _STATE_COL_START = 2
 _STATE_COL_END = 3
 _STATE_TIME_COLS = (_STATE_COL_START, _STATE_COL_END)
 
+# Point Annotations tree columns
+_POINT_COL_EVENT = 0
+_POINT_COL_SUBJECT = 1
+_POINT_COL_TIME = 2
+_POINT_TIME_COLS = (_POINT_COL_TIME,)
+
 
 def _state_tree_row(evt):
     """Cell texts for one state annotation, in column order."""
@@ -213,6 +219,11 @@ def _state_tree_row(evt):
         _fmt_time_or_blank(evt["start_time"]),
         _fmt_time_or_blank(evt["end_time"]),
     ]
+
+
+def _point_tree_row(evt):
+    """Cell texts for one point annotation, in column order."""
+    return [evt["Event"], evt.get("Subject", "NA"), evt["time"]]
 
 
 def _fmt_time_or_blank(seconds):
@@ -1621,7 +1632,12 @@ class VideoAnnotator(QFrame):
 
         # Point annotations
         paf, pal, self.point_annotations_tree = _make_tree(
-            ["Event", "Time"])
+            ["Event", "Subject", "Time"])
+        for col in _POINT_TIME_COLS:
+            self.point_annotations_tree.headerItem().setTextAlignment(
+                col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.point_annotations_tree.setColumnHidden(
+            _POINT_COL_SUBJECT, not get_config().get_show_subject_column())
         pa_header = QWidget()
         pa_header.setStyleSheet(theme.header_widget_stylesheet())
         self._header_widgets.append(pa_header)
@@ -1798,21 +1814,20 @@ class VideoAnnotator(QFrame):
         # now sits at the stale index (e.g. after a Sort).
         self.selected_item = None
         self.selected_index = None
-        for tree, events, fmt_fn in [
+        for tree, events, fmt_fn, time_cols in [
             (self.state_annotations_tree, self.store.state_events,
-             _state_tree_row),
+             _state_tree_row, _STATE_TIME_COLS),
             (self.point_annotations_tree, self.store.point_events,
-             lambda evt: [evt["Event"], evt["time"]]),
+             _point_tree_row, _POINT_TIME_COLS),
         ]:
             scrollbar = tree.verticalScrollBar()
             saved_pos = scrollbar.value()
             tree.clear()
             for evt in events:
                 item = QTreeWidgetItem(fmt_fn(evt))
-                if tree is self.state_annotations_tree:
-                    for col in _STATE_TIME_COLS:
-                        item.setTextAlignment(
-                            col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                for col in time_cols:
+                    item.setTextAlignment(
+                        col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 tree.addTopLevelItem(item)
             # Restore the scroll position. Apply twice because the tree's
             # scrollbar range doesn't update until after the next layout
@@ -1823,7 +1838,10 @@ class VideoAnnotator(QFrame):
 
     def _append_point_to_tree(self, evt):
         """Append a single point annotation to the point tree and scroll to it."""
-        item = QTreeWidgetItem([evt["Event"], evt["time"]])
+        item = QTreeWidgetItem(_point_tree_row(evt))
+        for col in _POINT_TIME_COLS:
+            item.setTextAlignment(
+                col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.point_annotations_tree.addTopLevelItem(item)
         self.point_annotations_tree.scrollToItem(
             item, QAbstractItemView.ScrollHint.EnsureVisible)
@@ -2043,6 +2061,8 @@ class VideoAnnotator(QFrame):
             cfg.set_show_subject_column(checked)
             self.state_annotations_tree.setColumnHidden(
                 _STATE_COL_SUBJECT, not checked)
+            self.point_annotations_tree.setColumnHidden(
+                _POINT_COL_SUBJECT, not checked)
         elif item == "video_name":
             cfg.set_show_video_name(checked)
             self._update_subject_overlay()
@@ -2573,39 +2593,18 @@ class VideoAnnotator(QFrame):
     def toggle_subject(self, name):
         """Activate or deactivate a subject (hotkey and button path).
 
-        Refused, with a dialog, when it would deactivate a subject that
-        has an open state annotation: those rows are keyed by subject,
-        and changing the subject set under them corrupted the tracking.
-        End the state first.
+        Refused, with a dialog, while any state annotation is open: its
+        rows are keyed by the subjects active when it started, so a
+        selection that differs from them misleads the user about what
+        the state's end will apply to.  End the state first.
         """
-        if name in self.active_subjects:
-            leaving = {name}
-        else:
-            leaving = self._me_subjects_to_deactivate(name)
-
-        blocked = self._subjects_with_open_states() & leaving
-        if blocked:
-            if self.player:
-                self.player.pause = True
-            lines = []
-            for subj in sorted(blocked):
-                events = sorted({
-                    self.store.state_event_keys.get(k, k)
-                    for k, subs in self.active_state_subjects.items()
-                    if subj in (subs or [])})
-                lines.append(f"  {subj}: {', '.join(events)}")
-            self._show_warning(
-                "Subject Has an Open State",
-                "Cannot change subjects while a state annotation is "
-                "open for:\n\n" + "\n".join(lines)
-                + "\n\nEnd the state first, then change subjects.")
+        if self._refuse_subject_change():
             return False
 
         if name in self.active_subjects:
             self.active_subjects.discard(name)
         else:
-            for s in leaving:
-                self.active_subjects.discard(s)
+            self._deactivate_me_subjects(name)
             self.active_subjects.add(name)
         self._update_subject_overlay()
         self.store.save_active_subjects(list(self.active_subjects))
@@ -2613,14 +2612,26 @@ class VideoAnnotator(QFrame):
         _refresh_subject_button_styles(self)
         return True
 
-    def _subjects_with_open_states(self):
-        """Subjects that currently have an open state annotation."""
-        found = set()
-        for subs in self.active_state_subjects.values():
-            for s in subs or []:
-                if s and s != "NA":
-                    found.add(s)
-        return found
+    def _refuse_subject_change(self):
+        """Warn and return True if any state annotation is open, whether
+        it was started with subjects or with none."""
+        if not self.active_state_events:
+            return False
+        if self.player:
+            self.player.pause = True
+        lines = []
+        for key in self.active_state_events:
+            name = self.store.state_event_keys.get(key, key)
+            subjects = sorted({s for s in self.active_state_subjects.get(key) or []
+                               if s and s != "NA"})
+            lines.append(f"  {name}" + (f"  [{', '.join(subjects)}]"
+                                        if subjects else ""))
+        self._show_warning(
+            "State Annotation Open",
+            "Cannot change subjects while a state annotation is open:\n\n"
+            + "\n".join(sorted(lines))
+            + "\n\nEnd the state first, then change subjects.")
+        return True
 
     def _me_subjects_to_deactivate(self, activating_name):
         """Subjects that activating *activating_name* would switch off:
@@ -3535,10 +3546,9 @@ class VideoAnnotator(QFrame):
     def _skip_to_annotation(self):
         if not self.selected_item:
             return
-        # State tree: Event, Subject, Start, End.  Point tree: Event, Time.
         col = (_STATE_COL_START
                if self.selected_treeview is self.state_annotations_tree
-               else 1)
+               else _POINT_COL_TIME)
         time_str = self.selected_item.text(col)
         t = parse_time(time_str)
         if t is not None:
@@ -4026,6 +4036,10 @@ class VideoAnnotator(QFrame):
     # Subject editor
 
     def _open_subject_editor(self):
+        # Closing the editor reloads the subject file, which clears the
+        # active subjects.
+        if self._refuse_subject_change():
+            return
         was_playing = False
         if self.player:
             was_playing = not self.player.pause

@@ -367,7 +367,7 @@ class ConfigManager:
         self.save_config()
 
     def get_show_subject_column(self):
-        """Whether the State Annotations tree shows its Subject column"""
+        """Whether the annotation trees show their Subject column"""
         return self.config.get('show_subject_column', True)
 
     def set_show_subject_column(self, visible):
