@@ -21,7 +21,7 @@ Runs natively on **Windows**, **macOS** (Apple Silicon and Intel), and **Linux**
 - **Notes and editing.** Attach notes to any annotation, edit timestamps, delete, and undo, all tracked in the output file.
 
 **Playback**
-- **Frame-accurate control.** Variable playback speed (0.5x–10x, up to 25x optional), frame stepping, configurable skip intervals, and click-to-zoom.
+- **Frame-accurate control.** Variable playback speed (0.25x–10x, up to 25x optional), frame stepping, configurable skip intervals, and click-to-zoom.
 - **Audio tools.** Waveform overview and live spectrogram displays, volume/mute, audio delay adjustment, and pitch correction at altered speeds.
 - **Video adjustments.** Per-video brightness, contrast, gamma, saturation, and hue.
 - **Multi-part videos.** Score a recording split across multiple files as a single continuous video (one subfolder per recording, enabled with a checkbox in the file picker).

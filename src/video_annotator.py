@@ -77,6 +77,11 @@ def _fmt_total(secs):
     return f"{h}:{m:02d}:{s:02d}"
 
 
+def _fmt_speed(rate):
+    """Format a playback speed; 0.25x needs two decimals to stay exact"""
+    return f"{rate:.2f}x" if rate < 0.5 else f"{rate:.1f}x"
+
+
 class MpvOpenGLWidget(QOpenGLWidget):
     """OpenGL widget that lets libmpv render frames into a Qt GL surface"""
 
@@ -1010,7 +1015,7 @@ class VideoAnnotator(QFrame):
         self._mpv_duration = total
         self.progress_bar.set_progress(self._time_to_ratio(current))
         self.progress_bar.set_left_text(_fmt_current(current))
-        self.progress_bar.set_center_text(f"({self.player.speed:.1f}x)")
+        self.progress_bar.set_center_text(f"({_fmt_speed(self.player.speed)})")
         if self.limit_timeline_to_coding and self.coding_end is not None:
             self.progress_bar.set_right_text(_fmt_total(self.coding_end))
         else:
@@ -1058,7 +1063,7 @@ class VideoAnnotator(QFrame):
         self.progress_bar.set_progress(self._time_to_ratio(current))
         self.progress_bar.set_left_text(_fmt_current(current))
         # Cached in _set_speed: avoids a synchronous mpv read per tick
-        self.progress_bar.set_center_text(f"({self._current_speed:.1f}x)")
+        self.progress_bar.set_center_text(f"({_fmt_speed(self._current_speed)})")
         self.progress_bar.update()
 
         # Audio widgets repaint at half rate (15 Hz) and follow what is
@@ -3206,9 +3211,9 @@ class VideoAnnotator(QFrame):
     def change_speed(self, delta):
         cfg = get_config()
         if cfg.get_allow_25x_speed():
-            steps = [0.5, 1, 2, 3, 5, 8, 10, 15, 20, 25]
+            steps = [0.25, 0.5, 1, 2, 3, 5, 8, 10, 15, 20, 25]
         else:
-            steps = [0.5, 1, 2, 3, 5, 8, 10]
+            steps = [0.25, 0.5, 1, 2, 3, 5, 8, 10]
         current = self.player.speed
         try:
             idx = steps.index(current)
@@ -3238,11 +3243,11 @@ class VideoAnnotator(QFrame):
         if new_rate < current:
             self.player.command("seek", 0, "relative+exact")
         self._apply_pitch_correction_for_speed(new_rate)
-        self.progress_bar.set_center_text(f"({new_rate:.1f}x)")
+        self.progress_bar.set_center_text(f"({_fmt_speed(new_rate)})")
         self.progress_bar.update()
         if hasattr(self, 'spectrogram_widget') and self.spectrogram_widget.isVisible():
             self.spectrogram_widget.set_playback_speed(new_rate)
-        self._log_playback_diagnostics(f"speed {new_rate:.1f}x")
+        self._log_playback_diagnostics(f"speed {_fmt_speed(new_rate)}")
 
     def _apply_pitch_correction_for_speed(self, rate):
         """Honour the user's pitch-correction choice up to
