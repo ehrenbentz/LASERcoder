@@ -1,0 +1,112 @@
+--- a/src/files_manager.py	2026-11-13 07:54:30.443789983 -0500
++++ b/src/files_manager.py	2026-11-13 08:22:30.093378013 -0500
+@@ -13,7 +13,8 @@
+     QRadioButton, QTreeWidget, QTreeWidgetItem, QHeaderView,
+ )
+ from PySide6.QtCore import (Qt, QTimer, QSize, QThread, Signal, QDir,
+-                            QSortFilterProxyModel, QEvent, QStandardPaths)
++                            QSortFilterProxyModel, QEvent, QStandardPaths,
++                            QUrl)
+ from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen
+ 
+ from display_utils import get_screen_geometry, center_window, is_os_junk
+@@ -587,8 +588,9 @@
+         return True
+ 
+     def _browse_output_dir(self):
+-        # The native chooser is used on purpose: it lets the user
+-        # create, rename and delete folders while picking one.
++        # Same Qt-drawn chooser as the video directory, so the two look
++        # alike on every platform.  Folders can be created, renamed and
++        # deleted in it (right-click, or the New Folder button).
+         if self.output_dir and os.path.isdir(self.output_dir):
+             start = self.output_dir
+         else:
+@@ -598,9 +600,9 @@
+                 QStandardPaths.StandardLocation.DocumentsLocation)
+             if not start or not os.path.isdir(start):
+                 start = str(Path.home())
+-        path = QFileDialog.getExistingDirectory(
+-            self, "Select Project Directory", start,
+-            QFileDialog.Option.ShowDirsOnly)
++        path = self._run_folder_dialog(
++            "Select Project Directory", start,
++            show_files=False, allow_changes=True)
+         if path:
+             self._set_project_directory(path)
+ 
+@@ -638,30 +640,63 @@
+         folder, so users can tell they are in the right place.
+ 
+         The native pickers hide files (Windows) or grey them out
+-        inconsistently (macOS), so Qt's own dialog is used in directory
+-        mode without the dirs-only option: video files are listed but
+-        cannot be chosen, and the current folder is returned.
++        inconsistently (macOS), so Qt's own dialog is used: video files
++        are listed but cannot be chosen, and the folder is returned.
+         """
+-        dlg = QFileDialog(self, "Select Video Directory",
+-                          self.current_video_dir)
++        return self._run_folder_dialog(
++            "Select Video Directory", self.current_video_dir,
++            show_files=True, allow_changes=False)
++
++    def _run_folder_dialog(self, title, start_dir, show_files,
++                           allow_changes):
++        """Qt's own (non-native) folder chooser, used for both the
++        project and the video directory so they look the same on
++        Windows, macOS and Linux.
++
++        *show_files*: list the files inside each folder (read-only
++        context) instead of folders only.  *allow_changes*: enable the
++        New Folder button and the right-click New Folder / Rename /
++        Delete actions.  Qt's Delete removes only empty folders, and
++        permanently (not to the Recycle Bin or Trash).
++
++        Returns the chosen folder, or None if cancelled.
++        """
++        if not start_dir or not os.path.isdir(start_dir):
++            start_dir = str(Path.home())
++        dlg = QFileDialog(self, title, start_dir)
+         dlg.setFileMode(QFileDialog.FileMode.Directory)
+         dlg.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+-        dlg.setOption(QFileDialog.Option.ShowDirsOnly, False)
+-        dlg.setOption(QFileDialog.Option.ReadOnly, True)
++        dlg.setOption(QFileDialog.Option.ShowDirsOnly, not show_files)
++        dlg.setOption(QFileDialog.Option.ReadOnly, not allow_changes)
+         dlg.setViewMode(QFileDialog.ViewMode.Detail)
+         dlg.setLabelText(QFileDialog.DialogLabel.Accept, "Select Folder")
+         # The corner resize grip is painted as a stray grey block under
+         # the Cancel button on Windows; edges still resize the dialog.
+         dlg.setSizeGripEnabled(False)
+-        # Show every ordinary file (no type filter, so the combo is not
+-        # needed) but never hidden or OS housekeeping entries: dotfiles,
+-        # Windows hidden/system files, Finder/Spotlight/thumbnail junk.
+-        dlg.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
++        if show_files:
++            # Every ordinary file (no type filter, so the combo is not
++            # needed) but never hidden or OS housekeeping entries.
++            dlg.setFilter(
++                QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
++        # Hide dotfiles, Windows hidden/system files, Finder/Spotlight/
++        # thumbnail junk, on every platform.
+         dlg.setProxyModel(_NoJunkProxy(dlg))
+         for name in ("fileTypeLabel", "fileTypeCombo"):
+             w = dlg.findChild(QWidget, name)
+             if w is not None:
+                 w.hide()
++        # Shortcuts in the left-hand list: home, Documents, Desktop,
++        # Videos, and the drives / file system root.
++        places = [str(Path.home())]
++        for loc in (QStandardPaths.StandardLocation.DocumentsLocation,
++                    QStandardPaths.StandardLocation.DesktopLocation,
++                    QStandardPaths.StandardLocation.MoviesLocation):
++            folder = QStandardPaths.writableLocation(loc)
++            if folder and os.path.isdir(folder) and folder not in places:
++                places.append(folder)
++        urls = [QUrl.fromLocalFile(p) for p in places]
++        urls.append(QUrl("file:"))     # "Computer": drives / root
++        dlg.setSidebarUrls(urls)
+         theme.apply_dialog_theme(dlg)
+         dlg.resize(int(self._screen["width"] * 0.55),
+                    int(self._screen["height"] * 0.6))
