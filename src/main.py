@@ -70,13 +70,15 @@ if sys.platform == "win32":
 import mpv
 
 import platform
-from PySide6.QtCore import Qt, QEventLoop, Signal
+from PySide6.QtCore import Qt, QEventLoop, Signal, QEvent, QTimer
 from PySide6.QtWidgets import QApplication, QMainWindow, QDialog
 from pathlib import Path
 
 # Import modules
 from setup_manager import SetupManager
 from config_manager import get_config
+from platform_utils import (request_fullscreen_border,
+                            ensure_fullscreen_border)
 from video_annotator import VideoAnnotator
 import theme
 import icons_rc
@@ -90,6 +92,31 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.video_annotator = None
         self.annotator_finished.connect(self._on_annotator_finished)
+        # Windows only (no-op elsewhere): keep dialogs and menus visible
+        # over the full-screen video window.  Must run before the first
+        # show; see platform_utils.request_fullscreen_border.
+        if request_fullscreen_border(self):
+            logger.info("Requested full-screen border from Qt")
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        # Windows only: each time the window becomes full screen, check
+        # shortly afterwards that the border is really there.
+        if (sys.platform == "win32"
+                and event.type() == QEvent.Type.WindowStateChange
+                and self.isFullScreen()):
+            QTimer.singleShot(200, self._check_fullscreen_border)
+
+    def _check_fullscreen_border(self):
+        result = ensure_fullscreen_border(self)
+        if result == "qt":
+            logger.info("Full-screen border present (applied by Qt)")
+        elif result == "win32":
+            logger.warning("Full-screen border was missing; "
+                           "added through the Win32 API")
+        elif result == "missing":
+            logger.warning("Full-screen border could not be applied; "
+                           "dialogs may open behind the video window")
 
     def apply_theme(self):
         """Update the main window background and title bar to match the current theme"""

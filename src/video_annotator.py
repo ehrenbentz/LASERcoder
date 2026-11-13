@@ -1402,6 +1402,21 @@ class VideoAnnotator(QFrame):
         )
         # hwdec=auto picks VideoToolbox / D3D11 / VAAPI as available.
         platform_opts = dict(hwdec="auto")
+        if sys.platform == "win32":
+            # On a PC with no audio output device mpv tries its audio
+            # drivers one after another; the last took 8 seconds to give
+            # up, freezing the window on every video open.  With no
+            # device, audio output is not attempted at all ("null" plays
+            # the track silently, so timing is unchanged).  With a
+            # device, only the standard Windows driver is tried, and a
+            # failure falls straight back to silent playback.
+            from platform_utils import audio_output_available
+            if audio_output_available():
+                platform_opts["ao"] = "wasapi,null"
+            else:
+                platform_opts["ao"] = "null"
+                logger.info("No audio output device found; "
+                            "playing without sound")
 
         self.player = mpv.MPV(**common_opts, **platform_opts)
         self.gl_widget.init_mpv_render(self.player)

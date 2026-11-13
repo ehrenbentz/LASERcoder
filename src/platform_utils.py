@@ -315,3 +315,100 @@ def set_native_titled(window, titled):
                 nswindow, sel_set_max, NSSize(100000.0, 100000.0))
     except Exception:
         pass
+
+
+# Windows: fullscreen OpenGL window and audio device helpers
+#
+# Everything below is a no-op on macOS and Linux.
+
+# Qt's Windows platform plugin reads this QWindow property when it
+# creates the native window, and then gives the window a 1-pixel
+# WS_BORDER whenever it is full screen.
+_FULLSCREEN_BORDER_PROPERTY = "_q_has_border_in_fullscreen"
+_WS_BORDER = 0x00800000
+_GWL_STYLE = -16
+
+
+def request_fullscreen_border(widget):
+    """Ask Qt to keep a 1-pixel border on *widget* when it is full screen.
+
+    Windows stops compositing an OpenGL window that exactly covers the
+    primary screen, and the application's own dialogs and menus are
+    then not drawn on top of it (they open, but stay invisible until
+    something such as the Start menu forces a recomposite).  The border
+    makes the window one pixel short of "exactly the screen", which
+    keeps composition on.
+
+    Must be called before the widget is first shown: the property is
+    only read when the native window is created.  WA_NativeWindow makes
+    the QWindow exist before that happens.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        from PySide6.QtCore import Qt
+        widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        handle = widget.windowHandle()
+        if handle is None:
+            return False
+        handle.setProperty(_FULLSCREEN_BORDER_PROPERTY, True)
+        return True
+    except Exception:
+        return False
+
+
+def ensure_fullscreen_border(widget):
+    """Check that a full-screen *widget* really has the border, and add
+    it through the Win32 API if Qt did not.
+
+    Returns "qt" (Qt applied it), "win32" (added here), "missing"
+    (could not be added), or None when not applicable (not Windows, or
+    the window is not full screen).  The caller logs the result.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        if not widget.isFullScreen():
+            return None
+        hwnd = int(widget.winId())
+        user32 = ctypes.windll.user32
+        get_style = getattr(user32, "GetWindowLongPtrW", None)
+        set_style = getattr(user32, "SetWindowLongPtrW", None)
+        if get_style is None or set_style is None:
+            # 32-bit Windows exports only the non-"Ptr" names
+            get_style = user32.GetWindowLongW
+            set_style = user32.SetWindowLongW
+        get_style.restype = ctypes.c_ssize_t
+        get_style.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        set_style.restype = ctypes.c_ssize_t
+        set_style.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                              ctypes.c_ssize_t]
+
+        style = get_style(hwnd, _GWL_STYLE)
+        if style & _WS_BORDER:
+            return "qt"
+
+        set_style(hwnd, _GWL_STYLE, style | _WS_BORDER)
+        # SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+        # SWP_FRAMECHANGED: only make Windows re-read the frame style.
+        user32.SetWindowPos.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        user32.SetWindowPos(hwnd, None, 0, 0, 0, 0,
+                            0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020)
+        return ("win32" if get_style(hwnd, _GWL_STYLE) & _WS_BORDER
+                else "missing")
+    except Exception:
+        return "missing"
+
+
+def audio_output_available():
+    """False only when Windows reports that the PC has no audio output
+    device at all.  Always True on macOS and Linux, and whenever the
+    question cannot be answered."""
+    if sys.platform != "win32":
+        return True
+    try:
+        return int(ctypes.windll.winmm.waveOutGetNumDevs()) > 0
+    except Exception:
+        return True

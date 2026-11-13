@@ -15,6 +15,19 @@ DEFAULT_VIDEO_SETTINGS = {
     "saturation": 0, "hue": 0
 }
 
+# Folders LASERcoder creates in a project directory
+PROJECT_SUBDIRS = ("Keys", "Annotations", "Session")
+
+
+def looks_like_project(path):
+    """True if *path* already holds LASERcoder project folders."""
+    try:
+        return any(os.path.isdir(os.path.join(path, d))
+                   for d in PROJECT_SUBDIRS)
+    except (OSError, TypeError):
+        return False
+
+
 class ConfigManager:
     """
     Manages configuration settings.
@@ -74,9 +87,20 @@ class ConfigManager:
         self._follow_portable_drive('output_dir')
         self._follow_portable_drive('video_dir')
 
-        if not self.config.get('output_dir') or not os.path.exists(self.config['output_dir']):
-            self.config['output_dir'] = self.home_dir
-            
+        # The project directory is never guessed.  It stays empty until
+        # the user chooses one; the start dialog asks for it.  Earlier
+        # versions defaulted to the home folder (the application folder
+        # in portable mode), which put Keys/Annotations/Session there.
+        # That old default is cleared unless it was really used as a
+        # project.
+        out = self.config.get('output_dir')
+        if not out or not os.path.isdir(out):
+            self.config['output_dir'] = ''
+        elif (os.path.normcase(os.path.abspath(out))
+                == os.path.normcase(os.path.abspath(self.home_dir))
+                and not looks_like_project(out)):
+            self.config['output_dir'] = ''
+
         if not self.config.get('video_dir') or not os.path.exists(self.config['video_dir']):
             self.config['video_dir'] = self.home_dir
             
@@ -97,7 +121,7 @@ class ConfigManager:
     def create_default_config(self):
         """Create default configuration settings"""
         return {
-            'output_dir': self.home_dir,
+            'output_dir': '',
             'video_dir': self.home_dir,
             'last_event_key': None,
             'theme': 'system',
@@ -123,8 +147,8 @@ class ConfigManager:
                 pass
 
     def get_output_dir(self):
-        """Get the current working directory"""
-        return self.config.get('output_dir', self.home_dir)
+        """The project directory, or '' if none has been chosen yet"""
+        return self.config.get('output_dir') or ''
 
     def get_video_dir(self):
         """Get the current video directory"""

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QRadioButton, QTreeWidget, QTreeWidgetItem, QHeaderView,
 )
 from PySide6.QtCore import (Qt, QTimer, QSize, QThread, Signal, QDir,
-                            QSortFilterProxyModel, QEvent)
+                            QSortFilterProxyModel, QEvent, QStandardPaths)
 from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen
 
 from display_utils import get_screen_geometry, center_window, is_os_junk
@@ -26,7 +26,7 @@ from annotations_visualizer import show_visualization_dialog
 from summary_statistics_manager import (SummaryStatisticsDialog,
                                         _video_name_for)
 from summary_viewer import show_table_viewer
-from config_manager import get_config
+from config_manager import get_config, looks_like_project
 from video_probe import VideoLengthCache, VideoLengthProbe
 from name_rules import folder_name_problem
 from dialogs import show_message, get_text, show_colors_theme_dialog
@@ -202,7 +202,12 @@ class FilesManager(QDialog):
         self._length_probe = None      # running VideoLengthProbe, if any
         self._path_items = {}          # video file path -> its list rows
 
-        self.initial_output_dir = os.path.abspath(initial_output_dir)
+        # No project directory yet (first run): the dialog asks for one
+        # and keeps everything else disabled until it is chosen.
+        self.initial_output_dir = (os.path.abspath(initial_output_dir)
+                                   if initial_output_dir else None)
+        self._project_prompted = False
+        self._project_widgets = []     # disabled until a project is set
         self.initial_video_dir = os.path.abspath(initial_video_dir)
         self.current_video_dir = self.initial_video_dir
         self.output_dir = self.initial_output_dir
@@ -241,8 +246,10 @@ class FilesManager(QDialog):
         paths.setColumnStretch(1, 1)
 
         paths.addWidget(QLabel("Project Directory:"), 0, 0)
-        self.output_dir_entry = _PathEdit(self.output_dir)
-        self.output_dir_entry.setToolTip(self.output_dir)
+        self.output_dir_entry = _PathEdit(self.output_dir or "")
+        self.output_dir_entry.setToolTip(self.output_dir or "")
+        self.output_dir_entry.setPlaceholderText(
+            "No project directory selected")
         self.output_dir_entry.editingFinished.connect(
             self._on_output_dir_update)
         paths.addWidget(self.output_dir_entry, 0, 1)
@@ -267,6 +274,7 @@ class FilesManager(QDialog):
         video_btn = QPushButton("Select Video Directory")
         video_btn.clicked.connect(self._browse_video_dir)
         paths.addWidget(video_btn, 1, 2)
+        self._project_widgets += [self.video_dir_entry, video_btn]
 
         main_layout.addLayout(paths)
 
@@ -277,6 +285,7 @@ class FilesManager(QDialog):
         self.multi_part_checkbox.setChecked(get_config().get_multi_part_mode())
         self.multi_part_checkbox.toggled.connect(self._on_multi_part_toggled)
         main_layout.addWidget(self.multi_part_checkbox)
+        self._project_widgets.append(self.multi_part_checkbox)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -289,6 +298,8 @@ class FilesManager(QDialog):
         for btn in self.findChildren(QPushButton):
             btn.setAutoDefault(False)
 
+        self._project_widgets.append(self.video_file_listbox)
+        self._update_project_state()
         self._populate_file_list(self.current_video_dir)
 
     def _build_action_panel(self):
@@ -320,6 +331,7 @@ class FilesManager(QDialog):
                 btn.setMinimumWidth(190)
                 btn.clicked.connect(slot)
                 grp_lay.addWidget(btn)
+                self._project_widgets.append(btn)
             layout.addWidget(grp)
 
         layout.addStretch()
@@ -423,6 +435,9 @@ class FilesManager(QDialog):
         if not self._video_columns_sized:
             self._video_columns_sized = True
             self._init_video_column_widths()
+        if not self.output_dir and not self._project_prompted:
+            self._project_prompted = True
+            QTimer.singleShot(150, self._prompt_for_project_directory)
 
     def _apply_video_list_style(self):
         self.video_file_listbox.setStyleSheet(
@@ -448,13 +463,95 @@ class FilesManager(QDialog):
     # Directory selection
 
 
-    def _set_project_directory(self, path, warn_network=True):
+    def _update_project_state(self):
+        """Enable the video directory, the video list and the project
+        tools only once a project directory has been chosen, so nothing
+        can be written anywhere before the user has picked a place."""
+        has_project = bool(self.output_dir)
+        for widget in self._project_widgets:
+            widget.setEnabled(has_project)
+
+    def _prompt_for_project_directory(self):
+        """First run: explain what the project directory is, then open
+        the folder chooser."""
+        if self.output_dir:
+            return
+        box = QMessageBox(self)
+        theme.apply_dialog_theme(box)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Select a Project Directory")
+        box.setText(
+            "Select a Project Directory where your files will be stored.")
+        box.setInformativeText(
+            "LASERcoder will create folders in this directory that "
+            "contain your Event Keys, Subject Keys, Video Annotations, "
+            "and Session information.\n\n"
+            "Use a new, empty folder for each project. You can create "
+            "one in the next window.")
+        select_btn = box.addButton(
+            "Select Project Directory", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+
+        def _on_finished(_result):
+            chosen = box.clickedButton() is select_btn
+            box.deleteLater()
+            if chosen:
+                self._browse_output_dir()
+
+        box.finished.connect(_on_finished)
+        box.open()
+
+    def _check_new_project_directory(self, path):
+        """Whether the user may make *path* the project directory.
+
+        A folder that already holds a LASERcoder project is always
+        accepted.  The home folder and the top of a drive are refused,
+        and any other folder that already has content needs a
+        confirmation, so the project folders do not end up scattered
+        among unrelated files.
+        """
+        if looks_like_project(path):
+            return True
+
+        target = os.path.normcase(os.path.abspath(path))
+        home = os.path.normcase(os.path.abspath(str(Path.home())))
+        if target == home or os.path.dirname(target) == target:
+            show_message(
+                self, "Choose a Project Folder",
+                "The project directory cannot be your home folder or the "
+                "top level of a drive, because LASERcoder creates its "
+                "Keys, Annotations and Session folders inside it.\n\n"
+                "Create a new folder for the project, for example inside "
+                "Documents, and select that folder.")
+            return False
+
+        try:
+            contents = [n for n in os.listdir(path)
+                        if not n.startswith(".") and not is_os_junk(n)]
+        except OSError:
+            contents = []
+        if contents:
+            reply = show_message(
+                self, "Folder Is Not Empty",
+                f"'{os.path.basename(path) or path}' already contains "
+                "other files or folders.\n\n"
+                "LASERcoder will create its Keys, Annotations and Session "
+                "folders alongside them. A new, empty folder is "
+                "recommended for each project.\n\n"
+                "Use this folder anyway?",
+                icon="question")
+            return reply == QMessageBox.StandardButton.Yes
+        return True
+
+    def _set_project_directory(self, path, warn_network=True,
+                               validate=True):
         """Make *path* the project directory.
 
         Every change of project directory goes through here, so the
         path field, the saved setting and the video status icons can
         never disagree with the directory in use.  Returns True when
-        *path* was accepted.
+        *path* was accepted.  *validate* applies the checks for a
+        folder picked by the user (see _check_new_project_directory).
         """
         path = os.path.normpath(path)
         if not os.path.isdir(path) or self._is_backup_dir(path):
@@ -470,9 +567,16 @@ class FilesManager(QDialog):
             return False
 
         changed = path != self.output_dir
+        if changed and validate:
+            # As above: restore the field before a message box can open
+            self.output_dir_entry.setText(self.output_dir or "")
+            if not self._check_new_project_directory(path):
+                return False
+
         self.output_dir = path
         self.output_dir_entry.setText(path)
         self.output_dir_entry.setToolTip(path)
+        self._update_project_state()
         if changed:
             get_config().update_output_dir(path)
             # Status icons (and the legacy-layout migration) belong to
@@ -485,9 +589,15 @@ class FilesManager(QDialog):
     def _browse_output_dir(self):
         # The native chooser is used on purpose: it lets the user
         # create, rename and delete folders while picking one.
-        start = (self.output_dir
-                 if self.output_dir and os.path.isdir(self.output_dir)
-                 else str(Path.home()))
+        if self.output_dir and os.path.isdir(self.output_dir):
+            start = self.output_dir
+        else:
+            # No project yet: start in Documents, a sensible place to
+            # create the project folder.
+            start = QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.DocumentsLocation)
+            if not start or not os.path.isdir(start):
+                start = str(Path.home())
         path = QFileDialog.getExistingDirectory(
             self, "Select Project Directory", start,
             QFileDialog.Option.ShowDirsOnly)
@@ -626,6 +736,12 @@ class FilesManager(QDialog):
         tree.setSortingEnabled(False)
         tree.clear()
         self._path_items = {}
+
+        # Nothing is listed (or probed) until a project directory has
+        # been chosen; the list is disabled in that state.
+        if not self.output_dir:
+            tree.setSortingEnabled(True)
+            return
 
         # Migrate old output layout before reading statuses
         if self.output_dir:
@@ -1140,7 +1256,8 @@ class FilesManager(QDialog):
             return
 
         # The network-drive warning for the destination was shown above
-        self._set_project_directory(dest_dir, warn_network=False)
+        self._set_project_directory(dest_dir, warn_network=False,
+                                    validate=False)
 
         show_message(
             self, "Move Complete",
