@@ -232,6 +232,149 @@ def _fmt_time_or_blank(seconds):
     return format_time_human(seconds) if seconds is not None else ""
 
 
+class _AnnotationItem(QTreeWidgetItem):
+    """Row of an annotation tree, tied to the annotation it shows.
+
+    The trees can be sorted by any column, so a row's position says
+    nothing about where its annotation sits in the store; code that
+    needs the annotation goes through ``annotation`` instead.  Sorting
+    compares the underlying values (seconds for the time columns), not
+    the formatted text.
+    """
+
+    def __init__(self, texts, annotation, kind):
+        super().__init__(texts)
+        self.annotation = annotation
+        self.kind = kind            # "state" or "point"
+
+    def _start(self):
+        evt = self.annotation
+        if self.kind == "state":
+            value = evt.get("start_time")
+            return value if value is not None else -1.0
+        try:
+            value = parse_time(evt.get("time"))
+        except (ValueError, TypeError):
+            value = None
+        return value if value is not None else -1.0
+
+    def _sort_key(self, column):
+        if self.kind == "state" and column == _STATE_COL_END:
+            end = self.annotation.get("end_time")
+            # Open states (no end yet) sort after every closed one
+            return end if end is not None else float("inf")
+        if ((self.kind == "state" and column == _STATE_COL_START)
+                or (self.kind == "point" and column == _POINT_COL_TIME)):
+            return self._start()
+        return self.text(column).lower()
+
+    def __lt__(self, other):
+        tree = self.treeWidget()
+        column = tree.sortColumn() if tree is not None else 0
+        if not isinstance(other, _AnnotationItem):
+            return self.text(column) < other.text(column)
+        # Rows equal in the sorted column stay in time order
+        return ((self._sort_key(column), self._start())
+                < (other._sort_key(column), other._start()))
+
+
+class _PanelTree(QTreeWidget):
+    """Tree of the annotation panel with user-resizable columns.
+
+    Every column edge can be dragged.  The panel has no horizontal
+    scroll bar, so the first column always takes up whatever width the
+    other columns leave: resizing the panel or another column re-fits
+    it, and dragging its own edge trades width with its neighbour.
+    """
+
+    _MIN_FIRST = 60
+    _MIN_OTHER = 30
+
+    def __init__(self, column_samples=None):
+        super().__init__()
+        # column -> text whose width the column should start at
+        self._column_samples = dict(column_samples or {})
+        self._fitting = False
+        self._sized = False
+
+    def setup_columns(self):
+        header = self.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setMinimumSectionSize(self._MIN_OTHER)
+        header.setSectionsMovable(False)
+        header.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        header.sectionResized.connect(self._on_section_resized)
+
+    def enable_header_sorting(self, on_cleared):
+        """Sort by clicking a column header: ascending, descending, then
+        back to the order the annotations were made in (*on_cleared*
+        rebuilds the rows in that order)."""
+        header = self.header()
+        header.setSortIndicatorClearable(True)
+        header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        self.setSortingEnabled(True)
+        header.sortIndicatorChanged.connect(
+            lambda column, _order: (
+                QTimer.singleShot(0, on_cleared) if column < 0 else None))
+
+    def fit_columns(self):
+        """Give the first column the width the others leave."""
+        if self._fitting or not self._sized:
+            return
+        self._fitting = True
+        try:
+            others = sum(self.columnWidth(c)
+                         for c in range(1, self.columnCount())
+                         if not self.isColumnHidden(c))
+            self.setColumnWidth(
+                0, max(self._MIN_FIRST, self.viewport().width() - others))
+        finally:
+            self._fitting = False
+
+    def _set_initial_widths(self):
+        header = self.header()
+        metrics = header.fontMetrics()
+        for col in range(1, self.columnCount()):
+            width = max(header.sectionSizeHint(col),
+                        self.sizeHintForColumn(col))
+            sample = self._column_samples.get(col)
+            if sample:
+                width = max(width, metrics.horizontalAdvance(sample))
+            self.setColumnWidth(col, width + 12)
+
+    def _on_section_resized(self, index, old, new):
+        if self._fitting or not self._sized:
+            return
+        if index == 0:
+            # The first column's edge was dragged: take the difference
+            # from (or give it to) the next visible column.
+            neighbour = next(
+                (c for c in range(1, self.columnCount())
+                 if not self.isColumnHidden(c)), None)
+            if neighbour is not None:
+                self._fitting = True
+                try:
+                    self.setColumnWidth(neighbour, max(
+                        self._MIN_OTHER,
+                        self.columnWidth(neighbour) - (new - old)))
+                finally:
+                    self._fitting = False
+        self.fit_columns()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self._sized and self.viewport().width() > 100:
+            self._fitting = True
+            try:
+                self._set_initial_widths()
+            finally:
+                self._fitting = False
+            self._sized = True
+        self.fit_columns()
+
+
 class _AutoFitButton(QPushButton):
     """QPushButton that shrinks its font to fit the available width."""
     def resizeEvent(self, event):
@@ -1491,7 +1634,7 @@ class VideoAnnotator(QFrame):
         btn_style = theme.button_stylesheet("11px")
         big_btn_style = theme.button_large_stylesheet("11px")
 
-        def _make_tree(headers):
+        def _make_tree(headers, column_samples=None):
             frame = QFrame()
             frame.setFrameShape(QFrame.Shape.NoFrame)
             frame.setStyleSheet("QFrame { border: none; background: transparent; }")
@@ -1499,17 +1642,12 @@ class VideoAnnotator(QFrame):
             lay = QVBoxLayout(frame)
             lay.setContentsMargins(0, 0, 0, 0)
             lay.setSpacing(0)
-            tree = QTreeWidget()
+            tree = _PanelTree(column_samples)
             tree.setRootIsDecorated(False)
             tree.setIndentation(10)
             tree.setStyleSheet(tree_style)
             tree.setHeaderLabels(headers)
-            header = tree.header()
-            header.setStretchLastSection(False)
-            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-            for i in range(1, len(headers)):
-                header.setSectionResizeMode(
-                    i, QHeaderView.ResizeMode.ResizeToContents)
+            tree.setup_columns()
             tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             return frame, lay, tree
@@ -1602,10 +1740,10 @@ class VideoAnnotator(QFrame):
 
         # State annotations
         saf, sal, self.state_annotations_tree = _make_tree(
-            ["Event", "Subject", "Start", "End"])
-        for col in _STATE_TIME_COLS:
-            self.state_annotations_tree.headerItem().setTextAlignment(
-                col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            ["Event", "Subject", "Start", "End"],
+            {col: "000m00.00s" for col in _STATE_TIME_COLS})
+        self.state_annotations_tree.enable_header_sorting(
+            self._update_annotations)
         self.state_annotations_tree.setColumnHidden(
             _STATE_COL_SUBJECT, not get_config().get_show_subject_column())
         sa_header = QWidget()
@@ -1615,11 +1753,7 @@ class VideoAnnotator(QFrame):
         lbl3 = QLabel("State Annotations"); lbl3.setStyleSheet(label_style)
         self._heading_labels.append(lbl3)
         hlay.addWidget(lbl3)
-        sort_btn = QPushButton("Sort"); sort_btn.setStyleSheet(btn_style)
-        sort_btn.setFixedWidth(50); sort_btn.setFixedHeight(22)
-        sort_btn.clicked.connect(self._sort_state_annotations)
-        self._panel_buttons.append(sort_btn)
-        hlay.addStretch(); hlay.addWidget(sort_btn)
+        hlay.addStretch()
         sal.insertWidget(0, sa_header)
         self.state_annotations_tree.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -1632,10 +1766,10 @@ class VideoAnnotator(QFrame):
 
         # Point annotations
         paf, pal, self.point_annotations_tree = _make_tree(
-            ["Event", "Subject", "Time"])
-        for col in _POINT_TIME_COLS:
-            self.point_annotations_tree.headerItem().setTextAlignment(
-                col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            ["Event", "Subject", "Time"],
+            {col: "000m00.00s" for col in _POINT_TIME_COLS})
+        self.point_annotations_tree.enable_header_sorting(
+            self._update_annotations)
         self.point_annotations_tree.setColumnHidden(
             _POINT_COL_SUBJECT, not get_config().get_show_subject_column())
         pa_header = QWidget()
@@ -1645,11 +1779,7 @@ class VideoAnnotator(QFrame):
         lbl4 = QLabel("Point Annotations"); lbl4.setStyleSheet(label_style)
         self._heading_labels.append(lbl4)
         hlay2.addWidget(lbl4)
-        sort_btn2 = QPushButton("Sort"); sort_btn2.setStyleSheet(btn_style)
-        sort_btn2.setFixedWidth(50); sort_btn2.setFixedHeight(22)
-        sort_btn2.clicked.connect(self._sort_point_annotations)
-        self._panel_buttons.append(sort_btn2)
-        hlay2.addStretch(); hlay2.addWidget(sort_btn2)
+        hlay2.addStretch()
         pal.insertWidget(0, pa_header)
         self.point_annotations_tree.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -1814,21 +1944,21 @@ class VideoAnnotator(QFrame):
         # now sits at the stale index (e.g. after a Sort).
         self.selected_item = None
         self.selected_index = None
-        for tree, events, fmt_fn, time_cols in [
+        for tree, events, fmt_fn, kind in [
             (self.state_annotations_tree, self.store.state_events,
-             _state_tree_row, _STATE_TIME_COLS),
+             _state_tree_row, "state"),
             (self.point_annotations_tree, self.store.point_events,
-             _point_tree_row, _POINT_TIME_COLS),
+             _point_tree_row, "point"),
         ]:
             scrollbar = tree.verticalScrollBar()
             saved_pos = scrollbar.value()
+            # Rows are added unsorted and sorted once at the end, by the
+            # column the user last clicked (if any).
+            tree.setSortingEnabled(False)
             tree.clear()
             for evt in events:
-                item = QTreeWidgetItem(fmt_fn(evt))
-                for col in time_cols:
-                    item.setTextAlignment(
-                        col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                tree.addTopLevelItem(item)
+                tree.addTopLevelItem(_AnnotationItem(fmt_fn(evt), evt, kind))
+            tree.setSortingEnabled(True)
             # Restore the scroll position. Apply twice because the tree's
             # scrollbar range doesn't update until after the next layout
             # pass — setting it immediately would clamp to 0.
@@ -1836,43 +1966,63 @@ class VideoAnnotator(QFrame):
             QTimer.singleShot(
                 0, lambda sb=scrollbar, p=saved_pos: sb.setValue(p))
 
+    def _annotation_index(self, tree, item):
+        """Position in the store of the annotation shown by *item*, or
+        None.  The trees can be sorted by any column, so the row number
+        must never be used as the store index."""
+        events = (self.store.state_events
+                  if tree is self.state_annotations_tree
+                  else self.store.point_events)
+        evt = getattr(item, "annotation", None)
+        if evt is None:
+            return None
+        for i, candidate in enumerate(events):
+            if candidate is evt:
+                return i
+        for i, candidate in enumerate(events):
+            if candidate == evt:
+                return i
+        return None
+
+    def _select_annotation(self, tree, item):
+        """Remember *item* as the selected annotation row."""
+        self.selected_treeview = tree
+        self.selected_index = self._annotation_index(tree, item)
+        self.selected_item = item if self.selected_index is not None else None
+
     def _append_point_to_tree(self, evt):
-        """Append a single point annotation to the point tree and scroll to it."""
-        item = QTreeWidgetItem(_point_tree_row(evt))
-        for col in _POINT_TIME_COLS:
-            item.setTextAlignment(
-                col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        """Add a single point annotation to the point tree and scroll to it."""
+        item = _AnnotationItem(_point_tree_row(evt), evt, "point")
         self.point_annotations_tree.addTopLevelItem(item)
         self.point_annotations_tree.scrollToItem(
             item, QAbstractItemView.ScrollHint.EnsureVisible)
 
     def _append_state_to_tree(self, evt):
-        """Append a single state annotation to the state tree and scroll to it."""
-        item = QTreeWidgetItem(_state_tree_row(evt))
-        for col in _STATE_TIME_COLS:
-            item.setTextAlignment(
-                col, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        """Add a single state annotation to the state tree and scroll to it."""
+        item = _AnnotationItem(_state_tree_row(evt), evt, "state")
         self.state_annotations_tree.addTopLevelItem(item)
         self.state_annotations_tree.scrollToItem(
             item, QAbstractItemView.ScrollHint.EnsureVisible)
 
     def _update_state_tree_end_time(self, event_name, end_time_str, count=1):
-        """Fill the end-time column for open rows of *event_name* in the tree.
+        """Show the end time of state rows that have just been closed.
 
-        *count* rows are updated (one per subject the state was started
-        with); None updates every open row for the event.
+        Each row reads the end time from its own annotation (already
+        updated in memory by the caller), so the right rows are filled
+        whatever order the tree is sorted in.  The arguments describe
+        what was closed and are kept for the callers.
         """
         tree = self.state_annotations_tree
-        remaining = count
-        for i in range(tree.topLevelItemCount()):
-            if remaining is not None and remaining <= 0:
-                return
-            item = tree.topLevelItem(i)
-            if (item.text(_STATE_COL_EVENT) == event_name
-                    and item.text(_STATE_COL_END) == ""):
-                item.setText(_STATE_COL_END, end_time_str)
-                if remaining is not None:
-                    remaining -= 1
+        # Collected first: changing a cell can re-sort the tree
+        items = [tree.topLevelItem(i)
+                 for i in range(tree.topLevelItemCount())]
+        for item in items:
+            evt = getattr(item, "annotation", None)
+            if evt is None:
+                continue
+            end_text = _fmt_time_or_blank(evt.get("end_time"))
+            if item.text(_STATE_COL_END) != end_text:
+                item.setText(_STATE_COL_END, end_text)
 
     def _populate_event_trees(self):
         self.state_events_tree.clear()
@@ -2063,6 +2213,8 @@ class VideoAnnotator(QFrame):
                 _STATE_COL_SUBJECT, not checked)
             self.point_annotations_tree.setColumnHidden(
                 _POINT_COL_SUBJECT, not checked)
+            self.state_annotations_tree.fit_columns()
+            self.point_annotations_tree.fit_columns()
         elif item == "video_name":
             cfg.set_show_video_name(checked)
             self._update_subject_overlay()
@@ -2319,24 +2471,6 @@ class VideoAnnotator(QFrame):
             self._full_write_timer.timeout.connect(
                 self.store.write_full_annotations_file)
         self._full_write_timer.start(2000)
-
-    # Sorting
-
-    def _sort_state_annotations(self):
-        self.store.state_events.sort(
-            key=lambda e: e["start_time"] if e["start_time"] is not None else 0)
-        if not self.store.save_sorted_annotations():
-            self.on_write_error()
-        self._schedule_full_annotations_write()
-        self._update_annotations()
-
-    def _sort_point_annotations(self):
-        self.store.point_events.sort(
-            key=lambda e: parse_time(e["time"]) if e["time"] else 0)
-        if not self.store.save_sorted_annotations():
-            self.on_write_error()
-        self._schedule_full_annotations_write()
-        self._update_annotations()
 
     # Session state
 
@@ -3354,26 +3488,19 @@ class VideoAnnotator(QFrame):
     # Selection helpers
 
     def _on_state_item_selected(self):
-        self.selected_treeview = self.state_annotations_tree
         items = self.state_annotations_tree.selectedItems()
+        self.selected_treeview = self.state_annotations_tree
         if items:
-            self.selected_item = items[0]
-            self.selected_index = self.state_annotations_tree.indexOfTopLevelItem(items[0])
+            self._select_annotation(self.state_annotations_tree, items[0])
 
     def _on_point_item_selected(self):
-        self.selected_treeview = self.point_annotations_tree
         items = self.point_annotations_tree.selectedItems()
+        self.selected_treeview = self.point_annotations_tree
         if items:
-            self.selected_item = items[0]
-            self.selected_index = self.point_annotations_tree.indexOfTopLevelItem(items[0])
+            self._select_annotation(self.point_annotations_tree, items[0])
 
     def _handle_tree_selection(self, tree, item):
-        self.selected_treeview = tree
-        self.selected_item = item
-        if tree == self.state_annotations_tree:
-            self.selected_index = tree.indexOfTopLevelItem(item)
-        else:
-            self.selected_index = tree.indexOfTopLevelItem(item)
+        self._select_annotation(tree, item)
 
     # Context menu & annotation actions
 
@@ -3397,11 +3524,11 @@ class VideoAnnotator(QFrame):
                            self._delete_selected_annotations)
         else:
             tree.setCurrentItem(item)
-            self.selected_item = item
-            self.selected_index = tree.indexOfTopLevelItem(item)
+            self._select_annotation(tree, item)
             menu.addAction("View Details", lambda: show_annotation_details(self))
             menu.addAction("Skip to Annotation", self._skip_to_annotation)
             if (tree is self.state_annotations_tree
+                    and self.selected_index is not None
                     and 0 <= self.selected_index < len(self.store.state_events)
                     and self.store.state_events[self.selected_index]
                     .get("end_time") is not None):
@@ -3572,7 +3699,8 @@ class VideoAnnotator(QFrame):
             return
 
         indices = sorted(
-            [tree.indexOfTopLevelItem(item) for item in selected],
+            {idx for idx in (self._annotation_index(tree, item)
+                             for item in selected) if idx is not None},
             reverse=True)
 
         is_state = (tree == self.state_annotations_tree)
@@ -3709,6 +3837,12 @@ class VideoAnnotator(QFrame):
                 self.parent, "Invalid Input",
                 "Both Event and Start Time are required.")
             return False
+        if new_name != selected.get("Event"):
+            from name_rules import name_problem
+            problem = name_problem(new_name, "event name")
+            if problem:
+                show_message(self.parent, "Invalid Name", problem)
+                return False
 
         # Match the selected row by identity: several rows can share an
         # event name and time (one per subject), so a name/time search
@@ -3758,6 +3892,12 @@ class VideoAnnotator(QFrame):
                 self.parent, "Invalid Input",
                 "Event, Start, and End times are required.")
             return False
+        if new_name != selected.get("Event"):
+            from name_rules import name_problem
+            problem = name_problem(new_name, "event name")
+            if problem:
+                show_message(self.parent, "Invalid Name", problem)
+                return False
 
         try:
             new_start = parse_time(new_h_start)

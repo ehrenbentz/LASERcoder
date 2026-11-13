@@ -147,6 +147,13 @@ class ConfigManager:
             self.config['video_dir'] = video_dir
             self.save_config()
 
+    def set_video_dir(self, video_dir):
+        """Remember *video_dir* (a folder, not a file) as the video
+        directory, if it exists"""
+        if video_dir and os.path.isdir(video_dir):
+            self.config['video_dir'] = video_dir
+            self.save_config()
+
     def update_last_event_key(self, event_key):
         """Update the last used event key file"""
         if event_key and isinstance(event_key, str):
@@ -333,6 +340,21 @@ class ConfigManager:
     def set_splitter_sizes(self, sizes):
         self.config['splitter_sizes'] = sizes
         self.save_config()
+
+    def get_video_column_widths(self):
+        """Saved column widths of the start dialog's video list, or
+        None"""
+        widths = self.config.get('video_column_widths')
+        if (isinstance(widths, list) and widths
+                and all(isinstance(w, int) and w > 0 for w in widths)):
+            return widths
+        return None
+
+    def set_video_column_widths(self, widths):
+        widths = [int(w) for w in widths]
+        if widths != self.config.get('video_column_widths'):
+            self.config['video_column_widths'] = widths
+            self.save_config()
 
     def get_show_subject_list(self):
         return self.config.get('show_subject_list', False)

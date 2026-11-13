@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 from display_utils import get_screen_geometry, center_window, is_os_junk
 from dialogs import show_message, get_text
+from name_rules import key_rows_problem, stored_names_and_groups
 import theme
 
 EVENT_KEY_HEADERS = ["Event", "Key", "Type", "MEgroup"]
@@ -748,8 +749,22 @@ class EventKeyEditor(QDialog):
         return True
 
     def _save_events(self):
-        if (not self.event_key_file
-                or self._combo.currentText() == "No file found"):
+        has_file = bool(self.event_key_file
+                        and self._combo.currentText() != "No file found")
+
+        # New event and group names must follow the naming rules.
+        # Names already stored in the file are accepted as they are.
+        stored_names, stored_groups = stored_names_and_groups(
+            self.event_key_file if has_file else None, 3)
+        problem = key_rows_problem(
+            [(self._name_entries[i].text(), self._me_group_entries[i].text())
+             for i in range(len(self._name_entries))],
+            stored_names, stored_groups, "event")
+        if problem:
+            show_message(self, "Invalid Name", problem)
+            return False
+
+        if not has_file:
             # Previously this created a *blank* file and reloaded it,
             # discarding everything in the grid.
             if not self._create_file_for_save():
@@ -769,13 +784,20 @@ class EventKeyEditor(QDialog):
                 writer = csv.writer(fh)
                 writer.writerow(EVENT_KEY_HEADERS)
                 for i in range(len(self._name_entries)):
+                    name = self._name_entries[i].text()
+                    group = self._me_group_entries[i].text()
+                    # New names are stored without surrounding spaces
+                    if name.strip() not in stored_names:
+                        name = name.strip()
+                    if group.strip() not in stored_groups:
+                        group = group.strip()
                     writer.writerow([
-                        self._name_entries[i].text(),
+                        name,
                         self._key_entries[i].text(),
                         ("state"
                          if self._type_groups[i].buttons()[1].isChecked()
                          else "point"),
-                        self._me_group_entries[i].text(),
+                        group,
                     ])
                 fh.flush()
                 os.fsync(fh.fileno())

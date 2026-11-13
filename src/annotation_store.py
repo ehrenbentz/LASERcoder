@@ -1120,6 +1120,28 @@ def validate_import_csv(file_path):
     if not video_names:
         return [], set(), "No video names found in the Video column."
 
+    # Event and subject names must follow the same rules as names typed
+    # into LASERcoder.  "NA" in Subject means "no subject" and is fine.
+    from name_rules import name_problem, ALLOWED_DESCRIPTION
+    bad = []
+    for row in rows:
+        for column in ("Event", "Subject"):
+            value = (row.get(column) or "").strip()
+            if not value or (column == "Subject" and value.upper() == "NA"):
+                continue
+            if name_problem(value) and (column, value) not in bad:
+                bad.append((column, value))
+    if bad:
+        shown = [f"  {column}: {value}" for column, value in bad[:8]]
+        if len(bad) > len(shown):
+            shown.append(f"  ... and {len(bad) - len(shown)} more")
+        return [], set(), (
+            "The file contains names that LASERcoder does not accept:\n\n"
+            + "\n".join(shown)
+            + f"\n\nNames may contain only {ALLOWED_DESCRIPTION}, and an "
+            "event cannot be named NA.\nCorrect the names in the file "
+            "and import it again.")
+
     return rows, video_names, None
 
 

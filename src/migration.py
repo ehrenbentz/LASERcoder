@@ -2,7 +2,9 @@
 #
 # One-shot upgrades of a project (output) directory written by an
 # earlier LASERcoder version.  Each step is versioned; a marker file in
-# the project records the last step applied so nothing runs twice.
+# the project's Session folder records the last step applied so nothing
+# runs twice.  (Up to 1.7.x the marker sat in the project root; it is
+# moved into Session the first time the project is opened.)
 #
 # To add a step for a future format change: bump MIGRATION_VERSION,
 # add an `if done < N:` block in migrate_output_dir_if_needed, and
@@ -44,8 +46,18 @@ def migrate_output_dir_if_needed(output_dir):
     if os.path.isfile(os.path.join(output_dir, ".no_project")):
         return False
 
+    # A folder with none of the project subfolders holds nothing to
+    # migrate.  Nothing is written into it: merely selecting a folder
+    # as the project directory must not leave a marker behind.  A root
+    # marker left there by an earlier version is removed.
+    if not any(os.path.isdir(os.path.join(output_dir, d))
+               for d in ("Session", "Annotations") + _PRE_17_DIRS):
+        _remove_legacy_marker(output_dir)
+        return False
+
     done = _read_marker(output_dir)
     if done >= MIGRATION_VERSION:
+        _relocate_legacy_marker(output_dir, done)
         return False
 
     if any(os.path.isdir(os.path.join(output_dir, d)) for d in _PRE_17_DIRS):
@@ -163,23 +175,65 @@ def _normalise_session_state(output_dir):
 
 # Helpers
 
-def _read_marker(output_dir):
+def _marker_path(output_dir):
+    """The marker lives in Session/, so it travels with the project
+    and nothing is added to the project root."""
+    return os.path.join(output_dir, "Session", _MARKER)
+
+
+def _legacy_marker_path(output_dir):
+    """Where the marker was kept up to 1.7.x: the project root."""
+    return os.path.join(output_dir, _MARKER)
+
+
+def _read_marker_file(path):
     try:
-        with open(os.path.join(output_dir, _MARKER), "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             return int(fh.read().strip() or 0)
     except (OSError, ValueError):
         return 0
 
 
+def _read_marker(output_dir):
+    return max(_read_marker_file(_marker_path(output_dir)),
+               _read_marker_file(_legacy_marker_path(output_dir)))
+
+
 def _write_marker(output_dir, version):
+    """Record *version* in Session/ and drop any root marker.  Returns
+    True on success."""
+    path = _marker_path(output_dir)
     try:
-        path = os.path.join(output_dir, _MARKER)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path + ".tmp", "w", encoding="utf-8") as fh:
             fh.write(f"{version}\n")
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(path + ".tmp", path)
     except OSError as exc:
         logger.warning("Migration: cannot write marker in %s: %s",
                        output_dir, exc)
+        return False
+    # Only once the new marker is safely written
+    _remove_legacy_marker(output_dir)
+    return True
+
+
+def _remove_legacy_marker(output_dir):
+    try:
+        os.remove(_legacy_marker_path(output_dir))
+    except OSError:
+        pass
+
+
+def _relocate_legacy_marker(output_dir, version):
+    """Move a root marker written by an earlier version into Session/."""
+    if not os.path.isfile(_legacy_marker_path(output_dir)):
+        return
+    if _read_marker_file(_marker_path(output_dir)) >= version:
+        _remove_legacy_marker(output_dir)
+    else:
+        _write_marker(output_dir, version)
 
 
 def _write_csv_atomic(path, fieldnames, rows):

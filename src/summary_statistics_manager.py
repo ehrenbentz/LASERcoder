@@ -1,21 +1,24 @@
 import os
-import csv
-from datetime import datetime
-from pathlib import Path
+import sys
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox,
-    QApplication, QListWidget, QFrame, QLineEdit, QCheckBox, QInputDialog,
-    QAbstractItemView, QFileDialog, QListWidgetItem,
+    QApplication, QListWidget, QCheckBox, QComboBox, QGroupBox,
+    QAbstractItemView, QListWidgetItem, QMenu,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent, QTimer
 
-from display_utils import get_screen_geometry, is_os_junk
-from annotation_store import is_chunked_annotations_dir
-from summary_statistics import generate_summary_statistics, combine_summaries
-from summary_viewer import show_table_viewer
+from display_utils import is_os_junk
+from summary_statistics import (generate_summary_statistics,
+                                combine_summaries, combined_summary_videos,
+                                combined_summary_sidecar)
+from summary_viewer import show_table_viewer, show_boxplot_viewer
 from dialogs import show_message, get_text
 import theme
+
+
+_COMBINED_SUFFIX = "_Combined_Summary.csv"
+_INDIVIDUAL_SUFFIX = "_Summary.csv"
 
 
 def _video_name_for(path):
@@ -29,521 +32,460 @@ def _video_name_for(path):
     return os.path.basename(path).removesuffix("_Annotations.csv")
 
 
-def _project_root_for(path):
-    """Working directory that owns *path* (where Annotations/Summaries
-    lives): two levels up from Annotations/{file}, three from
-    Session/{video}/Chunks."""
-    if os.path.isdir(path) and os.path.basename(path) == "Chunks":
-        return os.path.dirname(os.path.dirname(os.path.dirname(path)))
-    return os.path.dirname(os.path.dirname(path))
+class SummaryStatisticsDialog(QDialog):
+    """Generate and view summary statistics for one project.
 
+    An experiment is a named set of videos.  Generating it writes a
+    summary for each of its videos (Individual_Summaries) and one
+    combined summary across them (Combined_Summaries); the table and
+    box plot views read those files.
+    """
 
-class SummaryStatisticsManager(QDialog):
-    """Dialog for generating and combining summary statistics"""
+    # The key labelled "delete" on Mac keyboards is Backspace
+    _DELETE_KEYS = ((Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
+                    if sys.platform == "darwin" else (Qt.Key.Key_Delete,))
 
-    def __init__(self, parent=None, initial_dir=str(Path.home())):
+    def __init__(self, parent, output_dir, ann_entries):
+        """*ann_entries* is a list of (display_name, data_path) pairs for
+        the annotated videos of the project in *output_dir*."""
         super().__init__(parent)
 
-        self.selected_files = []
-        self.initial_dir = os.path.abspath(initial_dir)
-        self.current_dir = self.initial_dir
+        self._entries = list(ann_entries)
+        summary_dir = os.path.join(output_dir, "Annotations", "Summaries")
+        self._ind_dir = os.path.join(summary_dir, "Individual_Summaries")
+        self._comb_dir = os.path.join(summary_dir, "Combined_Summaries")
 
-        self.setWindowTitle("LASERcoder - Generate Summary Statistics")
+        self.setWindowTitle("Summary Statistics")
         theme.apply_dialog_theme(self)
-
-        screen = get_screen_geometry()
-        self._display_width = screen["width"]
-        self._display_height = screen["height"]
+        self.setMinimumWidth(460)
 
         self._setup_ui()
-
-        dialog_w = int(self._display_width * 0.4)
-        dialog_h = int(self._display_height * 0.7)
-        self.setMinimumSize(int(dialog_w * 0.4), int(dialog_h * 0.7))
-        self.resize(dialog_w, dialog_h)
+        self._reload_experiments()
 
     # UI setup
 
     def _setup_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(15, 15, 15, 15)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
 
-        main_layout.addWidget(self._create_directory_section())
-        main_layout.addWidget(self._create_file_section(), 1)
-        main_layout.addWidget(self._create_action_section())
+        exp_grp = QGroupBox("Experiment")
+        exp_lay = QVBoxLayout(exp_grp)
+        self._exp_combo = QComboBox()
+        self._exp_combo.setToolTip(
+            "Right-click, or press Delete, to delete the selected "
+            "experiment")
+        self._exp_combo.currentIndexChanged.connect(
+            self._on_experiment_changed)
+        self._exp_combo.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self._exp_combo.customContextMenuRequested.connect(
+            lambda pos: self._show_experiment_menu(
+                self._exp_combo.mapToGlobal(pos)))
+        # Delete key and right-click, on the box and on its open list.
+        # The list is fetched once, BEFORE any filter is installed, and
+        # eventFilter only compares against these references: the box
+        # creates its list on the first view() call and sends itself
+        # events while doing so, so calling view() from the filter
+        # recursed without end (a stack overflow on Windows).
+        self._exp_view = self._exp_combo.view()
+        self._exp_viewport = self._exp_view.viewport()
+        self._exp_combo.installEventFilter(self)
+        self._exp_view.installEventFilter(self)
+        self._exp_viewport.installEventFilter(self)
+        exp_lay.addWidget(self._exp_combo)
+        layout.addWidget(exp_grp)
 
-    def _create_directory_section(self):
-        frame = QFrame()
-        frame.setFrameShape(QFrame.Shape.StyledPanel)
-        layout = QVBoxLayout(frame)
+        self._generate_btn = QPushButton("Generate Summary")
+        self._generate_btn.setEnabled(bool(self._entries))
+        self._generate_btn.clicked.connect(self._generate)
+        layout.addWidget(self._generate_btn)
 
-        header = QHBoxLayout()
-        header.addWidget(QLabel("Select Directory with Annotation Files:"))
-        header.addStretch()
-        layout.addLayout(header)
+        vid_grp = QGroupBox("Videos")
+        vid_lay = QVBoxLayout(vid_grp)
+        if self._entries:
+            self._select_all = QCheckBox("Select All")
+            self._select_all.setChecked(True)
+            self._select_all.clicked.connect(self._toggle_select_all)
+            vid_lay.addWidget(self._select_all)
+        else:
+            self._select_all = None
+            note = QLabel(
+                "No annotation files found in the selected "
+                "project directory.")
+            note.setWordWrap(True)
+            note.setStyleSheet(
+                f"color: {theme.color('text_secondary')};"
+                " background: transparent;")
+            vid_lay.addWidget(note)
 
-        nav = QHBoxLayout()
-
-        up_btn = QPushButton("\u2191")
-        up_btn.setFixedWidth(30)
-        up_btn.clicked.connect(self._go_up)
-        nav.addWidget(up_btn)
-
-        self.dir_entry = QLineEdit(self.initial_dir)
-        self.dir_entry.returnPressed.connect(self._on_dir_update)
-        nav.addWidget(self.dir_entry)
-
-        browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(self._browse_directory)
-        nav.addWidget(browse_btn)
-
-        layout.addLayout(nav)
-
-        layout.addWidget(QLabel("Directories:"))
-        self.dir_listbox = QListWidget()
-        self.dir_listbox.itemDoubleClicked.connect(self._on_dir_double_click)
-        layout.addWidget(self.dir_listbox)
-
-        self._populate_dir_list(self.initial_dir)
-        return frame
-
-    def _create_file_section(self):
-        frame = QFrame()
-        frame.setFrameShape(QFrame.Shape.StyledPanel)
-        layout = QVBoxLayout(frame)
-
-        header = QHBoxLayout()
-        header.addWidget(QLabel("Select Annotation Files:"))
-
-        self.select_all_checkbox = QCheckBox("Select All")
-        self.select_all_checkbox.setTristate(False)
-        self.select_all_checkbox.setChecked(False)
-        self.select_all_checkbox.stateChanged.connect(self._toggle_select_all)
-        header.addWidget(self.select_all_checkbox)
-
-        header.addStretch()
-        layout.addLayout(header)
-
-        self.file_listbox = QListWidget()
-        self.file_listbox.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.file_listbox.setSelectionMode(
+        self._video_list = QListWidget()
+        self._video_list.setSelectionMode(
             QAbstractItemView.SelectionMode.NoSelection)
-        layout.addWidget(self.file_listbox)
+        for display_name, data_path in self._entries:
+            item = QListWidgetItem(display_name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            item.setData(Qt.ItemDataRole.UserRole, data_path)
+            self._video_list.addItem(item)
+        self._video_list.itemChanged.connect(self._sync_select_all)
+        self._video_list.setVisible(bool(self._entries))
+        vid_lay.addWidget(self._video_list)
+        layout.addWidget(vid_grp, 1)
 
-        self._populate_file_list(self.initial_dir)
-        return frame
+        res_grp = QGroupBox("Results")
+        res_lay = QVBoxLayout(res_grp)
+        self._table_combo = QComboBox()
+        res_lay.addWidget(self._table_combo)
+        # The two view buttons share one row at equal width
+        view_row = QHBoxLayout()
+        self._view_table_btn = QPushButton("View Table")
+        self._view_table_btn.clicked.connect(self._view_table)
+        view_row.addWidget(self._view_table_btn, 1)
+        self._boxplot_btn = QPushButton("View Box Plots")
+        self._boxplot_btn.clicked.connect(self._view_box_plots)
+        view_row.addWidget(self._boxplot_btn, 1)
+        res_lay.addLayout(view_row)
+        layout.addWidget(res_grp)
 
-    def _create_action_section(self):
-        frame = QFrame()
-        layout = QHBoxLayout(frame)
-
-        individual_btn = QPushButton("Generate Individual Summaries")
-        individual_btn.clicked.connect(self._generate_individual_summaries)
-        layout.addWidget(individual_btn)
-
-        combined_btn = QPushButton("Generate Combined Summary")
-        combined_btn.clicked.connect(self._generate_combined_summary)
-        layout.addWidget(combined_btn)
-
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
-        layout.addWidget(close_btn)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
 
-        return frame
+        for btn in self.findChildren(QPushButton):
+            btn.setAutoDefault(False)
 
-    # Directory navigation
+    # Experiments
 
-    def _go_up(self):
-        parent = os.path.dirname(self.current_dir)
-        if os.path.exists(parent):
-            self._navigate_to(parent)
+    def _experiment_names(self):
+        if not os.path.isdir(self._comb_dir):
+            return []
+        return sorted(
+            (f.removesuffix(_COMBINED_SUFFIX)
+             for f in os.listdir(self._comb_dir)
+             if f.endswith(_COMBINED_SUFFIX) and not is_os_junk(f)),
+            key=str.lower)
 
-    def _browse_directory(self):
-        path = QFileDialog.getExistingDirectory(
-            self, "Select Directory", self.current_dir)
-        if path:
-            self._navigate_to(path)
+    def _combined_path(self, experiment):
+        return os.path.join(
+            self._comb_dir, f"{experiment}{_COMBINED_SUFFIX}")
 
-    def _on_dir_update(self):
-        path = self.dir_entry.text().strip()
-        if os.path.isdir(path):
-            self._navigate_to(path)
+    def _current_experiment(self):
+        """Name of the selected experiment, or None when there is none."""
+        return self._exp_combo.currentData()
 
-    def _on_dir_double_click(self, item):
-        path = os.path.join(self.current_dir, item.text())
-        if os.path.isdir(path):
-            self._navigate_to(path)
+    def _reload_experiments(self, select=None):
+        names = self._experiment_names()
+        self._exp_combo.blockSignals(True)
+        self._exp_combo.clear()
+        for name in names:
+            self._exp_combo.addItem(name.replace("_", " "), name)
+        if not names:
+            self._exp_combo.addItem("No experiments yet", None)
+        self._exp_combo.setEnabled(bool(names))
+        index = self._exp_combo.findData(select) if select else 0
+        self._exp_combo.setCurrentIndex(max(index, 0))
+        self._exp_combo.blockSignals(False)
+        self._on_experiment_changed()
 
-    def _navigate_to(self, path):
-        self.current_dir = path
-        self.dir_entry.setText(path)
-        self._populate_dir_list(path)
-        self._populate_file_list(path)
+    def _on_experiment_changed(self, _index=None):
+        experiment = self._current_experiment()
 
-    def _populate_dir_list(self, directory):
-        self.dir_listbox.clear()
-        try:
-            dirs = sorted(
-                d for d in os.listdir(directory)
-                if os.path.isdir(os.path.join(directory, d))
-                and not d.startswith("."))
-            self.dir_listbox.addItems(dirs)
-        except OSError as exc:
-            show_message(
-                self, "Error", f"Error accessing directory: {exc}")
+        # Tick the videos the experiment was built from.  With no
+        # experiment, or one with no record of its videos, every video
+        # is ticked.
+        videos = (combined_summary_videos(self._combined_path(experiment))
+                  if experiment else None)
+        self._video_list.blockSignals(True)
+        for i in range(self._video_list.count()):
+            item = self._video_list.item(i)
+            name = _video_name_for(item.data(Qt.ItemDataRole.UserRole))
+            ticked = videos is None or name in videos
+            item.setCheckState(Qt.CheckState.Checked if ticked
+                               else Qt.CheckState.Unchecked)
+        self._video_list.blockSignals(False)
+        self._sync_select_all()
+        self._update_results(experiment, videos)
 
-    def _populate_file_list(self, directory):
-        self.file_listbox.clear()
-        try:
-            entries = []
-            # Chunked per-video subdirectories
-            for name in sorted(os.listdir(directory)):
-                full = os.path.join(directory, name)
-                if (os.path.isdir(full) and not is_os_junk(name)
-                        and is_chunked_annotations_dir(full)):
-                    entries.append(name)
-            # Legacy single-file annotations
-            seen = set(entries)
-            for name in sorted(os.listdir(directory)):
-                if (name.endswith("_Annotations.csv")
-                        and not is_os_junk(name)
-                        and os.path.isfile(os.path.join(directory, name))):
-                    video_name = name.removesuffix("_Annotations.csv")
-                    if video_name not in seen:
-                        entries.append(name)
+    def eventFilter(self, obj, event):
+        etype = event.type()
+        if etype not in (QEvent.Type.KeyPress,
+                         QEvent.Type.MouseButtonPress):
+            return super().eventFilter(obj, event)
+        combo = self._exp_combo
+        view = self._exp_view
+        if (etype == QEvent.Type.KeyPress
+                and (obj is combo or obj is view)
+                and event.key() in self._DELETE_KEYS):
+            if obj is view:
+                index = view.currentIndex()
+                combo.hidePopup()
+                if index.isValid():
+                    combo.setCurrentIndex(index.row())
+            QTimer.singleShot(0, self._delete_experiment)
+            return True
+        if (obj is self._exp_viewport
+                and etype == QEvent.Type.MouseButtonPress
+                and event.button() == Qt.MouseButton.RightButton):
+            # Right-click on an entry of the open list: select it, close
+            # the list, then offer the menu.  The list itself would
+            # treat the click as a plain selection.
+            index = view.indexAt(event.position().toPoint())
+            global_pos = event.globalPosition().toPoint()
+            combo.hidePopup()
+            if index.isValid():
+                combo.setCurrentIndex(index.row())
+            QTimer.singleShot(
+                0, lambda: self._show_experiment_menu(global_pos))
+            return True
+        return super().eventFilter(obj, event)
 
-            for name in entries:
-                item = QListWidgetItem(name)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(Qt.CheckState.Checked)
-                self.file_listbox.addItem(item)
+    def _show_experiment_menu(self, global_pos):
+        if not self._current_experiment():
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet(theme.menu_stylesheet())
+        delete_action = menu.addAction("Delete Experiment")
+        if menu.exec(global_pos) == delete_action:
+            self._delete_experiment()
 
-            if entries:
-                self.select_all_checkbox.setChecked(True)
-        except OSError as exc:
-            show_message(
-                self, "Error", f"Error accessing directory: {exc}")
+    def _update_results(self, experiment, videos):
+        """Fill the Results section for *experiment* (None = none yet)."""
+        self._table_combo.clear()
+        has_results = bool(experiment) and os.path.isfile(
+            self._combined_path(experiment))
+        if has_results:
+            self._table_combo.addItem(
+                "Combined", self._combined_path(experiment))
+            if os.path.isdir(self._ind_dir):
+                for fname in sorted(os.listdir(self._ind_dir),
+                                    key=str.lower):
+                    if (not fname.endswith(_INDIVIDUAL_SUFFIX)
+                            or is_os_junk(fname)):
+                        continue
+                    video = fname.removesuffix(_INDIVIDUAL_SUFFIX)
+                    if videos is not None and video not in videos:
+                        continue
+                    self._table_combo.addItem(
+                        video.replace("_", " "),
+                        os.path.join(self._ind_dir, fname))
+        self._table_combo.setEnabled(has_results)
+        self._view_table_btn.setEnabled(has_results)
+        self._boxplot_btn.setEnabled(has_results)
 
-    def _toggle_select_all(self, _state):
-        checked = (Qt.CheckState.Checked if self.select_all_checkbox.isChecked()
-                   else Qt.CheckState.Unchecked)
-        for i in range(self.file_listbox.count()):
-            self.file_listbox.item(i).setCheckState(checked)
+    def _remove_unused_individual(self, videos):
+        """Delete the per-video summaries of *videos* that no experiment
+        uses any more, so no summary is left behind that would never be
+        regenerated.  Per-video summaries are shared between
+        experiments; if any experiment has no record of its videos,
+        everything is kept."""
+        still_used = set()
+        for name in self._experiment_names():
+            used = combined_summary_videos(self._combined_path(name))
+            if used is None:
+                return
+            still_used |= used
+        for video in set(videos) - still_used:
+            try:
+                os.remove(os.path.join(
+                    self._ind_dir, f"{video}{_INDIVIDUAL_SUFFIX}"))
+            except OSError:
+                pass
 
-    def _get_selected_files(self):
-        selected = []
-        for i in range(self.file_listbox.count()):
-            item = self.file_listbox.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                selected.append(os.path.join(self.current_dir, item.text()))
-        return selected
-
-    # Summary generation
-
-    def _generate_individual_summaries(self):
-        selected = self._get_selected_files()
-        if not selected:
-            show_message(
-                self, "No Files Selected",
-                "Please select at least one annotation file.")
+    def _delete_experiment(self):
+        """Delete the selected experiment's combined summary, and the
+        per-video summaries that no other experiment uses.  Annotations
+        are never touched."""
+        experiment = self._current_experiment()
+        if not experiment:
+            return
+        reply = show_message(
+            self, "Delete Experiment",
+            f"Delete the summary statistics for "
+            f"'{experiment.replace('_', ' ')}'?\n\n"
+            "Annotations are not affected. The summary can be "
+            "generated again at any time.",
+            icon="question")
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
-        base_dir = _project_root_for(selected[0])
-        summary_dir = self._ensure_summary_dir(base_dir)
-        if not summary_dir:
-            return
-
-        individual_dir = os.path.join(summary_dir, "Individual_Summaries")
+        combined_path = self._combined_path(experiment)
+        videos = combined_summary_videos(combined_path)
         try:
-            os.makedirs(individual_dir, exist_ok=True)
+            os.remove(combined_path)
         except OSError as exc:
             show_message(
                 self, "Error",
-                f"Could not create Individual_Summaries directory: {exc}")
+                f"Could not delete the combined summary: {exc}")
             return
+        try:
+            os.remove(combined_summary_sidecar(combined_path))
+        except OSError:
+            pass
 
-        success_count = 0
-        failed, empty = [], []
+        if videos:
+            self._remove_unused_individual(videos)
 
-        for path in selected:
-            try:
-                video_name = _video_name_for(path)
-                out = os.path.join(individual_dir, f"{video_name}_Summary.csv")
-                if generate_summary_statistics(path, out):
-                    success_count += 1
-                else:
-                    empty.append(video_name)
-            except Exception as exc:
-                failed.append((os.path.basename(path), str(exc)))
+        self._reload_experiments()
 
-        msg = f"Successfully generated {success_count} summary files"
-        if empty:
-            msg += "\n\nThe following files contained no observations:"
-            for name in empty:
-                msg += f"\n\u2022 {name}"
-        if failed:
-            msg += "\n\nThe following files could not be processed:"
-            for name, err in failed:
-                msg += f"\n\u2022 {name.removesuffix('_Annotations.csv')}: {err}"
-            show_message(self, "Processing Completed with Errors", msg)
-        else:
-            show_message(self, "Processing Complete", msg,
-                               icon="information")
+    # Video checklist
 
-        return success_count, empty, failed
+    def _toggle_select_all(self, checked):
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        self._video_list.blockSignals(True)
+        for i in range(self._video_list.count()):
+            self._video_list.item(i).setCheckState(state)
+        self._video_list.blockSignals(False)
 
-    def _generate_combined_summary(self):
-        selected = self._get_selected_files()
+    def _sync_select_all(self, _item=None):
+        if self._select_all is None:
+            return
+        count = self._video_list.count()
+        self._select_all.setChecked(count > 0 and all(
+            self._video_list.item(i).checkState() == Qt.CheckState.Checked
+            for i in range(count)))
+
+    def _checked_paths(self):
+        paths = []
+        for i in range(self._video_list.count()):
+            item = self._video_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                paths.append(item.data(Qt.ItemDataRole.UserRole))
+        return paths
+
+    # Generation
+
+    def _generate(self):
+        """Ask for the experiment name, write a summary for every ticked
+        video, then the combined summary of the experiment from those.
+
+        The name is pre-filled with the selected experiment: keeping it
+        updates that experiment, changing it creates another."""
+        selected = self._checked_paths()
         if not selected:
             show_message(
-                self, "No Files Selected",
-                "Please select at least one annotation file.")
+                self, "No Videos Selected",
+                "Please select at least one video.")
             return
 
-        base_dir = _project_root_for(selected[0])
-        summary_dir = self._ensure_summary_dir(base_dir)
-        if not summary_dir:
-            return
-
-        combined_summaries_dir = os.path.join(summary_dir, "Combined_Summaries")
-        combined_annotations_dir = os.path.join(
-            os.path.dirname(summary_dir), "Combined_Annotations")
-        individual_dir = os.path.join(summary_dir, "Individual_Summaries")
-
-        for d in (combined_summaries_dir, combined_annotations_dir, individual_dir):
-            try:
-                os.makedirs(d, exist_ok=True)
-            except OSError as exc:
-                show_message(
-                    self, "Error",
-                    f"Could not create directory {os.path.basename(d)}: {exc}")
-                return
-
-        experiment_name, ok = get_text(
+        current = self._current_experiment()
+        name, ok = get_text(
             self, "Experiment Name",
-            "Enter a name for this experiment/analysis:")
-        if not ok or not experiment_name:
+            "Enter a name for this experiment:", text=current or "")
+        if not ok:
             return
-        experiment_name = "".join(
-            c for c in experiment_name if c.isalnum() or c in " _-")
+        experiment = "".join(
+            c for c in name if c.isalnum() or c in " _-").strip()
+        if not experiment:
+            show_message(
+                self, "Experiment Name",
+                "Please enter a name for the experiment.")
+            return
 
-        # Check if combined summary already exists
-        check_path = os.path.join(
-            combined_summaries_dir,
-            f"{experiment_name}_Combined_Summary.csv")
-        if os.path.exists(check_path):
+        combined_path = self._combined_path(experiment)
+        if experiment != current and os.path.exists(combined_path):
             reply = show_message(
                 self, "Summary Exists",
-                f"A combined summary named '{experiment_name}' "
+                f"A combined summary named '{experiment}' "
                 "already exists.\n\nOverwrite it?",
                 icon="question")
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        # Locate existing individual summaries
-        missing, existing = [], []
-        for path in selected:
-            video_name = _video_name_for(path)
-            individual_path = os.path.join(
-                individual_dir, f"{video_name}_Summary.csv")
-            old_path = os.path.join(summary_dir, f"{video_name}_Summary.csv")
+        # Videos the experiment was built from before this run
+        previous_videos = (combined_summary_videos(combined_path)
+                           if os.path.exists(combined_path) else None)
 
-            if os.path.exists(individual_path):
-                existing.append(individual_path)
-            elif os.path.exists(old_path):
-                existing.append(old_path)
-            else:
-                missing.append((path, video_name))
-
-        if missing:
-            empty, failed = [], []
-            for path, video_name in missing:
-                try:
-                    out = os.path.join(
-                        individual_dir, f"{video_name}_Summary.csv")
-                    result = generate_summary_statistics(path, out)
-                    if result:
-                        existing.append(result)
-                    else:
-                        empty.append(video_name)
-                except Exception as exc:
-                    failed.append((video_name, str(exc)))
-
-            if empty or failed:
-                msg = ""
-                if empty:
-                    msg += "The following annotation files were empty and could not be summarised:\n"
-                    msg += "\n".join(f"\u2022 {n}" for n in empty)
-                if failed:
-                    if msg:
-                        msg += "\n\n"
-                    msg += "The following files failed to process:\n"
-                    msg += "\n".join(f"\u2022 {n}: {e}" for n, e in failed)
-                show_message(
-                    self, "Some Files Skipped", msg,
-                    icon="information")
-
-        if not existing:
+        try:
+            os.makedirs(self._ind_dir, exist_ok=True)
+            os.makedirs(self._comb_dir, exist_ok=True)
+        except OSError as exc:
             show_message(
-                self, "No Summary Files",
-                "No summary files found. "
-                "Please use 'Generate Individual Summaries' first.",
-                icon="information")
+                self, "Error",
+                f"Could not create the Summaries directory: {exc}")
             return
 
+        # Individual summaries are always regenerated from the current
+        # annotations, never reused: a reused file would leave out
+        # anything annotated since it was written.
+        ind_paths, empty, failed = [], [], []
+        combine_error = None
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            combined_ann = self._combine_annotation_files(
-                selected, experiment_name, combined_annotations_dir)
-            combined_sum_path = os.path.join(
-                combined_summaries_dir,
-                f"{experiment_name}_Combined_Summary.csv")
-            combine_summaries(existing, combined_sum_path)
-
-            ann_name = (os.path.basename(combined_ann)
-                        if combined_ann else "Could not be created")
-            self._show_combined_result(
-                combined_sum_path, existing, experiment_name, ann_name)
-        except Exception as exc:
-            show_message(
-                self, "Error",
-                f"Error generating combined analysis: {exc}")
-
-    # Helpers
-
-    def _combine_annotation_files(self, file_paths, experiment_name,
-                                  combined_annotations_dir):
-        """Merge multiple annotation CSVs into a single file"""
-        out_path = os.path.join(
-            combined_annotations_dir,
-            f"{experiment_name}_Annotations_Combined.csv")
-
-        # Back up an existing file
-        if os.path.exists(out_path):
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            base, ext = os.path.splitext(out_path)
-            backup = f"{base}_backup_{ts}{ext}"
-            try:
-                os.rename(out_path, backup)
-            except OSError:
-                pass
-
-        from annotation_store import read_all_annotation_rows
-
-        all_rows = []
-        fieldnames = None
-        failed = []
-
-        for path in file_paths:
-            try:
-                rows = read_all_annotation_rows(path)
-                if not rows:
-                    failed.append((os.path.basename(path), "No data"))
-                    continue
-
-                if fieldnames is None:
-                    fieldnames = list(rows[0].keys())
-                else:
-                    for f in rows[0].keys():
-                        if f not in fieldnames:
-                            fieldnames.append(f)
-
-                # Derive video name for entries missing it
-                default_video = _video_name_for(path)
-                for row in rows:
-                    if not row.get("Video"):
-                        row["Video"] = default_video
-
-                all_rows.extend(rows)
-            except OSError as exc:
-                failed.append((os.path.basename(path), str(exc)))
-
-        if not all_rows or fieldnames is None:
-            show_message(
-                self, "Error", "No valid annotation files could be read.")
-            return None
-
-        try:
-            temp = out_path + ".tmp"
-            fieldnames = [f for f in fieldnames if f is not None]
-            with open(temp, "w", newline="", encoding="utf-8-sig") as fh:
-                writer = csv.DictWriter(
-                    fh, fieldnames=fieldnames, extrasaction="ignore")
-                writer.writeheader()
-                writer.writerows(all_rows)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(temp, out_path)
-            return out_path
-        except OSError as exc:
-            if os.path.exists(out_path + ".tmp"):
+            for path in selected:
+                video_name = _video_name_for(path)
+                out = os.path.join(
+                    self._ind_dir, f"{video_name}{_INDIVIDUAL_SUFFIX}")
                 try:
-                    os.remove(out_path + ".tmp")
-                except OSError:
-                    pass
+                    result = generate_summary_statistics(path, out)
+                except Exception as exc:
+                    failed.append((video_name, str(exc)))
+                    continue
+                if result:
+                    ind_paths.append(result)
+                else:
+                    empty.append(video_name)
+
+            if ind_paths:
+                try:
+                    if not combine_summaries(ind_paths, combined_path):
+                        combine_error = "the summaries contained no data"
+                except Exception as exc:
+                    combine_error = str(exc)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        details = ""
+        if empty:
+            details += ("\n\nThese videos contained no observations:\n"
+                        + "\n".join(f"• {n}" for n in empty))
+        if failed:
+            details += ("\n\nThese videos could not be processed:\n"
+                        + "\n".join(f"• {n}: {e}" for n, e in failed))
+
+        if not ind_paths:
+            show_message(
+                self, "No Summaries",
+                "No summaries could be generated." + details)
+            return
+        if combine_error:
             show_message(
                 self, "Error",
-                f"Error saving combined annotations: {exc}")
-            return None
+                f"Could not write the combined summary: {combine_error}"
+                + details)
+            return
 
-    def _show_combined_result(self, combined_sum_path, individual_paths,
-                              experiment_name, ann_name):
-        """Show result dialog with options to view summary or box plots"""
-        from summary_viewer import show_boxplot_viewer
+        # A video dropped from the experiment would otherwise keep a
+        # per-video summary that is never updated again.
+        if previous_videos:
+            self._remove_unused_individual(previous_videos)
 
-        result_dlg = QDialog(self)
-        result_dlg.setWindowTitle("Combined Analysis Complete")
-        theme.apply_dialog_theme(result_dlg)
-        rdl = QVBoxLayout(result_dlg)
-        rdl.setSpacing(10)
-        rdl.setContentsMargins(15, 15, 15, 15)
+        self._reload_experiments(select=experiment)
+        count = len(ind_paths)
+        show_message(
+            self, "Summary Complete",
+            f"Summarized {count} video{'s' if count != 1 else ''} "
+            f"for '{experiment.replace('_', ' ')}'." + details,
+            icon="warning" if (empty or failed) else "information")
 
-        rdl.addWidget(QLabel(
-            f"Combined Summary:\n  {os.path.basename(combined_sum_path)}"
-            f"\n\nCombined Annotations:\n  {ann_name}"))
+    # Viewing
 
-        btn_row = QHBoxLayout()
-        view_btn = QPushButton("View Summary")
-        boxplot_btn = QPushButton("View Box Plots")
-        close_btn = QPushButton("Close")
-        btn_row.addStretch()
-        btn_row.addWidget(view_btn)
-        btn_row.addWidget(boxplot_btn)
-        btn_row.addWidget(close_btn)
-        rdl.addLayout(btn_row)
+    def _view_table(self):
+        path = self._table_combo.currentData()
+        if not path:
+            return
+        title = self._exp_combo.currentText()
+        if self._table_combo.currentIndex() > 0:
+            title = self._table_combo.currentText()
+        show_table_viewer(self, path, f"{title} Summary")
 
-        action = [None]
-
-        def _set(val):
-            action[0] = val
-            result_dlg.accept()
-
-        view_btn.clicked.connect(lambda: _set("view"))
-        boxplot_btn.clicked.connect(lambda: _set("boxplots"))
-        close_btn.clicked.connect(result_dlg.reject)
-
-        def _on_finished(_result):
-            result_dlg.deleteLater()
-            if action[0] == "view":
-                title = (os.path.splitext(
-                    os.path.basename(combined_sum_path))[0]
-                    .replace("_", " "))
-                show_table_viewer(self, combined_sum_path, title)
-            elif action[0] == "boxplots":
-                comb_dir = os.path.dirname(combined_sum_path)
-                show_boxplot_viewer(self, comb_dir)
-
-        result_dlg.finished.connect(_on_finished)
-        result_dlg.open()
-
-    def _ensure_summary_dir(self, base_dir):
-        summary_dir = os.path.join(base_dir, "Annotations", "Summaries")
-        try:
-            os.makedirs(summary_dir, exist_ok=True)
-            return summary_dir
-        except OSError as exc:
-            show_message(
-                self, "Error",
-                f"Could not create Summaries directory: {exc}")
-            return None
+    def _view_box_plots(self):
+        experiment = self._current_experiment()
+        if not experiment:
+            return
+        show_boxplot_viewer(
+            self, self._comb_dir,
+            select_file=self._combined_path(experiment))

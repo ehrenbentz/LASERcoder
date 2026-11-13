@@ -30,7 +30,7 @@ Runs natively on **Windows**, **macOS** (Apple Silicon and Intel), and **Linux**
 - **Resume anywhere.** Stop and restart coding sessions without losing your place. Videos are flagged as in-progress or complete in the file browser.
 - **Coding windows.** Define per-video observation windows to standardize scoring periods across videos without editing video files. Statistics are computed within the window.
 - **Annotation timelines.** Visualize all annotated events on a timeline and export as high-resolution images (JPG/PNG, 100–900 DPI).
-- **Summary statistics.** Generate per-video and per-experiment summaries and box plots, plus combined annotation files formatted for downstream statistical analysis.
+- **Summary statistics.** Generate per-video and per-experiment summaries and box plots, and export combined annotation files formatted for downstream statistical analysis.
 - **Project backup.** Back up an entire project directory from within the app.
 - **Light and dark themes** with customizable interface colors.
 
@@ -68,22 +68,22 @@ The Linux build is currently **alpha**. Installing the `.deb` pulls in the requi
 
 ## Quick Start
 
-LASERcoder keeps everything for a project in one folder, the **working directory**, and reads your videos from wherever they already are. Set up a project once, then open it again from the same screen each time.
+LASERcoder keeps everything for a project in one folder, the **project directory**, and reads your videos from wherever they already are. Set up a project once, then open it again from the same screen each time.
 
 ### Key concepts
 
-- **Working directory.** A folder you create for the project. LASERcoder writes everything it produces here: annotation files, event and subject keys, session progress, summaries, and logs (see [Where your data goes](#where-your-data-goes)). Choose or create this first; nothing else can be selected until it exists. Use one working directory per project or experiment, and keep it on a local drive rather than a network share.
+- **Project directory.** A folder you create for the project. LASERcoder writes everything it produces here: annotation files, event and subject keys, session progress, summaries, and logs (see [Where your data goes](#where-your-data-goes)). Choose or create this first; nothing else can be selected until it exists. Use one project directory per project or experiment, and keep it on a local drive rather than a network share.
 - **Video folder.** The folder that holds the videos you want to score. LASERcoder only reads from it and never modifies your videos. It can be anywhere, including an external drive.
 - **Single vs. multi-part videos.** Most recordings are one file per video. Some cameras split a single recording into several files (for example `trial01_000.mp4`, `trial01_001.mp4`). LASERcoder can play such a set as one continuous video: put each recording's files in their own subfolder of the video folder, and tick **My videos are split into multiple parts** in the file picker. Each such subfolder is then listed as one video, named after the subfolder, alongside any single-file videos in the same folder, and its parts play back to back in filename order.
-- **Event key.** The list of behaviors you score: each has a name, a keyboard shortcut, a type (Point for instantaneous events, State for events with a duration), and optionally a mutually exclusive group. Event keys are saved in the working directory and can be reused across projects.
+- **Event key.** The list of behaviors you score: each has a name, a keyboard shortcut, a type (Point for instantaneous events, State for events with a duration), and optionally a mutually exclusive group. Event keys are saved in the project directory and can be reused across projects.
 - **Subject key (optional).** The individuals in the video, each with a shortcut. When subjects are active, every annotation records which subject it applies to. Only needed when you score more than one individual.
 
 ### Setting up a project
 
-1. **Launch LASERcoder.** The setup screen shows the working directory on the left and the video folder on the right.
-2. **Create a working directory.** On the left, browse to where you want the project to live, click **Create Directory**, give it a name, and click **Select Directory**. The chosen folder is confirmed below the list. To reopen an existing project, browse to its folder and click **Select Directory** instead.
-3. **Select the folder that holds your videos.** On the right, click **Browse...** and pick the folder. The videos in it are listed. Colored dots mark videos that are already in progress or complete. If some or all recordings are split into parts, tick **My videos are split into multiple parts**: each subfolder is then listed as one video, together with any single-file videos.
-4. **Select a video** by double-clicking it or clicking **Select Video**.
+1. **Launch LASERcoder.** The setup screen shows the project directory and the video directory at the top, the project tools on the left, and the list of videos on the right.
+2. **Choose a project directory.** Click **Select Project Directory**, browse to where you want the project to live, create a new folder there (right-click or use the New Folder button of the folder window), open it, and confirm. The full path is shown in the **Project Directory** field. To reopen an existing project, select its folder instead.
+3. **Select the folder that holds your videos.** Click **Select Video Directory** and pick the folder. The videos in it are listed. Colored dots mark videos that are already in progress or complete. If some or all recordings are split into parts, tick **My videos are split into multiple parts**: each subfolder is then listed as one video, together with any single-file videos.
+4. **Open a video** by double-clicking it, or by selecting it and pressing Enter.
 5. **Create or load an event key** if the project does not have one yet. Define your events with names, shortcut keys, and types, assign mutually exclusive groups as needed, then **Start Video**. Existing keys are listed in the dropdown.
 6. **Optional: create a subject key** if you are scoring more than one individual. Add each subject with a shortcut and, if wanted, a color and mutually exclusive group.
 
@@ -91,7 +91,8 @@ LASERcoder keeps everything for a project in one folder, the **working directory
 
 - Press an event's shortcut key or click its on-screen button as the video plays. For state events, press once to start and again to end. For multiple subjects, toggle the active subjects first; each annotation is written once per active subject. Everything is saved in real time.
 - Press **`Escape`** at any time to return to the setup screen. Your position in the video is remembered, and the next time the video is opened you resume where you left off.
-- **Summary statistics and combined annotations.** From the setup screen, generate per-video summaries, box plots, and a combined annotation file for a whole experiment, pre-formatted for downstream statistical analysis.
+- **Summary statistics.** From the setup screen, click **Summary Statistics**, name an experiment, tick the videos that belong to it, and generate per-video and combined summaries in one step. The same window opens the summary tables and box plots.
+- **Export annotations.** From the setup screen, click **Export Annotations** to save the annotations of any or all videos to a location of your choice, as one combined CSV file or one file per video, formatted for downstream statistical analysis.
 
 
 ## Keyboard Controls
@@ -116,14 +117,13 @@ Skip intervals are configurable in the settings menu, and the `W`/`A`/`S`/`D` na
 
 ## Where your data goes
 
-Everything lives in your working directory, in plain files you can inspect, copy, and edit:
+Everything lives in your project directory, in plain files you can inspect, copy, and edit:
 
 ```
 YourProject/
 ├── Annotations/
 │   ├── VideoName_Annotations.csv       Complete annotation file per video
-│   ├── Summaries/                      Per-video summary statistics
-│   └── Combined_Annotations/           Merged multi-video annotation files
+│   └── Summaries/                      Per-video and combined summary statistics
 ├── Keys/
 │   ├── Event_Keys/                     List and define events to annotate (reusable across projects)
 │   └── Subject_Keys/                   Subject definitions

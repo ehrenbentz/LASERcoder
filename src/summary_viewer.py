@@ -128,6 +128,10 @@ def show_boxplot_viewer(parent, combined_dir, select_file=None):
     """Open the combined-summary box plot viewer"""
     dlg = _BoxplotViewer(parent, combined_dir, select_file=select_file)
     dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    # Maximise through the window state, so that the single show made
+    # by open() brings the dialog up maximised (previously the dialog
+    # called showMaximized() on itself and was then shown again here).
+    dlg.setWindowState(dlg.windowState() | Qt.WindowState.WindowMaximized)
     dlg.open()
 
 
@@ -192,7 +196,10 @@ class _BoxplotViewer(QDialog):
         theme.apply_dialog_theme(self)
 
         self.setMinimumSize(720, 520)
-        self.showMaximized()
+        # Size used if the user restores the window from maximised
+        screen = get_screen_geometry()
+        self.resize(int(screen["width"] * 0.85),
+                    int(screen["height"] * 0.80))
 
         self._build_ui()
 
