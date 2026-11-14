@@ -128,6 +128,9 @@ mkdir -p "$OUTPUT_DIR"
 # Copy Python source into output for Nuitka to compile
 cp "$SOURCE_DIR"/*.py "$OUTPUT_DIR/"
 
+# Copy the help window text (src/help/*.md)
+cp -R "$SOURCE_DIR/help" "$OUTPUT_DIR/help"
+
 # Copy local libmpv for bundling
 cp "$LIBMPV_FILE" "$OUTPUT_DIR/"
 chmod 755 "$OUTPUT_DIR/libmpv.so.2"
@@ -186,6 +189,7 @@ $PYTHON -m nuitka \
     --nofollow-import-to=PySide6.QtStateMachine \
     --linux-icon=../../icons/LASERcoder_256.png \
     --include-data-files=libmpv.so.2=libmpv.so.2 \
+    --include-data-dir=help=help \
     "$MAIN_SCRIPT"
 
 # ==================================================================

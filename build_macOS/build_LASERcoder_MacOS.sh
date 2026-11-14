@@ -186,6 +186,9 @@ mkdir -p "$OUTPUT_DIR"
 find "$SOURCE_DIR" -name '._*' -delete
 cp "$SOURCE_DIR"/*.py "$OUTPUT_DIR/"
 
+# Copy the help window text (src/help/*.md)
+cp -R "$SOURCE_DIR/help" "$OUTPUT_DIR/help"
+
 # Copy build resources into output (libs/ without arch suffix for the binary)
 cp "$ICONS_DIR/Icons.icns" "$OUTPUT_DIR/"
 cp -R "$LIBS_DIR" "$OUTPUT_DIR/libs"
@@ -260,6 +263,7 @@ $PYTHON -m nuitka \
     --nofollow-import-to=PySide6.QtScxml \
     --nofollow-import-to=PySide6.QtStateMachine \
     "--include-data-files=libs/*.dylib=libs/" \
+    --include-data-dir=help=help \
     "$MAIN_SCRIPT"
 
 # Clean up source copies (keep only build artifacts)

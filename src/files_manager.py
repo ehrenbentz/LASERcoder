@@ -266,6 +266,13 @@ class FilesManager(QDialog):
         self._settings_btn.clicked.connect(self._show_settings_menu)
         paths.addWidget(self._settings_btn, 0, 3)
 
+        help_btn = QPushButton("?")
+        help_btn.setFixedSize(26, 26)
+        help_btn.setToolTip("Help (F1)")
+        help_btn.setStyleSheet("QPushButton { padding: 0px; font-weight: bold; }")
+        help_btn.clicked.connect(self._show_help)
+        paths.addWidget(help_btn, 0, 4)
+
         paths.addWidget(QLabel("Video Directory:"), 1, 0)
         self.video_dir_entry = _PathEdit(self.current_video_dir)
         self.video_dir_entry.setToolTip(self.current_video_dir)
@@ -2089,7 +2096,14 @@ class FilesManager(QDialog):
         self._save_video_column_widths()
         super().done(result)
 
+    def _show_help(self):
+        from help_dialog import show_help_dialog, TAB_START
+        show_help_dialog(self, TAB_START)
+
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_F1:
+            self._show_help()
+            return
         if event.key() == Qt.Key.Key_Escape:
             self.reject()
             if self.parent():

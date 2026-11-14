@@ -1692,6 +1692,8 @@ class VideoAnnotator(QFrame):
         self._gear_btn.clicked.connect(self._show_settings_menu)
         self._panel_buttons.append(self._gear_btn)
         ph_lay.addWidget(self._gear_btn)
+        self._help_btn = self._make_help_button(btn_style)
+        ph_lay.addWidget(self._help_btn)
         self._panel_toggle_btn = QPushButton("")
         self._panel_toggle_btn.setStyleSheet(btn_style)
         self._panel_toggle_btn.setIcon(theme.themed_icon("right"))
@@ -1717,6 +1719,8 @@ class VideoAnnotator(QFrame):
         self._gear_btn_collapsed.clicked.connect(self._show_settings_menu)
         self._panel_buttons.append(self._gear_btn_collapsed)
         ch_lay.addWidget(self._gear_btn_collapsed, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._help_btn_collapsed = self._make_help_button(btn_style)
+        ch_lay.addWidget(self._help_btn_collapsed, 0, Qt.AlignmentFlag.AlignHCenter)
         self._panel_toggle_btn_collapsed = QPushButton("")
         self._panel_toggle_btn_collapsed.setStyleSheet(btn_style)
         self._panel_toggle_btn_collapsed.setIcon(theme.themed_icon("left"))
@@ -2075,6 +2079,35 @@ class VideoAnnotator(QFrame):
                 item.setBackground(c, QColor("transparent"))
 
     # Settings menu
+
+    def _make_help_button(self, btn_style):
+        """The "?" button of the annotation panel header."""
+        btn = QPushButton("?")
+        btn.setStyleSheet(btn_style)
+        font = btn.font()
+        font.setBold(True)
+        btn.setFont(font)
+        btn.setFixedSize(26, 26)
+        btn.setToolTip("Help (F1)")
+        btn.clicked.connect(self._show_help)
+        self._panel_buttons.append(btn)
+        return btn
+
+    def _show_help(self):
+        """Open the help window on the keyboard shortcuts tab.  The
+        video is paused and shortcuts are blocked while it is open."""
+        if self.dialog_open:
+            return
+        from help_dialog import show_help_dialog, TAB_KEYS
+        if self.player:
+            self.player.pause = True
+        self.dialog_open = True
+
+        def _on_closed():
+            self.dialog_open = False
+
+        show_help_dialog(self.parent, TAB_KEYS, annotator=self,
+                         on_closed=_on_closed)
 
     def _show_settings_menu(self):
         import time
@@ -2831,6 +2864,7 @@ class VideoAnnotator(QFrame):
             Qt.Key.Key_Backspace: blocked(self._reset_speed),
             Qt.Key.Key_Escape: self.return_to_file_selection,
             Qt.Key.Key_F11: blocked(self._toggle_window_mode),
+            Qt.Key.Key_F1: blocked(self._show_help),
             # Cmd+Shift+W (Qt maps Ctrl<->Cmd on macOS by default)
             (Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier
              | Qt.KeyboardModifier.ShiftModifier): blocked(

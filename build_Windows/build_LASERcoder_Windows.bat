@@ -131,6 +131,9 @@ REM Copy Python source into output for Nuitka to compile
 echo Copying source from %SOURCE_DIR%...
 copy "%SOURCE_DIR%\*.py" "%OUTPUT_DIR%\" >nul
 
+REM Copy the help window text (src\help\*.md)
+xcopy "%SOURCE_DIR%\help" "%OUTPUT_DIR%\help\" /E /I /Q /Y >nul
+
 REM Copy build resources into output
 copy "%ICON_FILE%" "%OUTPUT_DIR%\laser.ico" >nul
 copy "%LIBMPV_FILE%" "%OUTPUT_DIR%\libmpv-2.dll" >nul
@@ -194,6 +197,7 @@ python -m nuitka ^
     --nofollow-import-to=PySide6.QtStateMachine ^
     --include-data-files=libmpv-2.dll=libmpv-2.dll ^
     --include-data-files=laser.ico=laser.ico ^
+    --include-data-dir=help=help ^
     --windows-file-version=%APP_VERSION% ^
     --windows-product-version=%APP_VERSION% ^
     --windows-company-name="Cornell University" ^
